@@ -270,18 +270,18 @@ open_editor() {
 worktree_repl() {
   local repo_root="$1" wt_path="$2"
   echo ""
-  echo "Commands: open, status, cleanup, exit"
+  echo "Commands: [o]pen, [s]tatus, [c]leanup, [e]xit"
   while true; do
     printf "\nworktree> "
     read -r cmd
     case "$cmd" in
-      open)
+      open|o)
         open_editor "$wt_path"
         ;;
-      status)
+      status|s)
         git -C "$wt_path" status
         ;;
-      cleanup)
+      cleanup|c)
         echo "This will remove the worktree at:"
         echo "  $wt_path"
         if prompt_yn "Proceed?"; then
@@ -292,14 +292,14 @@ worktree_repl() {
           exit 0
         fi
         ;;
-      exit|quit|q)
+      exit|quit|q|e)
         exit 0
         ;;
       "")
         ;;
       *)
         echo "Unknown command: $cmd"
-        echo "Commands: open, status, cleanup, exit"
+        echo "Commands: [o]pen, [s]tatus, [c]leanup, [e]xit"
         ;;
     esac
   done
