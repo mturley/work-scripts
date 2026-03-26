@@ -6,7 +6,7 @@
 #   PR mode:     worktree-ensure.sh pr <worktree-path> <pr-number> <slug> <base-repo>
 #
 # Output: JSON object with:
-#   status: "created" | "exists" | "exists-outdated"
+#   status: "created" | "exists" | "exists-elsewhere" | "exists-outdated" | "error"
 #   path: absolute path to the worktree
 #   For "exists-outdated": local_head and remote_head fields
 #
@@ -40,13 +40,26 @@ case "$MODE" in
       exit 0
     fi
 
+    # Check if branch is already checked out in a different worktree
+    EXISTING_WT="$(git worktree list --porcelain | awk -v branch="$BRANCH_NAME" '
+      /^worktree / { wt = $0; sub(/^worktree /, "", wt) }
+      /^branch refs\/heads\// {
+        b = $0; sub(/^branch refs\/heads\//, "", b)
+        if (b == branch) { print wt; exit }
+      }
+    ')"
+    if [ -n "$EXISTING_WT" ]; then
+      json_out "exists-elsewhere" "$EXISTING_WT"
+      exit 0
+    fi
+
     # Try creating with new branch first, fall back to existing branch
-    if git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" 2>/dev/null; then
+    if OUTPUT="$(git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" 2>&1)"; then
       json_out "created" "$(cd "$WORKTREE_PATH" && pwd)"
-    elif git worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>&1; then
+    elif OUTPUT="$(git worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>&1)"; then
       json_out "created" "$(cd "$WORKTREE_PATH" && pwd)"
     else
-      echo '{"status": "error", "message": "Failed to create worktree"}' >&2
+      json_out "error" "$WORKTREE_PATH" "message" "$OUTPUT"
       exit 1
     fi
     ;;
