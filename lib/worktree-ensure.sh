@@ -36,8 +36,13 @@ case "$MODE" in
     BRANCH_NAME="${3:?Missing branch name}"
 
     if [ -d "$WORKTREE_PATH" ]; then
-      json_out "exists" "$WORKTREE_PATH"
-      exit 0
+      if [ -e "$WORKTREE_PATH/.git" ]; then
+        json_out "exists" "$WORKTREE_PATH"
+        exit 0
+      else
+        # Directory exists but is not a valid worktree (leftover from a failed operation)
+        rm -rf "$WORKTREE_PATH"
+      fi
     fi
 
     # Check if branch is already checked out in a different worktree
@@ -82,9 +87,12 @@ case "$MODE" in
     EXISTING=""
     if [ -d "$WORKTREE_DIR" ]; then
       for d in "$WORKTREE_DIR"/*--pr-"${PR_NUMBER}"-*; do
-        if [ -d "$d" ]; then
+        if [ -d "$d" ] && [ -e "$d/.git" ]; then
           EXISTING="$d"
           break
+        elif [ -d "$d" ]; then
+          # Leftover directory, not a valid worktree
+          rm -rf "$d"
         fi
       done
     fi

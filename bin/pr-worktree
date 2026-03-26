@@ -118,7 +118,7 @@ case "$STATUS" in
     echo "Worktree already exists and is up to date."
     CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Recreate from scratch")"
     if [ "$CHOICE" = "Recreate from scratch" ]; then
-      git worktree remove "$WT_PATH" --force
+      remove_worktree "$WT_PATH"
       RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"
       WT_PATH="$(echo "$RESULT" | parse_json path)"
       echo "Worktree recreated at: ${WT_PATH}"
@@ -139,7 +139,7 @@ case "$STATUS" in
         echo "Updated to latest PR state."
         ;;
       "Recreate from scratch")
-        git worktree remove "$WT_PATH" --force
+        remove_worktree "$WT_PATH"
         RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"
         WT_PATH="$(echo "$RESULT" | parse_json path)"
         echo "Worktree recreated at: ${WT_PATH}"

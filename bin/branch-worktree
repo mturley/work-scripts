@@ -58,7 +58,7 @@ case "$STATUS" in
     echo "Worktree already exists at: ${WT_PATH}"
     CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Recreate from scratch")"
     if [ "$CHOICE" = "Recreate from scratch" ]; then
-      git worktree remove "$WT_PATH" --force
+      remove_worktree "$WT_PATH"
       RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" branch "$WORKTREE_ABS" "$BRANCH_NAME" 2>&1)"
       WT_PATH="$(echo "$RESULT" | parse_json path)"
       echo "Worktree recreated at: ${WT_PATH}"
@@ -70,7 +70,7 @@ case "$STATUS" in
     CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Move to new location (${WORKTREE_ABS})")"
     if [ "$CHOICE" != "Reuse existing worktree" ]; then
       echo "Removing old worktree..."
-      git worktree remove "$WT_PATH" --force
+      remove_worktree "$WT_PATH"
       if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" branch "$WORKTREE_ABS" "$BRANCH_NAME" 2>&1)"; then
         MSG="$(echo "$RESULT" | parse_json message)"
         echo "ERROR: Failed to recreate worktree." >&2

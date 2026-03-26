@@ -87,6 +87,19 @@ prompt_multi_select() {
   done
 }
 
+# remove_worktree <path> - Remove a worktree, handling invalid/leftover directories
+remove_worktree() {
+  local wt_path="$1"
+  if git worktree remove "$wt_path" --force 2>/dev/null; then
+    return 0
+  fi
+  # Fallback: directory exists but isn't a valid worktree
+  if [ -d "$wt_path" ]; then
+    rm -rf "$wt_path"
+    git worktree prune 2>/dev/null
+  fi
+}
+
 parse_json() {
   python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null
 }
