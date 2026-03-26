@@ -37,6 +37,56 @@ prompt_yn() {
   done
 }
 
+# prompt_multi_select "message" option1 option2 ...
+# User enters comma-separated numbers or ranges (e.g. "1,3-5"), or "a" for all, or "n" for none.
+# Selected options are printed to stdout, one per line.
+prompt_multi_select() {
+  local msg="$1"; shift
+  local options=("$@")
+  echo "" >&2
+  echo "$msg" >&2
+  for i in "${!options[@]}"; do
+    echo "  $((i+1))) ${options[$i]}" >&2
+  done
+  while true; do
+    printf "Select [1-%d, comma/range, a=all, n=none]: " "${#options[@]}" >&2
+    read -r input
+    if [[ "$input" == "n" || "$input" == "N" ]]; then
+      return
+    fi
+    if [[ "$input" == "a" || "$input" == "A" ]]; then
+      printf '%s\n' "${options[@]}"
+      return
+    fi
+    # Parse comma-separated numbers and ranges
+    local valid=true
+    local selected=()
+    IFS=',' read -ra parts <<< "$input"
+    for part in "${parts[@]}"; do
+      part="$(echo "$part" | tr -d ' ')"
+      if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        local start="${BASH_REMATCH[1]}" end="${BASH_REMATCH[2]}"
+        if [ "$start" -ge 1 ] && [ "$end" -le "${#options[@]}" ] && [ "$start" -le "$end" ]; then
+          for ((j=start; j<=end; j++)); do
+            selected+=("${options[$((j-1))]}")
+          done
+        else
+          valid=false
+        fi
+      elif [[ "$part" =~ ^[0-9]+$ ]] && [ "$part" -ge 1 ] && [ "$part" -le "${#options[@]}" ]; then
+        selected+=("${options[$((part-1))]}")
+      else
+        valid=false
+      fi
+    done
+    if $valid && [ ${#selected[@]} -gt 0 ]; then
+      printf '%s\n' "${selected[@]}"
+      return
+    fi
+    echo "Invalid selection, try again." >&2
+  done
+}
+
 parse_json() {
   python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null
 }
