@@ -182,6 +182,129 @@ copy_worktree_files() {
   return 1
 }
 
+# warn_unmerged_commits <branch-name>
+# Checks if the branch has commits not on upstream/main (or origin/main).
+# Prints a warning and prompts for confirmation. Returns 1 if user aborts.
+warn_unmerged_commits() {
+  local branch="$1"
+  # Find the base ref
+  local base_ref=""
+  if git rev-parse --verify upstream/main &>/dev/null; then
+    base_ref="upstream/main"
+  elif git rev-parse --verify origin/main &>/dev/null; then
+    base_ref="origin/main"
+  fi
+  if [ -z "$base_ref" ]; then
+    return 0
+  fi
+  # Check if branch exists
+  if ! git rev-parse --verify "$branch" &>/dev/null; then
+    return 0
+  fi
+  local unmerged
+  unmerged="$(git log --oneline "$base_ref".."$branch" 2>/dev/null)"
+  if [ -n "$unmerged" ]; then
+    echo ""
+    echo "WARNING: Branch '${branch}' has unmerged commits:"
+    echo "$unmerged"
+    if ! prompt_yn "Delete this branch and start fresh?"; then
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# recreate_worktree <scripts-dir> <worktree-abs> <branch-name> <wt-path>
+# Removes the worktree and branch, then recreates both from upstream/main.
+# Sets WT_PATH to the new worktree path. Returns 1 if user aborts.
+recreate_worktree() {
+  local scripts_dir="$1" worktree_abs="$2" branch_name="$3" wt_path="$4"
+  warn_unmerged_commits "$branch_name" || return 1
+  remove_worktree "$wt_path"
+  # Delete the branch so worktree-ensure creates it fresh from upstream/main
+  git branch -D "$branch_name" 2>/dev/null || true
+  if ! RESULT="$("$scripts_dir/worktree-ensure.sh" branch "$worktree_abs" "$branch_name" 2>&1)"; then
+    local msg
+    msg="$(echo "$RESULT" | parse_json message)"
+    echo "ERROR: Failed to recreate worktree." >&2
+    [ -n "$msg" ] && echo "  $msg" >&2
+    return 1
+  fi
+  WT_PATH="$(echo "$RESULT" | parse_json path)"
+  echo "Worktree recreated at: ${WT_PATH}"
+  return 0
+}
+
+# detect_editor - Sets EDITOR_CMD to "cursor" or "code" if detected, empty otherwise.
+detect_editor() {
+  EDITOR_CMD=""
+  if [ -n "${CURSOR_CHANNEL:-}" ] || [[ "${__CFBundleIdentifier:-}" == *cursor* ]]; then
+    EDITOR_CMD="cursor"
+  elif [ -n "${VSCODE_PID:-}" ] || [ "${TERM_PROGRAM:-}" = "vscode" ]; then
+    EDITOR_CMD="code"
+  fi
+}
+
+# open_editor <worktree-path> - Open the worktree in an editor.
+# Uses EDITOR_CMD if set, otherwise prompts the user to choose.
+open_editor() {
+  local wt_path="$1"
+  if [ -n "${EDITOR_CMD:-}" ]; then
+    env -u CLAUDECODE $EDITOR_CMD --new-window "$wt_path"
+    echo "Opened new ${EDITOR_CMD} window."
+  else
+    echo "No editor detected."
+    if prompt_yn "Would you like to open an editor?"; then
+      local choice
+      choice="$(prompt_choice "Which editor?" "VS Code" "Cursor")"
+      case "$choice" in
+        "VS Code") env -u CLAUDECODE code --new-window "$wt_path" ;;
+        "Cursor") env -u CLAUDECODE cursor --new-window "$wt_path" ;;
+      esac
+    fi
+  fi
+}
+
+# worktree_repl <repo-root> <worktree-path>
+# Interactive loop offering cleanup, open, status, and exit commands.
+worktree_repl() {
+  local repo_root="$1" wt_path="$2"
+  echo ""
+  echo "Commands: open, status, cleanup, exit"
+  while true; do
+    printf "\nworktree> "
+    read -r cmd
+    case "$cmd" in
+      open)
+        open_editor "$wt_path"
+        ;;
+      status)
+        git -C "$wt_path" status
+        ;;
+      cleanup)
+        echo "This will remove the worktree at:"
+        echo "  $wt_path"
+        if prompt_yn "Proceed?"; then
+          remove_worktree "$wt_path"
+          echo "Worktree removed."
+          # Also clean up the branch if it was created for this worktree
+          git worktree prune 2>/dev/null
+          exit 0
+        fi
+        ;;
+      exit|quit|q)
+        exit 0
+        ;;
+      "")
+        ;;
+      *)
+        echo "Unknown command: $cmd"
+        echo "Commands: open, status, cleanup, exit"
+        ;;
+    esac
+  done
+}
+
 parse_json() {
   python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null
 }

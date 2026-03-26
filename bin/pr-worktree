@@ -118,7 +118,9 @@ case "$STATUS" in
     echo "Worktree already exists and is up to date."
     CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Recreate from scratch")"
     if [ "$CHOICE" = "Recreate from scratch" ]; then
+      PR_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
       remove_worktree "$WT_PATH"
+      git branch -D "$PR_BRANCH" 2>/dev/null || true
       RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"
       WT_PATH="$(echo "$RESULT" | parse_json path)"
       echo "Worktree recreated at: ${WT_PATH}"
@@ -133,13 +135,15 @@ case "$STATUS" in
     CHOICE="$(prompt_choice "What would you like to do?" "Update to latest" "Recreate from scratch" "Reuse as-is")"
     case "$CHOICE" in
       "Update to latest")
-        BRANCH_NAME="review/pr-${PR_NUMBER}-${SLUG}"
-        git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head:${BRANCH_NAME}" --force
-        git -C "$WT_PATH" reset --hard "$BRANCH_NAME"
+        PR_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
+        git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head:${PR_BRANCH}" --force
+        git -C "$WT_PATH" reset --hard "$PR_BRANCH"
         echo "Updated to latest PR state."
         ;;
       "Recreate from scratch")
+        PR_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
         remove_worktree "$WT_PATH"
+        git branch -D "$PR_BRANCH" 2>/dev/null || true
         RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"
         WT_PATH="$(echo "$RESULT" | parse_json path)"
         echo "Worktree recreated at: ${WT_PATH}"
@@ -171,79 +175,8 @@ fi
 # --- Phase 3: Detect Editor and Open ---
 
 echo ""
-EDITOR_CMD=""
-if [ -n "${CURSOR_CHANNEL:-}" ] || [[ "${__CFBundleIdentifier:-}" == *cursor* ]]; then
-  EDITOR_CMD="cursor"
-  echo "Detected editor: Cursor"
-elif [ -n "${VSCODE_PID:-}" ] || [ "${TERM_PROGRAM:-}" = "vscode" ]; then
-  EDITOR_CMD="code"
-  echo "Detected editor: VS Code"
-fi
-
-if [ -n "$EDITOR_CMD" ]; then
-  env -u CLAUDECODE $EDITOR_CMD --new-window "$WT_PATH"
-  echo "Opened new ${EDITOR_CMD} window."
-else
-  echo "No editor detected. You can open the worktree with:"
-  echo "  env -u CLAUDECODE code --new-window ${WT_PATH}"
-  echo "  env -u CLAUDECODE cursor --new-window ${WT_PATH}"
-  echo "  cd ${WT_PATH}"
-  if prompt_yn "Would you like to open an editor?"; then
-    CHOICE="$(prompt_choice "Which editor?" "VS Code" "Cursor")"
-    case "$CHOICE" in
-      "VS Code") env -u CLAUDECODE code --new-window "$WT_PATH" ;;
-      "Cursor") env -u CLAUDECODE cursor --new-window "$WT_PATH" ;;
-    esac
-  fi
-fi
-
-# --- Phase 4: Detect Dependencies ---
-
-DEP_CMD=""
-DEP_SOURCE=""
-
-# Check documentation files for setup instructions
-for doc in README.md README.rst README.txt README CONTRIBUTING.md DEVELOPING.md DEVELOPMENT.md SETUP.md; do
-  if [ -f "$WT_PATH/$doc" ]; then
-    # Look for setup/install sections
-    if grep -qiE '^#{1,3}\s*(getting started|installation|setup|development|prerequisites|building)' "$WT_PATH/$doc" 2>/dev/null; then
-      DEP_SOURCE="$doc"
-      break
-    fi
-  fi
-done
-
-# Check Makefile for common targets
-if [ -z "$DEP_CMD" ] && [ -f "$WT_PATH/Makefile" ] || [ -f "$WT_PATH/makefile" ]; then
-  MAKEFILE="$WT_PATH/Makefile"
-  [ -f "$MAKEFILE" ] || MAKEFILE="$WT_PATH/makefile"
-  if [ -f "$MAKEFILE" ]; then
-    for target in install setup deps dependencies init bootstrap; do
-      if grep -q "^${target}:" "$MAKEFILE" 2>/dev/null; then
-        DEP_CMD="make $target"
-        DEP_SOURCE="Makefile"
-        break
-      fi
-    done
-  fi
-fi
-
-# Check lockfiles/manifests
-if [ -z "$DEP_CMD" ]; then
-  if [ -f "$WT_PATH/package-lock.json" ]; then DEP_CMD="npm ci"
-  elif [ -f "$WT_PATH/yarn.lock" ]; then DEP_CMD="yarn install"
-  elif [ -f "$WT_PATH/pnpm-lock.yaml" ]; then DEP_CMD="pnpm install"
-  elif [ -f "$WT_PATH/package.json" ]; then DEP_CMD="npm install"
-  elif [ -f "$WT_PATH/requirements.txt" ]; then DEP_CMD="pip install -r requirements.txt"
-  elif [ -f "$WT_PATH/Pipfile.lock" ]; then DEP_CMD="pipenv install"
-  elif [ -f "$WT_PATH/poetry.lock" ]; then DEP_CMD="poetry install"
-  elif [ -f "$WT_PATH/pyproject.toml" ]; then DEP_CMD="pip install -e ."
-  elif [ -f "$WT_PATH/go.mod" ]; then DEP_CMD="go mod download"
-  elif [ -f "$WT_PATH/Gemfile.lock" ]; then DEP_CMD="bundle install"
-  elif [ -f "$WT_PATH/Cargo.lock" ]; then DEP_CMD="cargo fetch"
-  elif [ -f "$WT_PATH/composer.lock" ]; then DEP_CMD="composer install"
-  fi
-fi
+detect_editor
+open_editor "$WT_PATH"
 
 # --- Post-Setup Summary ---
 
@@ -255,29 +188,5 @@ echo ""
 echo "PR:        #${PR_NUMBER} - ${PR_TITLE}"
 echo "URL:       ${PR_URL}"
 echo "Worktree:  ${WT_PATH}"
-echo ""
 
-if $COPIED_FILES; then
-  echo "Files were copied from the main worktree."
-  echo "If the PR changes dependencies, you may still need to run:"
-  if [ -n "$DEP_CMD" ]; then
-    echo "  cd ${WT_PATH} && ${DEP_CMD}"
-  fi
-else
-  if [ -n "$DEP_CMD" ]; then
-    echo "To install dependencies:"
-    echo "  cd ${WT_PATH} && ${DEP_CMD}"
-    if [ -n "$DEP_SOURCE" ]; then
-      echo "  (found in ${DEP_SOURCE})"
-    fi
-  else
-    echo "No dependency manager detected."
-  fi
-fi
-
-echo ""
-echo "Next steps: Run /review in the new window to start the code review."
-echo ""
-echo "Cleanup when done:"
-echo "  git -C ${REPO_ROOT} worktree remove ${WORKTREE_ABS}"
-echo "  Or list all: git -C ${REPO_ROOT} worktree list"
+worktree_repl "$REPO_ROOT" "$WT_PATH"
