@@ -164,11 +164,11 @@ esac
 # --- Phase 2: Copy Gitignored Files ---
 
 COPIED_GITIGNORED=false
+echo "Checking size of gitignored files..."
 SIZES_OUTPUT="$("$SCRIPTS_DIR/gitignored-sizes.sh" "$REPO_ROOT")"
 if [ -n "$SIZES_OUTPUT" ]; then
   echo ""
-  echo "Gitignored files in main worktree:"
-  echo "$SIZES_OUTPUT"
+  echo "Gitignored files in main worktree: ${SIZES_OUTPUT}"
   if prompt_yn "Copy these to the new worktree?"; then
     "$SCRIPTS_DIR/copy-gitignored.sh" "$REPO_ROOT" "$WT_PATH"
     COPIED_GITIGNORED=true
