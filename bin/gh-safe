@@ -49,7 +49,9 @@ is_safe_subcommand() {
   local cmd="$1"
   local sub="$2"
   local rule
-  for rule in $SAFE_RULES; do
+  while IFS= read -r rule; do
+    # Skip blank lines
+    [[ -z "$rule" ]] && continue
     local rule_cmd="${rule%%:*}"
     local rule_subs="${rule#*:}"
     if [[ "$cmd" == "$rule_cmd" ]]; then
@@ -59,7 +61,7 @@ is_safe_subcommand() {
       done
       return 1
     fi
-  done
+  done <<< "$SAFE_RULES"
   return 1
 }
 
