@@ -165,14 +165,33 @@ esac
 
 COPIED_FILES=false
 echo "Checking for copyable files (node_modules, build outputs, config)..."
-TARGETS="$("$SCRIPTS_DIR/copy-worktree-files.sh" --list "$REPO_ROOT")"
-if [ -n "$TARGETS" ]; then
-  TARGET_ARRAY=()
-  while IFS= read -r line; do TARGET_ARRAY+=("$line"); done <<< "$TARGETS"
+DIR_TARGETS="$("$SCRIPTS_DIR/copy-worktree-files.sh" --list-dirs "$REPO_ROOT")"
+DOTFILE_TARGETS="$("$SCRIPTS_DIR/copy-worktree-files.sh" --list-dotfiles "$REPO_ROOT")"
+
+OPTIONS=()
+if [ -n "$DIR_TARGETS" ]; then
+  while IFS= read -r line; do OPTIONS+=("$line"); done <<< "$DIR_TARGETS"
+fi
+HAS_DOTFILES=false
+if [ -n "$DOTFILE_TARGETS" ]; then
+  OPTIONS+=("Top-level dotfiles")
+  HAS_DOTFILES=true
+fi
+
+if [ ${#OPTIONS[@]} -gt 0 ]; then
   SELECTED=()
-  while IFS= read -r line; do [ -n "$line" ] && SELECTED+=("$line"); done < <(prompt_multi_select "Which files to copy to the new worktree?" "${TARGET_ARRAY[@]}")
-  if [ ${#SELECTED[@]} -gt 0 ]; then
-    "$SCRIPTS_DIR/copy-worktree-files.sh" --copy "$REPO_ROOT" "$WT_PATH" "${SELECTED[@]}"
+  while IFS= read -r line; do [ -n "$line" ] && SELECTED+=("$line"); done < <(prompt_multi_select "Which files to copy to the new worktree?" "${OPTIONS[@]}")
+  # Expand "Top-level dotfiles" into individual paths
+  COPY_PATHS=()
+  for item in "${SELECTED[@]}"; do
+    if [ "$item" = "Top-level dotfiles" ]; then
+      while IFS= read -r df; do COPY_PATHS+=("$df"); done <<< "$DOTFILE_TARGETS"
+    else
+      COPY_PATHS+=("$item")
+    fi
+  done
+  if [ ${#COPY_PATHS[@]} -gt 0 ]; then
+    "$SCRIPTS_DIR/copy-worktree-files.sh" --copy "$REPO_ROOT" "$WT_PATH" "${COPY_PATHS[@]}"
     COPIED_FILES=true
   fi
 fi

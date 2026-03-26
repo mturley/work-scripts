@@ -17,7 +17,7 @@ MODE="${1:?Usage: copy-worktree-files.sh <--list|--copy> <source-root> ...}"
 SOURCE_ROOT="${2:?Missing source root}"
 
 case "$MODE" in
-  --list)
+  --list-dirs)
     # node_modules dirs (prune to avoid recursing into them)
     find "$SOURCE_ROOT" -path "*/.git" -prune -o \
       -name node_modules -type d -prune -print \
@@ -33,7 +33,9 @@ case "$MODE" in
       2>/dev/null | while IFS= read -r p; do
       echo "${p#"$SOURCE_ROOT"/}"
     done
+    ;;
 
+  --list-dotfiles)
     # Top-level dotfiles and dotdirs (excluding .git)
     for f in "$SOURCE_ROOT"/.*; do
       [ -e "$f" ] || continue
@@ -92,7 +94,7 @@ case "$MODE" in
     ;;
 
   *)
-    echo "Unknown mode: $MODE. Use --list or --copy." >&2
+    echo "Unknown mode: $MODE. Use --list-dirs, --list-dotfiles, or --copy." >&2
     exit 1
     ;;
 esac
