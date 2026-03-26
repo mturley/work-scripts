@@ -163,15 +163,14 @@ esac
 
 # --- Phase 2: Copy Gitignored Files ---
 
-COPIED_GITIGNORED=false
-echo "Checking size of gitignored files..."
-SIZES_OUTPUT="$("$SCRIPTS_DIR/gitignored-sizes.sh" "$REPO_ROOT")"
+COPIED_FILES=false
+echo "Checking for copyable files (node_modules, build outputs, config)..."
+SIZES_OUTPUT="$("$SCRIPTS_DIR/copy-worktree-files.sh" --summarize "$REPO_ROOT")"
 if [ -n "$SIZES_OUTPUT" ]; then
-  echo ""
-  echo "Gitignored files in main worktree: ${SIZES_OUTPUT}"
+  echo "Found: ${SIZES_OUTPUT}"
   if prompt_yn "Copy these to the new worktree?"; then
-    "$SCRIPTS_DIR/copy-gitignored.sh" "$REPO_ROOT" "$WT_PATH"
-    COPIED_GITIGNORED=true
+    "$SCRIPTS_DIR/copy-worktree-files.sh" --copy "$REPO_ROOT" "$WT_PATH"
+    COPIED_FILES=true
   fi
 fi
 
@@ -264,8 +263,8 @@ echo "URL:       ${PR_URL}"
 echo "Worktree:  ${WT_PATH}"
 echo ""
 
-if $COPIED_GITIGNORED; then
-  echo "Dependencies were copied from the main worktree."
+if $COPIED_FILES; then
+  echo "Files were copied from the main worktree."
   echo "If the PR changes dependencies, you may still need to run:"
   if [ -n "$DEP_CMD" ]; then
     echo "  cd ${WT_PATH} && ${DEP_CMD}"

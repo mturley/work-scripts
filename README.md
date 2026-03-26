@@ -56,7 +56,7 @@ Both commands:
 1. If run from a workspace containing nested git repos, prompt to select a project repo
 2. Create a worktree in `$WORKTREES_BASE` (default `~/git/.worktrees/`, e.g. `~/git/.worktrees/odh-dashboard--pr-123-slug`)
 3. If the branch is already checked out in another worktree, offer to reuse or move it
-4. Offer to copy gitignored files (e.g. `node_modules/`) from the main worktree
+4. Offer to copy useful files (node_modules, build outputs, dotfile config) from the main worktree
 5. Detect your editor (VS Code, Cursor) and open a new window
 6. Detect the project's dependency manager and show install instructions
 
