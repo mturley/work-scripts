@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+#
+# gh-safe — a safety wrapper for the GitHub CLI.
+#
+# Read-only operations pass through immediately.
+# Write operations print a warning and exit 2 unless APPROVE=true is set.
+#
+# Usage:  gh-safe <gh args...>
+#         APPROVE=true gh-safe <gh args...>
+#
+
+set -euo pipefail
+
+# ── Read-only subcommands per top-level command ──────────────────────────
+# Format: "command:sub1 sub2 sub3"
+# Anything not listed here requires approval.
+
+SAFE_RULES="
+pr:list ls view status checks diff
+issue:list ls view status
+repo:list ls view clone
+run:list ls view watch download
+release:list ls view download
+gist:list ls view
+workflow:list ls view
+search:code commits issues prs repos
+label:list ls
+project:list ls view field-list item-list
+secret:list ls
+variable:list ls get
+ssh-key:list ls
+gpg-key:list ls
+codespace:list ls view
+extension:list ls search
+config:list ls get
+auth:status token
+cache:list ls
+ruleset:list ls view check
+org:list ls
+attestation:download trusted-root
+"
+
+# Top-level commands that are always safe (no subcommand needed)
+SAFE_TOPLEVEL="status browse completion alias help"
+
+# ── Determine whether the command is read-only ───────────────────────────
+
+is_safe_subcommand() {
+  local cmd="$1"
+  local sub="$2"
+  local rule
+  for rule in $SAFE_RULES; do
+    local rule_cmd="${rule%%:*}"
+    local rule_subs="${rule#*:}"
+    if [[ "$cmd" == "$rule_cmd" ]]; then
+      local s
+      for s in $rule_subs; do
+        [[ "$sub" == "$s" ]] && return 0
+      done
+      return 1
+    fi
+  done
+  return 1
+}
+
+is_read_only() {
+  local cmd="${1:-}"
+  local sub="${2:-}"
+
+  # gh api — special handling
+  if [[ "$cmd" == "api" ]]; then
+    check_api_read_only "$@"
+    return $?
+  fi
+
+  # Top-level safe commands
+  local safe
+  for safe in $SAFE_TOPLEVEL; do
+    [[ "$cmd" == "$safe" ]] && return 0
+  done
+
+  # Subcommand-based check
+  is_safe_subcommand "$cmd" "$sub"
+  return $?
+}
+
+check_api_read_only() {
+  # Shift past "api" to get remaining args
+  shift
+  local method=""
+  local has_input=false
+  local has_field=false
+  local endpoint=""
+  local query_value=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --method|-X)
+        method="${2:-}"
+        shift 2
+        ;;
+      --method=*)
+        method="${1#--method=}"
+        shift
+        ;;
+      -X*)
+        method="${1#-X}"
+        shift
+        ;;
+      --input)
+        has_input=true
+        shift 2
+        ;;
+      --input=*)
+        has_input=true
+        shift
+        ;;
+      -f|--raw-field)
+        if [[ "${2:-}" == query=* ]]; then
+          query_value="${2#query=}"
+        fi
+        has_field=true
+        shift 2
+        ;;
+      -f*)
+        local val="${1#-f}"
+        if [[ "$val" == query=* ]]; then
+          query_value="${val#query=}"
+        fi
+        has_field=true
+        shift
+        ;;
+      -F|--field)
+        if [[ "${2:-}" == query=* ]]; then
+          query_value="${2#query=}"
+        fi
+        has_field=true
+        shift 2
+        ;;
+      -F*)
+        local val="${1#-F}"
+        if [[ "$val" == query=* ]]; then
+          query_value="${val#query=}"
+        fi
+        has_field=true
+        shift
+        ;;
+      -*)
+        shift
+        ;;
+      *)
+        # Positional arg = endpoint
+        if [[ -z "$endpoint" ]]; then
+          endpoint="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  # Explicit method specified
+  if [[ -n "$method" ]]; then
+    local upper_method
+    upper_method="$(echo "$method" | tr '[:lower:]' '[:upper:]')"
+    [[ "$upper_method" == "GET" ]] && return 0
+    return 1
+  fi
+
+  # No method specified: gh defaults to GET unless fields/input are provided
+  # (fields cause auto-POST)
+  if $has_input; then
+    return 1
+  fi
+
+  if $has_field; then
+    # GraphQL: inspect the query to distinguish queries from mutations
+    if [[ "$endpoint" == "graphql" ]] && [[ -n "$query_value" ]]; then
+      is_graphql_read_only "$query_value"
+      return $?
+    fi
+    return 1
+  fi
+
+  return 0
+}
+
+is_graphql_read_only() {
+  local query="$1"
+  # Strip leading whitespace
+  query="$(echo "$query" | sed 's/^[[:space:]]*//')"
+  # A bare { starts a shorthand query (read-only)
+  # "query" or "query(" or "query " starts a named query (read-only)
+  # "subscription" is read-only
+  # "mutation" is a write
+  # Anything else: require approval (fail safe)
+  case "$query" in
+    "{"*)           return 0 ;;
+    query*)         return 0 ;;
+    subscription*)  return 0 ;;
+    mutation*)      return 1 ;;
+    *)              return 1 ;;
+  esac
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: gh-safe <gh args...>" >&2
+  exit 1
+fi
+
+if is_read_only "$@"; then
+  exec gh "$@"
+fi
+
+# Write operation detected
+if [[ "${APPROVE:-}" == "true" ]]; then
+  exec gh "$@"
+fi
+
+echo "gh-safe: command not read-only. approval required." >&2
+echo "gh-safe: run with APPROVE=true to proceed." >&2
+echo "gh-safe: command was: gh $*" >&2
+exit 2
