@@ -167,8 +167,10 @@ COPIED_FILES=false
 echo "Checking for copyable files (node_modules, build outputs, config)..."
 TARGETS="$("$SCRIPTS_DIR/copy-worktree-files.sh" --list "$REPO_ROOT")"
 if [ -n "$TARGETS" ]; then
-  mapfile -t TARGET_ARRAY <<< "$TARGETS"
-  mapfile -t SELECTED < <(prompt_multi_select "Which files to copy to the new worktree?" "${TARGET_ARRAY[@]}")
+  TARGET_ARRAY=()
+  while IFS= read -r line; do TARGET_ARRAY+=("$line"); done <<< "$TARGETS"
+  SELECTED=()
+  while IFS= read -r line; do [ -n "$line" ] && SELECTED+=("$line"); done < <(prompt_multi_select "Which files to copy to the new worktree?" "${TARGET_ARRAY[@]}")
   if [ ${#SELECTED[@]} -gt 0 ]; then
     "$SCRIPTS_DIR/copy-worktree-files.sh" --copy "$REPO_ROOT" "$WT_PATH" "${SELECTED[@]}"
     COPIED_FILES=true
