@@ -45,16 +45,18 @@ Must be run from within a git repository.
 
 Both commands:
 
-1. Create a worktree at `.claude/worktrees/<name>` relative to the repo root
+1. Create a worktree in a `.worktrees/` directory alongside the repo (e.g. `../.worktrees/odh-dashboard--pr-123-slug`)
 2. Offer to copy gitignored files (e.g. `node_modules/`) from the main worktree
 3. Detect your editor (VS Code, Cursor) and open a new window
 4. Detect the project's dependency manager and show install instructions
 
+Worktrees are created outside the repo directory so they don't need to be gitignored within the project. Add `.worktrees/` to the parent directory's `.gitignore` if it's tracked.
+
 ## Cleanup
 
 ```bash
-# Remove a specific worktree
-git worktree remove .claude/worktrees/<name>
+# Remove a specific worktree (from the project repo)
+git worktree remove ../.worktrees/<name>
 
 # List all worktrees
 git worktree list

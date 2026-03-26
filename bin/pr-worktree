@@ -113,18 +113,21 @@ PR_URL="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.std
 # Generate slug from title
 SLUG="$(echo "$PR_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//' | cut -c1-40 | sed 's/-$//')"
 WORKTREE_NAME="pr-${PR_NUMBER}-${SLUG}"
-WORKTREE_REL=".claude/worktrees/${WORKTREE_NAME}"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+BASE_REPO="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+REPO_NAME="$(basename "$REPO_ROOT")"
+WORKTREES_DIR="$(dirname "$REPO_ROOT")/.worktrees"
+WORKTREE_ABS="${WORKTREES_DIR}/${REPO_NAME}--${WORKTREE_NAME}"
 
 echo "PR #${PR_NUMBER}: ${PR_TITLE}"
-echo "Worktree: ${WORKTREE_REL}"
+echo "Worktree: ${WORKTREE_ABS}"
 
-# Get the base repo for fetching
-BASE_REPO="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+# Ensure worktrees directory exists
+mkdir -p "$WORKTREES_DIR"
 
 # Run worktree-ensure
 echo ""
-RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_REL" "$PR_NUMBER" "$SLUG" "$BASE_REPO")"
+RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO")"
 STATUS="$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")"
 WT_PATH="$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['path'])")"
 
@@ -298,5 +301,5 @@ echo ""
 echo "Next steps: Run /review in the new window to start the code review."
 echo ""
 echo "Cleanup when done:"
-echo "  git worktree remove ${WORKTREE_REL}"
-echo "  Or list all: git worktree list"
+echo "  git -C ${REPO_ROOT} worktree remove ${WORKTREE_ABS}"
+echo "  Or list all: git -C ${REPO_ROOT} worktree list"

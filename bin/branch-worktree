@@ -60,15 +60,19 @@ fi
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 REPO_NAME="$(basename "$REPO_ROOT")"
 DIR_BRANCH="$(echo "$BRANCH_NAME" | tr '/' '-')"
-WORKTREE_NAME="${REPO_NAME}-${DIR_BRANCH}"
-WORKTREE_REL=".claude/worktrees/${WORKTREE_NAME}"
+WORKTREE_NAME="${REPO_NAME}--${DIR_BRANCH}"
+WORKTREES_DIR="$(dirname "$REPO_ROOT")/.worktrees"
+WORKTREE_ABS="${WORKTREES_DIR}/${WORKTREE_NAME}"
 
 echo "Branch:   ${BRANCH_NAME}"
-echo "Worktree: ${WORKTREE_REL}"
+echo "Worktree: ${WORKTREE_ABS}"
+
+# Ensure worktrees directory exists
+mkdir -p "$WORKTREES_DIR"
 
 # Run worktree-ensure
 echo ""
-RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" branch "$WORKTREE_REL" "$BRANCH_NAME")"
+RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" branch "$WORKTREE_ABS" "$BRANCH_NAME")"
 STATUS="$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")"
 WT_PATH="$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['path'])")"
 
@@ -210,5 +214,5 @@ fi
 
 echo ""
 echo "Cleanup when done:"
-echo "  git worktree remove ${WORKTREE_REL}"
-echo "  Or list all: git worktree list"
+echo "  git -C ${REPO_ROOT} worktree remove ${WORKTREE_ABS}"
+echo "  Or list all: git -C ${REPO_ROOT} worktree list"
