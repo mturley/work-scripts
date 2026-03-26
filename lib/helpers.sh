@@ -100,6 +100,88 @@ remove_worktree() {
   fi
 }
 
+# copy_worktree_files <scripts-dir> <repo-root> <worktree-path>
+# Finds copyable files, prompts user to select (with caching), and copies.
+# Returns 0 if files were copied, 1 otherwise.
+copy_worktree_files() {
+  local scripts_dir="$1" repo_root="$2" wt_path="$3"
+  local repo_name
+  repo_name="$(basename "$repo_root")"
+  local cache_file="/tmp/worktree-copy-selection-${repo_name}"
+
+  echo "Checking for copyable files (node_modules, build outputs, config)..."
+  local dir_targets dotfile_targets
+  dir_targets="$("$scripts_dir/copy-worktree-files.sh" --list-dirs "$repo_root")"
+  dotfile_targets="$("$scripts_dir/copy-worktree-files.sh" --list-dotfiles "$repo_root")"
+
+  local options=()
+  if [ -n "$dir_targets" ]; then
+    while IFS= read -r line; do options+=("$line"); done <<< "$dir_targets"
+  fi
+  if [ -n "$dotfile_targets" ]; then
+    options+=("Top-level dotfiles")
+  fi
+
+  if [ ${#options[@]} -eq 0 ]; then
+    return 1
+  fi
+
+  local selected=()
+
+  # Check for cached selection
+  if [ -f "$cache_file" ]; then
+    local cached
+    cached="$(cat "$cache_file")"
+    # Verify all cached options are still available
+    local all_valid=true
+    while IFS= read -r item; do
+      local found=false
+      for opt in "${options[@]}"; do
+        if [ "$opt" = "$item" ]; then found=true; break; fi
+      done
+      if ! $found; then all_valid=false; break; fi
+    done <<< "$cached"
+
+    if $all_valid && [ -n "$cached" ]; then
+      echo ""
+      echo "Previous selection for ${repo_name}:"
+      while IFS= read -r item; do echo "  - $item"; done <<< "$cached"
+      if prompt_yn "Use this selection?"; then
+        while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done <<< "$cached"
+      fi
+    fi
+  fi
+
+  # If no cached selection was used, prompt
+  if [ ${#selected[@]} -eq 0 ]; then
+    while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done < <(prompt_multi_select "Which files to copy to the new worktree?" "${options[@]}")
+    # Save selection
+    if [ ${#selected[@]} -gt 0 ]; then
+      printf '%s\n' "${selected[@]}" > "$cache_file"
+    fi
+  fi
+
+  if [ ${#selected[@]} -eq 0 ]; then
+    return 1
+  fi
+
+  # Expand "Top-level dotfiles" into individual paths
+  local copy_paths=()
+  for item in "${selected[@]}"; do
+    if [ "$item" = "Top-level dotfiles" ]; then
+      while IFS= read -r df; do copy_paths+=("$df"); done <<< "$dotfile_targets"
+    else
+      copy_paths+=("$item")
+    fi
+  done
+
+  if [ ${#copy_paths[@]} -gt 0 ]; then
+    "$scripts_dir/copy-worktree-files.sh" --copy "$repo_root" "$wt_path" "${copy_paths[@]}"
+    return 0
+  fi
+  return 1
+}
+
 parse_json() {
   python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null
 }
