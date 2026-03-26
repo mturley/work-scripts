@@ -11,8 +11,8 @@
 #   For "exists-outdated": local_head and remote_head fields
 #
 # In PR mode, if the worktree doesn't exist, it fetches the PR ref and creates it.
-# In branch mode, it tries `git worktree add <path> -b <branch>`, falling back to
-# `git worktree add <path> <branch>` if the branch already exists.
+# In branch mode, it fetches upstream/main (or origin/main) and creates a new
+# branch based on it. Falls back to reusing an existing branch as-is.
 
 set -euo pipefail
 
@@ -53,8 +53,16 @@ case "$MODE" in
       exit 0
     fi
 
+    # Fetch upstream main as the base for new branches
+    BASE_REF=""
+    if git remote get-url upstream &>/dev/null; then
+      git fetch upstream main &>/dev/null && BASE_REF="upstream/main"
+    elif git remote get-url origin &>/dev/null; then
+      git fetch origin main &>/dev/null && BASE_REF="origin/main"
+    fi
+
     # Try creating with new branch first, fall back to existing branch
-    if OUTPUT="$(git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" 2>&1)"; then
+    if OUTPUT="$(git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" ${BASE_REF:+"$BASE_REF"} 2>&1)"; then
       json_out "created" "$(cd "$WORKTREE_PATH" && pwd)"
     elif OUTPUT="$(git worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>&1)"; then
       json_out "created" "$(cd "$WORKTREE_PATH" && pwd)"
