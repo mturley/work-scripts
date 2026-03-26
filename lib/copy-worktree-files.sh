@@ -74,6 +74,7 @@ case "$MODE" in
 
       mkdir -p "$(dirname "$dest")"
 
+      echo "  Copying ${rel}..."
       if [ -d "$src" ]; then
         if rsync -a "$src/" "$dest/" 2>/dev/null; then
           COPIED=$((COPIED + 1))
