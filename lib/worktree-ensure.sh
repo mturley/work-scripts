@@ -113,8 +113,14 @@ case "$MODE" in
 
     # Create new worktree for PR
     BRANCH_NAME="review/pr-${PR_NUMBER}-${SLUG}"
-    git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head:${BRANCH_NAME}" 2>&1
-    git worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>&1
+    if ! OUTPUT="$(git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head:${BRANCH_NAME}" 2>&1)"; then
+      json_out "error" "$WORKTREE_PATH" "message" "$OUTPUT"
+      exit 1
+    fi
+    if ! OUTPUT="$(git worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>&1)"; then
+      json_out "error" "$WORKTREE_PATH" "message" "$OUTPUT"
+      exit 1
+    fi
     json_out "created" "$(cd "$WORKTREE_PATH" && pwd)"
     ;;
 

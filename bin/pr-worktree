@@ -36,36 +36,47 @@ if git rev-parse --is-inside-work-tree &>/dev/null; then
   IN_GIT_REPO=true
 fi
 
+repo_matches_target() {
+  git -C "$1" remote -v 2>/dev/null | grep -q "$2"
+}
+
 if [ -n "$TARGET_OWNER" ] && [ -n "$TARGET_REPO" ]; then
   FULL_TARGET="${TARGET_OWNER}/${TARGET_REPO}"
+  FOUND=""
 
   if $IN_GIT_REPO; then
-    # If we're in a workspace with nested repos, find the matching one
-    resolve_repo_root || exit 1
-    cd "$REPO_ROOT"
-    CURRENT_REPO="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
-    if [ "$CURRENT_REPO" != "$FULL_TARGET" ]; then
-      IN_GIT_REPO=false
+    toplevel="$(git rev-parse --show-toplevel)"
+    if repo_matches_target "$toplevel" "$FULL_TARGET"; then
+      FOUND="$toplevel"
+    else
+      # Search nested repos within current workspace
+      while IFS= read -r gitdir; do
+        candidate="$(dirname "$gitdir")"
+        [ "$candidate" = "$toplevel" ] && continue
+        if repo_matches_target "$candidate" "$FULL_TARGET"; then
+          FOUND="$candidate"
+          break
+        fi
+      done < <(find "$toplevel" -maxdepth 4 -name .git -not -path "*/.worktrees/*" -not -path "*/node_modules/*" -not -path "*/.claude/*" 2>/dev/null | sort)
     fi
   fi
 
-  if ! $IN_GIT_REPO; then
+  if [ -z "$FOUND" ]; then
     echo "Not in the ${FULL_TARGET} repo. Searching for a local clone..."
-    FOUND=""
     while IFS= read -r candidate; do
-      if git -C "$candidate" remote -v 2>/dev/null | grep -q "${TARGET_OWNER}/${TARGET_REPO}"; then
+      if repo_matches_target "$candidate" "$FULL_TARGET"; then
         FOUND="$candidate"
         break
       fi
     done < <(find ~/ -maxdepth 4 -type d -name "$TARGET_REPO" -not -path "*/node_modules/*" -not -path "*/.claude/worktrees/*" -not -path "*/.worktrees/*" 2>/dev/null)
-
-    if [ -z "$FOUND" ]; then
-      echo "ERROR: No local clone of ${FULL_TARGET} found." >&2
-      exit 1
-    fi
-    echo "Found local clone at: $FOUND"
-    cd "$FOUND"
   fi
+
+  if [ -z "$FOUND" ]; then
+    echo "ERROR: No local clone of ${FULL_TARGET} found." >&2
+    exit 1
+  fi
+  echo "Using repo: $FOUND"
+  cd "$FOUND"
 else
   # No URL provided — resolve which repo to use
   resolve_repo_root || exit 1
@@ -110,6 +121,46 @@ if [ -z "$STATUS" ]; then
   exit 1
 fi
 
+# warn_pr_local_changes <worktree-path>
+# Warns about uncommitted changes or local commits before destructive operations.
+# Returns 1 if the user aborts.
+warn_pr_local_changes() {
+  local wt_path="$1"
+  local has_warning=false
+
+  # Check for uncommitted changes
+  local changes
+  changes="$(git -C "$wt_path" status --porcelain 2>/dev/null)"
+  if [ -n "$changes" ]; then
+    echo ""
+    echo "WARNING: Worktree has uncommitted changes:"
+    echo "$changes"
+    has_warning=true
+  fi
+
+  if $has_warning; then
+    if ! prompt_yn "Continue? These changes will be lost."; then
+      return 1
+    fi
+  fi
+  return 0
+}
+
+recreate_pr_worktree() {
+  local pr_branch="review/pr-${PR_NUMBER}-${SLUG}"
+  warn_pr_local_changes "$WT_PATH" || return 1
+  remove_worktree "$WT_PATH"
+  git branch -D "$pr_branch" 2>/dev/null || true
+  if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
+    MSG="$(echo "$RESULT" | parse_json message)"
+    echo "ERROR: Failed to recreate worktree." >&2
+    [ -n "$MSG" ] && echo "  $MSG" >&2
+    return 1
+  fi
+  WT_PATH="$(echo "$RESULT" | parse_json path)"
+  echo "Worktree recreated at: ${WT_PATH}"
+}
+
 case "$STATUS" in
   created)
     echo "Worktree created at: ${WT_PATH}"
@@ -118,12 +169,7 @@ case "$STATUS" in
     echo "Worktree already exists and is up to date."
     CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Recreate from scratch")"
     if [ "$CHOICE" = "Recreate from scratch" ]; then
-      PR_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
-      remove_worktree "$WT_PATH"
-      git branch -D "$PR_BRANCH" 2>/dev/null || true
-      RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"
-      WT_PATH="$(echo "$RESULT" | parse_json path)"
-      echo "Worktree recreated at: ${WT_PATH}"
+      recreate_pr_worktree || exit 1
     fi
     ;;
   exists-outdated)
@@ -135,18 +181,14 @@ case "$STATUS" in
     CHOICE="$(prompt_choice "What would you like to do?" "Update to latest" "Recreate from scratch" "Reuse as-is")"
     case "$CHOICE" in
       "Update to latest")
+        warn_pr_local_changes "$WT_PATH" || exit 1
         PR_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
         git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head:${PR_BRANCH}" --force
         git -C "$WT_PATH" reset --hard "$PR_BRANCH"
         echo "Updated to latest PR state."
         ;;
       "Recreate from scratch")
-        PR_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
-        remove_worktree "$WT_PATH"
-        git branch -D "$PR_BRANCH" 2>/dev/null || true
-        RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"
-        WT_PATH="$(echo "$RESULT" | parse_json path)"
-        echo "Worktree recreated at: ${WT_PATH}"
+        recreate_pr_worktree || exit 1
         ;;
       "Reuse as-is")
         echo "Keeping worktree as-is."
