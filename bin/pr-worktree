@@ -228,6 +228,26 @@ case "$STATUS" in
         ;;
     esac
     ;;
+  branch-exists)
+    STALE_BRANCH="$(echo "$RESULT" | parse_json branch)"
+    echo "A local branch '${STALE_BRANCH}' already exists (likely leftover from a previous worktree)."
+    CHOICE="$(prompt_choice "Delete the old branch and re-fetch the PR?" "Yes" "No")"
+    if [ "$CHOICE" = "Yes" ]; then
+      git branch -D "$STALE_BRANCH"
+      if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
+        MSG="$(echo "$RESULT" | parse_json message)"
+        echo "ERROR: Failed to create worktree after deleting branch." >&2
+        [ -n "$MSG" ] && echo "  $MSG" >&2
+        exit 1
+      fi
+      STATUS="$(echo "$RESULT" | parse_json status)"
+      WT_PATH="$(echo "$RESULT" | parse_json path)"
+      echo "Worktree created at: ${WT_PATH}"
+    else
+      echo "Aborted." >&2
+      exit 1
+    fi
+    ;;
   error)
     MSG="$(echo "$RESULT" | parse_json message)"
     echo "ERROR: Failed to create worktree." >&2

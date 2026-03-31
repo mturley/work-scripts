@@ -6,7 +6,7 @@
 #   PR mode:     worktree-ensure.sh pr <worktree-path> <pr-number> <slug> <base-repo>
 #
 # Output: JSON object with:
-#   status: "created" | "exists" | "exists-elsewhere" | "exists-outdated" | "error"
+#   status: "created" | "exists" | "exists-elsewhere" | "exists-outdated" | "branch-exists" | "error"
 #   path: absolute path to the worktree
 #   For "exists-outdated": local_head and remote_head fields
 #
@@ -118,6 +118,11 @@ case "$MODE" in
     # Create new worktree for PR
     BRANCH_NAME="review/pr-${PR_NUMBER}-${SLUG}"
     if ! OUTPUT="$(git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head:${BRANCH_NAME}" 2>&1)"; then
+      # Check if failure is due to existing branch (non-fast-forward)
+      if echo "$OUTPUT" | grep -q 'non-fast-forward' && git rev-parse --verify "$BRANCH_NAME" &>/dev/null; then
+        json_out "branch-exists" "$WORKTREE_PATH" "message" "Local branch '${BRANCH_NAME}' already exists (likely leftover from a previous worktree)" "branch" "$BRANCH_NAME"
+        exit 0
+      fi
       json_out "error" "$WORKTREE_PATH" "message" "$OUTPUT"
       exit 1
     fi
