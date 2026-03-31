@@ -87,6 +87,34 @@ prompt_multi_select() {
   done
 }
 
+# force_rm <path> - Remove a directory, prompting to fix permissions if needed
+force_rm() {
+  local target="$1"
+  if rm -rf "$target" 2>/dev/null; then
+    return 0
+  fi
+  # Check if the failure was permission-related
+  local err
+  err="$(rm -rf "$target" 2>&1)" || true
+  if echo "$err" | grep -q "Permission denied"; then
+    echo "" >&2
+    echo "Permission denied removing: $target" >&2
+    echo "This can happen with downloaded binaries (e.g. k8s test fixtures)." >&2
+    if prompt_yn "Run chmod -R u+rwx and retry?"; then
+      chmod -R u+rwx "$target"
+      rm -rf "$target"
+      return $?
+    else
+      echo "Skipping removal." >&2
+      return 1
+    fi
+  fi
+  # Non-permission error
+  echo "ERROR: Failed to remove $target" >&2
+  echo "  $err" >&2
+  return 1
+}
+
 # remove_worktree <path> - Remove a worktree, handling invalid/leftover directories
 remove_worktree() {
   local wt_path="$1"
@@ -95,7 +123,7 @@ remove_worktree() {
   fi
   # Fallback: directory exists but isn't a valid worktree
   if [ -d "$wt_path" ]; then
-    rm -rf "$wt_path"
+    force_rm "$wt_path"
     git worktree prune 2>/dev/null
   fi
 }

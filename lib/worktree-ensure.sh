@@ -16,6 +16,10 @@
 
 set -euo pipefail
 
+SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# shellcheck source=helpers.sh
+source "$SCRIPTS_DIR/helpers.sh"
+
 MODE="${1:?Usage: worktree-ensure.sh <branch|pr> ...}"
 WORKTREE_PATH="${2:?Missing worktree path}"
 
@@ -41,7 +45,7 @@ case "$MODE" in
         exit 0
       else
         # Directory exists but is not a valid worktree (leftover from a failed operation)
-        rm -rf "$WORKTREE_PATH"
+        force_rm "$WORKTREE_PATH"
       fi
     fi
 
@@ -92,7 +96,7 @@ case "$MODE" in
           break
         elif [ -d "$d" ]; then
           # Leftover directory, not a valid worktree
-          rm -rf "$d"
+          force_rm "$d"
         fi
       done
     fi
