@@ -90,7 +90,21 @@ prompt_multi_select() {
 # force_rm <path> - Remove a directory, prompting to fix permissions if needed
 force_rm() {
   local target="$1"
-  if rm -rf "$target" 2>/dev/null; then
+  echo "Removing $(basename "$target")..."
+  # Show a spinner while rm runs in the background
+  rm -rf "$target" 2>/dev/null &
+  local rm_pid=$!
+  local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  local i=0
+  while kill -0 "$rm_pid" 2>/dev/null; do
+    printf "\r  %s deleting files..." "${spin_chars:$((i % ${#spin_chars})):1}" >&2
+    i=$((i + 1))
+    sleep 0.1
+  done
+  printf "\r                          \r" >&2
+  wait "$rm_pid"
+  local exit_code=$?
+  if [ $exit_code -eq 0 ] && [ ! -d "$target" ]; then
     return 0
   fi
   # Check if the failure was permission-related
@@ -101,8 +115,10 @@ force_rm() {
     echo "Permission denied removing: $target" >&2
     echo "This can happen with downloaded binaries (e.g. k8s test fixtures)." >&2
     if prompt_yn "Run chmod -R u+rwx and retry?"; then
+      echo "Fixing permissions..."
       chmod -R u+rwx "$target"
-      rm -rf "$target"
+      echo "Retrying removal..."
+      force_rm "$target"
       return $?
     else
       echo "Skipping removal." >&2
@@ -118,12 +134,16 @@ force_rm() {
 # remove_worktree <path> - Remove a worktree, handling invalid/leftover directories
 remove_worktree() {
   local wt_path="$1"
-  if git worktree remove "$wt_path" --force 2>/dev/null; then
+  echo "Removing worktree at $(basename "$wt_path")..."
+  if git worktree remove "$wt_path" --force 2>&1; then
+    echo "Pruning worktree list..."
+    git worktree prune 2>/dev/null
     return 0
   fi
   # Fallback: directory exists but isn't a valid worktree
   if [ -d "$wt_path" ]; then
     force_rm "$wt_path"
+    echo "Pruning worktree list..."
     git worktree prune 2>/dev/null
   fi
 }

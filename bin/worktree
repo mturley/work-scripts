@@ -22,9 +22,14 @@ if [ $# -eq 0 ]; then
   fi
 
   worktrees=()
+  orphaned=()
   while IFS= read -r d; do
+    name="$(basename "$d")"
     if [ -e "$d/.git" ]; then
-      worktrees+=("$(basename "$d")")
+      worktrees+=("$name")
+    else
+      worktrees+=("$name (orphaned)")
+      orphaned+=("$name")
     fi
   done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
 
@@ -34,10 +39,33 @@ if [ $# -eq 0 ]; then
   fi
 
   choice="$(prompt_choice "Select a worktree:" "${worktrees[@]}")"
-  WT_PATH="${WORKTREES_BASE}/${choice}"
+
+  # Check if the selection is orphaned
+  selected_name="${choice% (orphaned)}"
+  is_orphaned=false
+  if [ ${#orphaned[@]} -gt 0 ]; then
+    for o in "${orphaned[@]}"; do
+      if [ "$o" = "$selected_name" ]; then
+        is_orphaned=true
+        break
+      fi
+    done
+  fi
+
+  WT_PATH="${WORKTREES_BASE}/${selected_name}"
+
+  if $is_orphaned; then
+    echo ""
+    echo "This worktree is orphaned (no .git link — likely left over from a failed cleanup)."
+    echo "  $WT_PATH"
+    if prompt_yn "Remove this directory?"; then
+      force_rm "$WT_PATH"
+      echo "Removed."
+    fi
+    exit 0
+  fi
+
   REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-  echo ""
-  echo "Commands: [o]pen, [s]tatus, [c]leanup, [e]xit"
   worktree_repl "$REPO_ROOT" "$WT_PATH"
   exit 0
 fi
@@ -49,8 +77,6 @@ ARG="$1"
 if resolve_worktree "$ARG"; then
   echo "Found existing worktree: $WT_PATH"
   REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-  echo ""
-  echo "Commands: [o]pen, [s]tatus, [c]leanup, [e]xit"
   worktree_repl "$REPO_ROOT" "$WT_PATH"
   exit 0
 fi
