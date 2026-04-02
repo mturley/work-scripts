@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # worktree - Manage git worktrees for PRs and branches
 #
-# Usage: worktree <pr-number|pr-url|branch-name|worktree-path>
+# Usage: worktree [pr-number|pr-url|branch-name|worktree-path]
 #
+# With no arguments, lists existing worktrees and prompts to select one.
 # If a worktree already exists for the given argument, opens the REPL directly.
 # Otherwise creates a new worktree (PR or branch) and opens the REPL.
 
@@ -12,7 +13,36 @@ SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
 # shellcheck source=../lib/helpers.sh
 source "$SCRIPTS_DIR/helpers.sh"
 
-ARG="${1:?Usage: worktree <pr-number|pr-url|branch-name|worktree-path>}"
+# --- No arguments: list and select ---
+
+if [ $# -eq 0 ]; then
+  if [ ! -d "$WORKTREES_BASE" ]; then
+    echo "No worktrees found in $WORKTREES_BASE"
+    exit 0
+  fi
+
+  worktrees=()
+  while IFS= read -r d; do
+    if [ -e "$d/.git" ]; then
+      worktrees+=("$(basename "$d")")
+    fi
+  done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+
+  if [ ${#worktrees[@]} -eq 0 ]; then
+    echo "No worktrees found in $WORKTREES_BASE"
+    exit 0
+  fi
+
+  choice="$(prompt_choice "Select a worktree:" "${worktrees[@]}")"
+  WT_PATH="${WORKTREES_BASE}/${choice}"
+  REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+  echo ""
+  echo "Commands: [o]pen, [s]tatus, [c]leanup, [e]xit"
+  worktree_repl "$REPO_ROOT" "$WT_PATH"
+  exit 0
+fi
+
+ARG="$1"
 
 # --- Phase 0: Check for existing worktree ---
 
