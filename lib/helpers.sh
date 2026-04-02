@@ -135,16 +135,24 @@ force_rm() {
 remove_worktree() {
   local wt_path="$1"
   echo "Removing worktree at $(basename "$wt_path")..."
-  if git worktree remove "$wt_path" --force 2>&1; then
+  # Derive the main repo root from the worktree so git commands work
+  # regardless of the caller's working directory
+  local repo_root=""
+  if [ -e "$wt_path/.git" ]; then
+    repo_root="$(git -C "$wt_path" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
+  fi
+  if [ -n "$repo_root" ] && git -C "$repo_root" worktree remove "$wt_path" --force 2>&1; then
     echo "Pruning worktree list..."
-    git worktree prune 2>/dev/null
+    git -C "$repo_root" worktree prune 2>/dev/null
     return 0
   fi
   # Fallback: directory exists but isn't a valid worktree
   if [ -d "$wt_path" ]; then
     force_rm "$wt_path"
-    echo "Pruning worktree list..."
-    git worktree prune 2>/dev/null
+    if [ -n "$repo_root" ]; then
+      echo "Pruning worktree list..."
+      git -C "$repo_root" worktree prune 2>/dev/null
+    fi
   fi
 }
 
