@@ -458,6 +458,77 @@ resolve_worktree() {
   return 1
 }
 
+# repo_matches_target <repo-path> <owner/repo>
+# Returns 0 if the repo at the given path has a remote matching the target.
+repo_matches_target() {
+  git -C "$1" remote -v 2>/dev/null | grep -q "$2"
+}
+
+# warn_pr_local_changes <worktree-path>
+# Warns about uncommitted changes before destructive operations.
+# Returns 1 if the user aborts.
+warn_pr_local_changes() {
+  local wt_path="$1"
+  local changes
+  changes="$(git -C "$wt_path" status --porcelain 2>/dev/null)"
+  if [ -n "$changes" ]; then
+    echo ""
+    echo "WARNING: Worktree has uncommitted changes:"
+    echo "$changes"
+    if ! prompt_yn "Continue? These changes will be lost."; then
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# setup_pr_tracking <worktree-path> <local-branch> <pr-head-owner> <pr-head-ref>
+# Finds the git remote matching the PR owner and sets the local branch to track it.
+setup_pr_tracking() {
+  local wt_path="$1" local_branch="$2" head_owner="$3" head_ref="$4"
+  if [ -z "$head_owner" ] || [ -z "$head_ref" ]; then
+    return 0
+  fi
+  local remote_name=""
+  while IFS= read -r line; do
+    local name url
+    name="$(echo "$line" | awk '{print $1}')"
+    url="$(echo "$line" | awk '{print $2}')"
+    if echo "$url" | grep -qi "github\.com[:/]${head_owner}/"; then
+      remote_name="$name"
+      break
+    fi
+  done < <(git remote -v | grep '(fetch)')
+
+  if [ -z "$remote_name" ]; then
+    echo "Note: No git remote found for '${head_owner}'. Branch tracking not set."
+    return 0
+  fi
+
+  git fetch "$remote_name" "$head_ref" 2>/dev/null || true
+  git -C "$wt_path" branch --set-upstream-to="${remote_name}/${head_ref}" "$local_branch" 2>/dev/null || true
+}
+
+# recreate_pr_worktree <scripts-dir> <worktree-abs> <pr-number> <slug> <base-repo> <wt-path>
+# Removes the PR worktree and branch, then recreates both.
+# Sets WT_PATH to the new worktree path. Returns 1 if user aborts.
+recreate_pr_worktree() {
+  local scripts_dir="$1" worktree_abs="$2" pr_number="$3" slug="$4" base_repo="$5" wt_path="$6"
+  local pr_branch="review/pr-${pr_number}-${slug}"
+  warn_pr_local_changes "$wt_path" || return 1
+  remove_worktree "$wt_path"
+  git branch -D "$pr_branch" 2>/dev/null || true
+  if ! RESULT="$("$scripts_dir/worktree-ensure.sh" pr "$worktree_abs" "$pr_number" "$slug" "$base_repo" 2>&1)"; then
+    local msg
+    msg="$(echo "$RESULT" | parse_json message)"
+    echo "ERROR: Failed to recreate worktree." >&2
+    [ -n "$msg" ] && echo "  $msg" >&2
+    return 1
+  fi
+  WT_PATH="$(echo "$RESULT" | parse_json path)"
+  echo "Worktree recreated at: ${WT_PATH}"
+}
+
 # resolve_repo_root - Find the project repo to operate on.
 # If the current git root contains nested git repos, prompt the user to select one.
 # Sets REPO_ROOT to the selected repo's absolute path.
