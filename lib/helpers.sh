@@ -173,7 +173,7 @@ copy_worktree_files() {
   repo_name="$(basename "$repo_root")"
   local cache_file="/tmp/worktree-copy-selection-${repo_name}"
 
-  echo "Checking for copyable files (node_modules, build outputs, config)..."
+  echo "Checking for linkable files (node_modules, build outputs, config)..."
   local dir_targets dotfile_targets
   dir_targets="$("$scripts_dir/copy-worktree-files.sh" --list-dirs "$repo_root")"
   dotfile_targets="$("$scripts_dir/copy-worktree-files.sh" --list-dotfiles "$repo_root")"
@@ -218,7 +218,7 @@ copy_worktree_files() {
 
   # If no cached selection was used, prompt
   if [ ${#selected[@]} -eq 0 ]; then
-    while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done < <(prompt_multi_select "Which files to copy to the new worktree?" "${options[@]}")
+    while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done < <(prompt_multi_select "Which files to link into the new worktree?" "${options[@]}")
     # Save selection
     if [ ${#selected[@]} -gt 0 ]; then
       printf '%s\n' "${selected[@]}" > "$cache_file"

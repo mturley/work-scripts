@@ -69,9 +69,12 @@ case "$MODE" in
 
       mkdir -p "$(dirname "$dest")"
 
-      echo "  Copying ${rel}..."
+      echo "  Linking ${rel}..."
       if [ -d "$src" ]; then
-        if rsync -a "$src/" "$dest/" 2>/dev/null; then
+        # Use rsync with --link-dest to hardlink files instead of copying data.
+        # This makes node_modules etc. nearly instant. Falls back to regular
+        # copy if hardlinking fails (e.g. cross-device).
+        if rsync -a --link-dest="$src" "$src/" "$dest/" 2>/dev/null; then
           COPIED=$((COPIED + 1))
         else
           echo "  ERROR: $rel" >&2
@@ -87,7 +90,7 @@ case "$MODE" in
       fi
     done
 
-    echo "Copied ${COPIED} entries."
+    echo "Linked ${COPIED} entries."
     if [ "$ERRORS" -gt 0 ]; then
       echo "Errors: ${ERRORS}." >&2
     fi
