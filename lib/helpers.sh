@@ -87,22 +87,27 @@ prompt_multi_select() {
   done
 }
 
+# spin_wait <pid> <message> - Show a spinner while a background process runs
+spin_wait() {
+  local pid="$1" msg="$2"
+  local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r  %s %s" "${spin_chars:$((i % ${#spin_chars})):1}" "$msg" >&2
+    i=$((i + 1))
+    sleep 0.1
+  done
+  printf "\r%*s\r" $((${#msg} + 4)) "" >&2
+  wait "$pid"
+  return $?
+}
+
 # force_rm <path> - Remove a directory, prompting to fix permissions if needed
 force_rm() {
   local target="$1"
   echo "Removing $(basename "$target")..."
-  # Show a spinner while rm runs in the background
   rm -rf "$target" 2>/dev/null &
-  local rm_pid=$!
-  local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-  local i=0
-  while kill -0 "$rm_pid" 2>/dev/null; do
-    printf "\r  %s deleting files..." "${spin_chars:$((i % ${#spin_chars})):1}" >&2
-    i=$((i + 1))
-    sleep 0.1
-  done
-  printf "\r                          \r" >&2
-  wait "$rm_pid"
+  spin_wait $! "deleting files..."
   local exit_code=$?
   if [ $exit_code -eq 0 ] && [ ! -d "$target" ]; then
     return 0
@@ -141,10 +146,13 @@ remove_worktree() {
   if [ -e "$wt_path/.git" ]; then
     repo_root="$(git -C "$wt_path" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
   fi
-  if [ -n "$repo_root" ] && git -C "$repo_root" worktree remove "$wt_path" --force 2>&1; then
-    echo "Pruning worktree list..."
-    git -C "$repo_root" worktree prune 2>/dev/null
-    return 0
+  if [ -n "$repo_root" ]; then
+    git -C "$repo_root" worktree remove "$wt_path" --force &>/dev/null &
+    if spin_wait $! "removing worktree..." && [ ! -d "$wt_path" ]; then
+      echo "Pruning worktree list..."
+      git -C "$repo_root" worktree prune 2>/dev/null
+      return 0
+    fi
   fi
   # Fallback: directory exists but isn't a valid worktree
   if [ -d "$wt_path" ]; then
