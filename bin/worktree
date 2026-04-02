@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# worktree - Manage git worktrees for PRs and branches
+#
+# Usage: worktree <pr-number|pr-url|branch-name|worktree-path>
+#
+# If a worktree already exists for the given argument, opens the REPL directly.
+# Otherwise delegates to pr-worktree or branch-worktree to create one.
+
+set -euo pipefail
+
+SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
+BIN_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+# shellcheck source=../lib/helpers.sh
+source "$SCRIPTS_DIR/helpers.sh"
+
+ARG="${1:?Usage: worktree <pr-number|pr-url|branch-name|worktree-path>}"
+
+# Check if a worktree already exists for this argument
+if resolve_worktree "$ARG"; then
+  echo "Found existing worktree: $WT_PATH"
+
+  # Find the main repo root for the REPL
+  REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+
+  echo ""
+  echo "Commands: [o]pen, [s]tatus, [c]leanup, [e]xit"
+  worktree_repl "$REPO_ROOT" "$WT_PATH"
+  exit 0
+fi
+
+# No existing worktree — determine whether this is a PR or branch and delegate
+if [[ "$ARG" == *github.com* ]] || [[ "$ARG" =~ ^[0-9]+$ ]]; then
+  exec "$BIN_DIR/pr-worktree" "$ARG"
+else
+  exec "$BIN_DIR/branch-worktree" "$ARG"
+fi

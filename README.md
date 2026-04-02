@@ -21,6 +21,16 @@ export PATH=$HOME/git/work-scripts/bin:$PATH
 
 ## Commands
 
+### `worktree`
+
+Unified entry point for managing git worktrees. Accepts a PR number, PR URL, branch name, or worktree path.
+
+```bash
+worktree <pr-number|pr-url|branch-name|worktree-path>
+```
+
+If a worktree already exists for the given argument, opens an interactive REPL with commands to open, check status, or clean up the worktree. Otherwise delegates to `pr-worktree` or `branch-worktree` to create one.
+
 ### `branch-worktree`
 
 Creates an isolated git worktree for a new branch (based on `upstream/main`) and opens it in a new editor window.
@@ -74,10 +84,9 @@ Both worktree commands:
 
 ### Cleanup
 
-```bash
-# Remove a specific worktree (from the project repo)
-git worktree remove ~/git/.worktrees/<name>
+Use `worktree <arg>` to open the REPL for an existing worktree, then use the `cleanup` command. Or remove directly:
 
-# List all worktrees
+```bash
+git worktree remove ~/git/.worktrees/<name>
 git worktree list
 ```

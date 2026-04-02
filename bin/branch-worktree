@@ -81,27 +81,6 @@ case "$STATUS" in
     ;;
 esac
 
-# --- Phase 2: Copy Gitignored Files ---
-
-COPIED_FILES=false
-if copy_worktree_files "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"; then
-  COPIED_FILES=true
-fi
-
-# --- Phase 3: Detect Editor and Open ---
-
-echo ""
-detect_editor
-open_editor "$WT_PATH"
-
-# --- Post-Setup Summary ---
-
-echo ""
-echo "============================================"
-echo "Branch Worktree Ready!"
-echo "============================================"
-echo ""
-echo "Branch:    ${BRANCH_NAME}"
-echo "Worktree:  ${WT_PATH}"
-
-worktree_repl "$REPO_ROOT" "$WT_PATH"
+worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" "Branch Worktree Ready!" \
+  "Branch:    ${BRANCH_NAME}" \
+  "Worktree:  ${WT_PATH}"

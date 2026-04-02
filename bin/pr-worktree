@@ -264,28 +264,7 @@ esac
 PR_LOCAL_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
 setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
 
-# --- Phase 2: Copy Gitignored Files ---
-
-COPIED_FILES=false
-if copy_worktree_files "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"; then
-  COPIED_FILES=true
-fi
-
-# --- Phase 3: Detect Editor and Open ---
-
-echo ""
-detect_editor
-open_editor "$WT_PATH"
-
-# --- Post-Setup Summary ---
-
-echo ""
-echo "============================================"
-echo "PR Worktree Ready!"
-echo "============================================"
-echo ""
-echo "PR:        #${PR_NUMBER} - ${PR_TITLE}"
-echo "URL:       ${PR_URL}"
-echo "Worktree:  ${WT_PATH}"
-
-worktree_repl "$REPO_ROOT" "$WT_PATH"
+worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" "PR Worktree Ready!" \
+  "PR:        #${PR_NUMBER} - ${PR_TITLE}" \
+  "URL:       ${PR_URL}" \
+  "Worktree:  ${WT_PATH}"

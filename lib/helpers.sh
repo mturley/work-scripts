@@ -274,23 +274,50 @@ detect_editor() {
 }
 
 # open_editor <worktree-path> - Open the worktree in an editor.
-# Uses EDITOR_CMD if set, otherwise prompts the user to choose.
+# Uses EDITOR_CMD if set (from detect_editor), otherwise uses cached preference,
+# otherwise prompts the user to choose. Caches the choice for future runs.
 open_editor() {
   local wt_path="$1"
+  local cache_file="/tmp/worktree-editor-preference"
+
   if [ -n "${EDITOR_CMD:-}" ]; then
     env -u CLAUDECODE $EDITOR_CMD --new-window "$wt_path"
     echo "Opened new ${EDITOR_CMD} window."
-  else
-    echo "No editor detected."
-    if prompt_yn "Would you like to open an editor?"; then
-      local choice
-      choice="$(prompt_choice "Which editor?" "VS Code" "Cursor")"
-      case "$choice" in
-        "VS Code") env -u CLAUDECODE code --new-window "$wt_path" ;;
-        "Cursor") env -u CLAUDECODE cursor --new-window "$wt_path" ;;
-      esac
-    fi
+    return
   fi
+
+  echo "No editor detected."
+
+  # Check for cached preference
+  if [ -f "$cache_file" ]; then
+    local cached
+    cached="$(cat "$cache_file")"
+    case "$cached" in
+      "VS Code")
+        env -u CLAUDECODE code --new-window "$wt_path"
+        echo "Opened new VS Code window (remembered preference)."
+        return
+        ;;
+      "Cursor")
+        env -u CLAUDECODE cursor --new-window "$wt_path"
+        echo "Opened new Cursor window (remembered preference)."
+        return
+        ;;
+      "None")
+        echo "Skipping editor (remembered preference)."
+        return
+        ;;
+    esac
+  fi
+
+  local choice
+  choice="$(prompt_choice "Which editor?" "VS Code" "Cursor" "None")"
+  echo "$choice" > "$cache_file"
+  case "$choice" in
+    "VS Code") env -u CLAUDECODE code --new-window "$wt_path" ;;
+    "Cursor") env -u CLAUDECODE cursor --new-window "$wt_path" ;;
+    "None") echo "Skipping editor." ;;
+  esac
 }
 
 # worktree_repl <repo-root> <worktree-path>
@@ -335,6 +362,100 @@ worktree_repl() {
 
 parse_json() {
   python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null
+}
+
+# worktree_post_setup <scripts-dir> <repo-root> <worktree-path> <label> <detail-lines...>
+# Handles copy-files, editor open, summary banner, and REPL.
+# label: e.g. "PR Worktree Ready!" or "Branch Worktree Ready!"
+# detail-lines: lines to print in the summary (e.g. "PR:  #123 - title")
+worktree_post_setup() {
+  local scripts_dir="$1" repo_root="$2" wt_path="$3" label="$4"
+  shift 4
+
+  # --- Copy Gitignored Files ---
+  copy_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
+
+  # --- Detect Editor and Open ---
+  echo ""
+  detect_editor
+  open_editor "$wt_path"
+
+  # --- Post-Setup Summary ---
+  echo ""
+  echo "============================================"
+  echo "$label"
+  echo "============================================"
+  echo ""
+  for line in "$@"; do
+    echo "$line"
+  done
+
+  worktree_repl "$repo_root" "$wt_path"
+}
+
+# resolve_worktree <arg>
+# Resolves a worktree path from a PR number, PR URL, branch name, or direct path.
+# Sets WT_PATH to the resolved absolute path. Returns 1 if not found.
+resolve_worktree() {
+  local arg="$1"
+  WT_PATH=""
+
+  # Case 1: Direct path to a worktree
+  if [ -d "$arg" ] && [ -e "$arg/.git" ]; then
+    WT_PATH="$(cd "$arg" && pwd)"
+    return 0
+  elif [ -d "$WORKTREES_BASE/$arg" ] && [ -e "$WORKTREES_BASE/$arg/.git" ]; then
+    WT_PATH="$WORKTREES_BASE/$arg"
+    return 0
+  fi
+
+  # Case 2: PR number or URL
+  local pr_number=""
+  if [[ "$arg" == *github.com* ]]; then
+    pr_number="$(echo "$arg" | grep -o '[0-9]*$' || true)"
+  elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+    pr_number="$arg"
+  fi
+
+  if [ -n "$pr_number" ]; then
+    if [ -d "$WORKTREES_BASE" ]; then
+      while IFS= read -r candidate; do
+        if [ -d "$candidate" ]; then
+          WT_PATH="$candidate"
+          return 0
+        fi
+      done < <(find "$WORKTREES_BASE" -maxdepth 1 -type d -name "*--pr-${pr_number}-*" 2>/dev/null)
+    fi
+    return 1
+  fi
+
+  # Case 3: Branch name
+  local dir_branch
+  dir_branch="$(echo "$arg" | tr '/' '-')"
+  if [ -d "$WORKTREES_BASE" ]; then
+    while IFS= read -r candidate; do
+      if [ -d "$candidate" ]; then
+        WT_PATH="$candidate"
+        return 0
+      fi
+    done < <(find "$WORKTREES_BASE" -maxdepth 1 -type d -name "*--${dir_branch}" 2>/dev/null)
+  fi
+
+  # Also check git worktree list for the branch
+  local existing_wt
+  existing_wt="$(git worktree list --porcelain 2>/dev/null | awk -v branch="$arg" '
+    /^worktree / { wt = $0; sub(/^worktree /, "", wt) }
+    /^branch refs\/heads\// {
+      b = $0; sub(/^branch refs\/heads\//, "", b)
+      if (b == branch) { print wt; exit }
+    }
+  ')"
+  if [ -n "$existing_wt" ]; then
+    WT_PATH="$existing_wt"
+    return 0
+  fi
+
+  return 1
 }
 
 # resolve_repo_root - Find the project repo to operate on.
