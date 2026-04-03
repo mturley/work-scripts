@@ -7,6 +7,13 @@
 # If a worktree already exists for the given argument, opens the REPL directly.
 # Otherwise creates a new worktree (PR or branch) and opens the REPL.
 
+# Detect if the current directory has been deleted (e.g. after worktree cleanup)
+if ! pwd &>/dev/null; then
+  echo "Your current directory no longer exists (it was probably just removed)."
+  echo "Run: cd ~"
+  exit 1
+fi
+
 set -euo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
@@ -41,7 +48,7 @@ if [ $# -eq 0 ]; then
   orphaned=()
   while IFS= read -r d; do
     name="$(basename "$d")"
-    if [ -e "$d/.git" ]; then
+    if git -C "$d" rev-parse --git-dir &>/dev/null; then
       worktrees+=("$name")
     else
       worktrees+=("$name (orphaned)")
@@ -98,9 +105,8 @@ if resolve_worktree "$ARG"; then
     if prompt_yn "Remove this directory?"; then
       force_rm "$WT_PATH"
       echo "Removed."
-    else
-      exit 0
     fi
+    exit 0
   else
     echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
     REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"

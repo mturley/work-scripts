@@ -117,18 +117,18 @@ spin_wait() {
 force_rm() {
   local target="$1"
   echo "Removing $(basename "$target")..."
-  rm -rf "$target" 2>/dev/null &
-  spin_wait $! "deleting files..."
-  local exit_code=$?
+  local exit_code=0
+  rm -rf "$target" &
+  spin_wait $! "deleting files..." || exit_code=$?
   if [ $exit_code -eq 0 ] && [ ! -d "$target" ]; then
     return 0
   fi
   # Check if the failure was permission-related
   local err
   err="$(rm -rf "$target" 2>&1)" || true
-  if echo "$err" | grep -q "Permission denied"; then
+  if echo "$err" | grep -qi "Permission denied\|Operation not permitted"; then
     echo "" >&2
-    echo "Permission denied removing: $target" >&2
+    echo "Permission error removing: $target" >&2
     echo "This can happen with downloaded binaries (e.g. k8s test fixtures)." >&2
     if prompt_yn "Run chmod -R u+rwx and retry?"; then
       echo "Fixing permissions..."
