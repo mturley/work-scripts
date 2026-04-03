@@ -26,12 +26,18 @@ case "$MODE" in
     done
 
     # dist/ and bin/ build output dirs (shallow, skip node_modules and .git)
+    # Skip directories that contain tracked files (linking over them would
+    # cause git to report tracked files as deleted).
     find "$SOURCE_ROOT" -maxdepth 3 \
       -path "*/.git" -prune -o \
       -path "*/node_modules" -prune -o \
       \( -name dist -o -name bin \) -type d -print \
       2>/dev/null | while IFS= read -r p; do
-      echo "${p#"$SOURCE_ROOT"/}"
+      rel="${p#"$SOURCE_ROOT"/}"
+      # Check if any tracked files exist under this directory
+      if [ -z "$(git -C "$SOURCE_ROOT" ls-files "$rel" 2>/dev/null)" ]; then
+        echo "$rel"
+      fi
     done
     ;;
 
@@ -59,6 +65,7 @@ case "$MODE" in
 
     LINKED=0
     ERRORS=0
+    LINKED_PATHS=()
 
     for rel in "$@"; do
       src="${SOURCE_ROOT}/${rel}"
@@ -79,6 +86,7 @@ case "$MODE" in
       echo "  Linking ${rel}..."
       if ln -s "$src" "$dest" 2>/dev/null; then
         LINKED=$((LINKED + 1))
+        LINKED_PATHS+=("$rel")
       else
         echo "  ERROR: $rel" >&2
         ERRORS=$((ERRORS + 1))
@@ -88,6 +96,27 @@ case "$MODE" in
     echo "Linked ${LINKED} entries."
     if [ "$ERRORS" -gt 0 ]; then
       echo "Errors: ${ERRORS}." >&2
+    fi
+
+    # Add linked paths to the worktree's git exclude file so they don't
+    # show up as untracked. Each worktree has its own exclude file.
+    if [ ${#LINKED_PATHS[@]} -gt 0 ] && [ -e "$DEST_ROOT/.git" ]; then
+      WT_GIT_DIR="$(git -C "$DEST_ROOT" rev-parse --git-dir 2>/dev/null)" || true
+      if [ -n "$WT_GIT_DIR" ]; then
+        # Make path absolute if it isn't already
+        case "$WT_GIT_DIR" in
+          /*) ;;
+          *) WT_GIT_DIR="$DEST_ROOT/$WT_GIT_DIR" ;;
+        esac
+        mkdir -p "$WT_GIT_DIR/info"
+        EXCLUDE_FILE="$WT_GIT_DIR/info/exclude"
+        for rel in "${LINKED_PATHS[@]}"; do
+          # Only add if not already present
+          if ! grep -qxF "/$rel" "$EXCLUDE_FILE" 2>/dev/null; then
+            echo "/$rel" >> "$EXCLUDE_FILE"
+          fi
+        done
+      fi
     fi
     ;;
 

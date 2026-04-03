@@ -7,6 +7,7 @@ WORKTREES_BASE="${WORKTREES_BASE:-$HOME/git/.worktrees}"
 # Terminal colors
 COLOR_BLUE="$(tput setaf 12 2>/dev/null || true)"
 COLOR_CYAN="$(tput setaf 6 2>/dev/null || true)"
+COLOR_RED="$(tput setaf 1 2>/dev/null || true)"
 COLOR_RESET="$(tput sgr0 2>/dev/null || true)"
 
 # short_path <path> - Replace $HOME prefix with ~
@@ -202,9 +203,10 @@ link_worktree_files() {
 
   local selected=()
 
-  echo "NOTE: Linked files are shared with the main clone. Changes like" >&2
+  echo "" >&2
+  echo "${COLOR_RED}NOTE: Linked files are shared with the main clone. Changes like" >&2
   echo "installing or removing dependencies will affect both. Select \"none\"" >&2
-  echo "and install separately if you need different versions." >&2
+  echo "and install separately if you need different versions.${COLOR_RESET}" >&2
 
   # Check for cached selection
   if [ -f "$cache_file" ]; then
