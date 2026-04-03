@@ -397,7 +397,6 @@ worktree_repl() {
 
   _worktree_info() {
     local show_path="${1:-true}"
-    echo ""
     if [ "$show_path" = "true" ]; then
       echo "${cyan}Path:${reset} $(short_path "$wt_path")"
     fi
@@ -438,6 +437,7 @@ worktree_repl() {
     read -r cmd
     case "$cmd" in
       info|i)
+        echo ""
         _worktree_info
         ;;
       shell|s)
