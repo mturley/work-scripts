@@ -74,7 +74,7 @@ case "$MODE" in
     if OUTPUT="$(git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" ${BASE_REF:+"$BASE_REF"} 2>&1)"; then
       json_out "created" "$(cd "$WORKTREE_PATH" && pwd)"
     elif OUTPUT="$(git worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>&1)"; then
-      json_out "created" "$(cd "$WORKTREE_PATH" && pwd)"
+      json_out "reused-branch" "$(cd "$WORKTREE_PATH" && pwd)"
     else
       json_out "error" "$WORKTREE_PATH" "message" "$OUTPUT"
       exit 1

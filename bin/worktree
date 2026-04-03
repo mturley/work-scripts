@@ -317,6 +317,10 @@ else
       echo "${CYAN}Created branch:${RESET} ${BRANCH_NAME}"
       echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
       ;;
+    reused-branch)
+      echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
+      echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+      ;;
     exists)
       echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"

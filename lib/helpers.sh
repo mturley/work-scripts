@@ -457,7 +457,6 @@ worktree_repl() {
         if prompt_yn "Proceed?"; then
           remove_worktree "$wt_path"
           echo "Worktree removed."
-          # Also clean up the branch if it was created for this worktree
           git worktree prune 2>/dev/null
           exit 0
         fi
