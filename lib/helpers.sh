@@ -164,19 +164,19 @@ remove_worktree() {
   fi
 }
 
-# copy_worktree_files <scripts-dir> <repo-root> <worktree-path>
-# Finds copyable files, prompts user to select (with caching), and copies.
-# Returns 0 if files were copied, 1 otherwise.
-copy_worktree_files() {
+# link_worktree_files <scripts-dir> <repo-root> <worktree-path>
+# Finds linkable files, prompts user to select (with caching), and links.
+# Returns 0 if files were linked, 1 otherwise.
+link_worktree_files() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
   local repo_name
   repo_name="$(basename "$repo_root")"
-  local cache_file="/tmp/worktree-copy-selection-${repo_name}"
+  local cache_file="/tmp/worktree-link-selection-${repo_name}"
 
   echo "Checking for linkable files (node_modules, build outputs, config)..."
   local dir_targets dotfile_targets
-  dir_targets="$("$scripts_dir/copy-worktree-files.sh" --list-dirs "$repo_root")"
-  dotfile_targets="$("$scripts_dir/copy-worktree-files.sh" --list-dotfiles "$repo_root")"
+  dir_targets="$("$scripts_dir/link-worktree-files.sh" --list-dirs "$repo_root")"
+  dotfile_targets="$("$scripts_dir/link-worktree-files.sh" --list-dotfiles "$repo_root")"
 
   local options=()
   if [ -n "$dir_targets" ]; then
@@ -218,6 +218,9 @@ copy_worktree_files() {
 
   # If no cached selection was used, prompt
   if [ ${#selected[@]} -eq 0 ]; then
+    echo "NOTE: Linked files are shared with the main clone. Changes like" >&2
+    echo "installing or removing dependencies will affect both. Select \"none\"" >&2
+    echo "and install separately if you need different versions." >&2
     while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done < <(prompt_multi_select "Which files to link into the new worktree?" "${options[@]}")
     # Save selection
     if [ ${#selected[@]} -gt 0 ]; then
@@ -230,17 +233,17 @@ copy_worktree_files() {
   fi
 
   # Expand "Top-level dotfiles" into individual paths
-  local copy_paths=()
+  local link_paths=()
   for item in "${selected[@]}"; do
     if [ "$item" = "Top-level dotfiles" ]; then
-      while IFS= read -r df; do copy_paths+=("$df"); done <<< "$dotfile_targets"
+      while IFS= read -r df; do link_paths+=("$df"); done <<< "$dotfile_targets"
     else
-      copy_paths+=("$item")
+      link_paths+=("$item")
     fi
   done
 
-  if [ ${#copy_paths[@]} -gt 0 ]; then
-    "$scripts_dir/copy-worktree-files.sh" --copy "$repo_root" "$wt_path" "${copy_paths[@]}"
+  if [ ${#link_paths[@]} -gt 0 ]; then
+    "$scripts_dir/link-worktree-files.sh" --link "$repo_root" "$wt_path" "${link_paths[@]}"
     return 0
   fi
   return 1
@@ -408,8 +411,8 @@ worktree_post_setup() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3" label="$4"
   shift 4
 
-  # --- Copy Gitignored Files ---
-  copy_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
+  # --- Link Gitignored Files ---
+  link_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
 
   # --- Detect Editor and Open ---
   echo ""

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# copy-worktree-files.sh - Copy useful files from one worktree to another
+# link-worktree-files.sh - Link useful files from one worktree to another
 #
 # Usage:
-#   copy-worktree-files.sh --list <source-root>
-#   copy-worktree-files.sh --copy <source-root> <dest-root> <rel-path>...
+#   link-worktree-files.sh --list <source-root>
+#   link-worktree-files.sh --link <source-root> <dest-root> <rel-path>...
 #
 # Targets: node_modules/ directories, build output directories (dist/, bin/),
 # and top-level dotfiles/dotdirs (config like .env.local, .husky, etc.).
 #
-# --list: prints relative paths of copyable targets, one per line.
-# --copy: copies the specified relative paths from source to dest.
+# --list: prints relative paths of linkable targets, one per line.
+# --link: links the specified relative paths from source to dest.
 
 set -euo pipefail
 
-MODE="${1:?Usage: copy-worktree-files.sh <--list|--copy> <source-root> ...}"
+MODE="${1:?Usage: link-worktree-files.sh <--list|--link> <source-root> ...}"
 SOURCE_ROOT="${2:?Missing source root}"
 
 case "$MODE" in
@@ -47,15 +47,15 @@ case "$MODE" in
     done
     ;;
 
-  --copy)
+  --link)
     DEST_ROOT="${3:?Missing dest root}"
     shift 3
     if [ $# -eq 0 ]; then
-      echo "No paths specified to copy."
+      echo "No paths specified to link."
       exit 0
     fi
 
-    COPIED=0
+    LINKED=0
     ERRORS=0
 
     for rel in "$@"; do
@@ -69,35 +69,28 @@ case "$MODE" in
 
       mkdir -p "$(dirname "$dest")"
 
+      # Remove any existing target first (stale symlink, empty dir, or old copy).
+      if [ -L "$dest" ] || [ -e "$dest" ]; then
+        rm -rf "$dest"
+      fi
+
       echo "  Linking ${rel}..."
-      if [ -d "$src" ]; then
-        # Use rsync with --link-dest to hardlink files instead of copying data.
-        # This makes node_modules etc. nearly instant. Falls back to regular
-        # copy if hardlinking fails (e.g. cross-device).
-        if rsync -a --link-dest="$src" "$src/" "$dest/" 2>/dev/null; then
-          COPIED=$((COPIED + 1))
-        else
-          echo "  ERROR: $rel" >&2
-          ERRORS=$((ERRORS + 1))
-        fi
+      if ln -s "$src" "$dest" 2>/dev/null; then
+        LINKED=$((LINKED + 1))
       else
-        if cp "$src" "$dest" 2>/dev/null; then
-          COPIED=$((COPIED + 1))
-        else
-          echo "  ERROR: $rel" >&2
-          ERRORS=$((ERRORS + 1))
-        fi
+        echo "  ERROR: $rel" >&2
+        ERRORS=$((ERRORS + 1))
       fi
     done
 
-    echo "Linked ${COPIED} entries."
+    echo "Linked ${LINKED} entries."
     if [ "$ERRORS" -gt 0 ]; then
       echo "Errors: ${ERRORS}." >&2
     fi
     ;;
 
   *)
-    echo "Unknown mode: $MODE. Use --list-dirs, --list-dotfiles, or --copy." >&2
+    echo "Unknown mode: $MODE. Use --list-dirs, --list-dotfiles, or --link." >&2
     exit 1
     ;;
 esac
