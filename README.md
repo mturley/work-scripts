@@ -40,23 +40,34 @@ worktree ~/git/.worktrees/repo--name # open an existing worktree by path
 
 Based on the arguments, the script detects what you're trying to do, finds or creates the relevant worktree, then drops you into an interactive REPL (see below) to manage it.
 
-* **No arguments** — lists all worktrees under `$WORKTREES_BASE`, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up.
+* **No arguments** — if run from within a worktree directory under `$WORKTREES_BASE`, drops directly into the REPL for that worktree. Otherwise, lists all worktrees, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up.
 
 * **PR number or GitHub URL** — fetches the PR, creates a review worktree, and sets up branch tracking against the PR author's remote. If the worktree already exists: offers to reuse, update to latest, or recreate from scratch. Automatically locates the matching local clone if run from a different directory.
 
-* **Branch name** — creates a new branch from `upstream/main` (or `origin/main`) in a worktree. If the branch is already checked out elsewhere, offers to reuse or move it. Asks you which repo to use if run from outside a repo.
+* **Branch name** — creates a new branch from `upstream/main` (or `origin/main`) in a worktree. If the branch is already checked out elsewhere, offers to reuse or move it. Must be run from within a git repo.
 
-* **Worktree path** - if it matches an existing worktree, drops you directly into the REPL to manage it.
+* **Worktree path** — if it matches an existing worktree, drops directly into the REPL for that worktree.
 
 After creating a new worktree, the command offers to **symlink** gitignored files from the main clone (node_modules, build outputs, dotfile config) so you can run your dev environment in the worktree without setting things up again if you don't need different dependency versions in the worktree. If you do, you can decline this and install things yourself. It lets you choose which files you want to link and offers to reuse your choice from the last usage in that repo (cached in `/tmp`).
 
 It then **detects your editor** (VS Code or Cursor) or uses a cached preference (in `/tmp`), opens an editor window (or focuses an existing one), and drops into the interactive REPL.
 
-**Interactive REPL** — all paths above end here. Available commands:
-- `open` / `o` — open in your editor (focuses the editor window if already open)
-- `status` / `s` — run `git status`
-- `cleanup` / `c` — remove the worktree and its branch
-- `exit` / `e` — quit
+**Interactive REPL** — all paths above end here. On entry and before each prompt, shows the available commands:
+
+```
+worktree> help
+
+  info     (i)  Show PR URL (if applicable), worktree path, and git status
+  open     (o)  Open worktree in your editor (focuses existing window if already open)
+  shell    (s)  Start a nested shell in the worktree directory; exit to return to REPL
+  cleanup  (c)  Remove the worktree and its branch
+  exit     (e)  Exit the REPL
+  help     (h)  Show this help
+
+Commands: [i]nfo, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp
+
+worktree [my-branch...origin/my-branch]>
+```
 
 I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it.
 

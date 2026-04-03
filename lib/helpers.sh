@@ -4,16 +4,26 @@
 # Base directory for all worktrees. Override with WORKTREES_BASE env var.
 WORKTREES_BASE="${WORKTREES_BASE:-$HOME/git/.worktrees}"
 
+# Terminal colors
+COLOR_BLUE="$(tput setaf 12 2>/dev/null || true)"
+COLOR_CYAN="$(tput setaf 6 2>/dev/null || true)"
+COLOR_RESET="$(tput sgr0 2>/dev/null || true)"
+
+# short_path <path> - Replace $HOME prefix with ~
+short_path() {
+  echo "${1/#$HOME/~}"
+}
+
 prompt_choice() {
   local msg="$1"; shift
   local options=("$@")
   echo "" >&2
   echo "$msg" >&2
   for i in "${!options[@]}"; do
-    echo "  $((i+1))) ${options[$i]}" >&2
+    echo "  ${COLOR_BLUE}$((i+1)))${COLOR_RESET} ${options[$i]}" >&2
   done
   while true; do
-    printf "Choice [1-%d]: " "${#options[@]}" >&2
+    printf "Choice [${COLOR_BLUE}1-%d${COLOR_RESET}]: " "${#options[@]}" >&2
     read -r choice
     if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
       echo "${options[$((choice-1))]}"
@@ -26,13 +36,13 @@ prompt_choice() {
 prompt_yn() {
   local msg="$1"
   echo "" >&2
-  printf "%s [y/n]: " "$msg" >&2
+  printf "%s [${COLOR_BLUE}y${COLOR_RESET}/${COLOR_BLUE}n${COLOR_RESET}]: " "$msg" >&2
   while true; do
     read -r yn
     case "$yn" in
       [Yy]*) return 0 ;;
       [Nn]*) return 1 ;;
-      *) printf "Please answer y or n: " >&2 ;;
+      *) printf "Please answer ${COLOR_BLUE}y${COLOR_RESET} or ${COLOR_BLUE}n${COLOR_RESET}: " >&2 ;;
     esac
   done
 }
@@ -46,10 +56,10 @@ prompt_multi_select() {
   echo "" >&2
   echo "$msg" >&2
   for i in "${!options[@]}"; do
-    echo "  $((i+1))) ${options[$i]}" >&2
+    echo "  ${COLOR_BLUE}$((i+1)))${COLOR_RESET} ${options[$i]}" >&2
   done
   while true; do
-    printf "Select [1-%d, comma/range, a=all, n=none]: " "${#options[@]}" >&2
+    printf "Select [${COLOR_BLUE}1-%d${COLOR_RESET}, comma/range, ${COLOR_BLUE}a${COLOR_RESET}=all, ${COLOR_BLUE}n${COLOR_RESET}=none]: " "${#options[@]}" >&2
     read -r input
     if [[ "$input" == "n" || "$input" == "N" ]]; then
       return
@@ -298,7 +308,7 @@ recreate_worktree() {
     return 1
   fi
   WT_PATH="$(echo "$RESULT" | parse_json path)"
-  echo "Worktree recreated at: ${WT_PATH}"
+  echo "Worktree recreated at: $(short_path "$WT_PATH")"
   return 0
 }
 
@@ -325,7 +335,7 @@ open_editor() {
     return
   fi
 
-  echo "No editor detected."
+  echo "No editor detected in shell context."
 
   # Check for cached preference
   if [ -f "$cache_file" ]; then
@@ -360,24 +370,88 @@ open_editor() {
 }
 
 # worktree_repl <repo-root> <worktree-path>
-# Interactive loop offering cleanup, open, status, and exit commands.
+# Interactive loop offering shell, open, cleanup, and exit commands.
 worktree_repl() {
   local repo_root="$1" wt_path="$2"
-  echo ""
-  echo "Commands: [o]pen, [s]tatus, [c]leanup, [e]xit"
+  local wt_name branch tracking pr_num pr_url
+  wt_name="$(basename "$wt_path")"
+  branch="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+  tracking="$(git -C "$wt_path" rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || true)"
+
+  if [[ "$wt_name" == *--pr-* ]]; then
+    pr_num="$(echo "$wt_name" | sed 's/.*--pr-\([0-9]*\)-.*/\1/')"
+    local remote_url
+    remote_url="$(git -C "$wt_path" remote get-url upstream 2>/dev/null || git -C "$wt_path" remote get-url origin 2>/dev/null || true)"
+    if [ -n "$remote_url" ]; then
+      pr_url="$(echo "$remote_url" | sed 's/\.git$//' | sed 's|git@github.com:|https://github.com/|')/pull/${pr_num}"
+    fi
+  fi
+
+  local blue cyan green red reset
+  blue="$(tput setaf 12 2>/dev/null || true)"
+  cyan="$(tput setaf 6 2>/dev/null || true)"
+  green="$(tput setaf 2 2>/dev/null || true)"
+  red="$(tput setaf 1 2>/dev/null || true)"
+  reset="$(tput sgr0 2>/dev/null || true)"
+
+  _worktree_info() {
+    local show_path="${1:-true}"
+    if [ "$show_path" = "true" ]; then
+      echo "${cyan}Path:${reset} $(short_path "$wt_path")"
+    fi
+    if [ -n "${pr_num:-}" ]; then
+      echo "${cyan}PR:${reset} #${pr_num}${pr_url:+ — $pr_url}"
+    fi
+    if [ -z "$(git -C "$wt_path" status --short)" ]; then
+      echo "${cyan}Git status:${reset} working tree clean"
+    else
+      echo "${cyan}Git status:${reset}"
+      git -C "$wt_path" status --short
+    fi
+  }
+
+  _worktree_commands() {
+    echo "${blue}Commands: [i]nfo, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp${reset}"
+  }
+
+  _worktree_help() {
+    echo ""
+    echo "  ${blue}info${reset}     (i)  Show PR URL (if applicable), worktree path, and git status"
+    echo "  ${blue}open${reset}     (o)  Open worktree in your editor (focuses existing window if already open)"
+    echo "  ${blue}shell${reset}    (s)  Start a nested shell in the worktree directory; exit to return to REPL"
+    echo "  ${blue}cleanup${reset}  (c)  Remove the worktree and its branch"
+    echo "  ${blue}exit${reset}     (e)  Exit the REPL"
+    echo "  ${blue}help${reset}     (h)  Show this help"
+  }
+
+  _worktree_info false
   while true; do
-    printf "\nworktree> "
+    echo ""
+    _worktree_commands
+    if [ -n "$tracking" ]; then
+      printf "\nworktree [${green}%s${reset}...${red}%s${reset}]> " "$branch" "$tracking"
+    else
+      printf "\nworktree [${green}%s${reset}]> " "$branch"
+    fi
     read -r cmd
     case "$cmd" in
+      info|i)
+        _worktree_info
+        ;;
+      shell|s)
+        echo "Starting shell in $(short_path "$wt_path")"
+        echo "Exit the shell to return to this REPL."
+        (cd "$wt_path" && "$SHELL")
+        echo ""
+        echo "Back in worktree REPL."
+        _worktree_info
+        ;;
       open|o)
         open_editor "$wt_path"
         ;;
-      status|s)
-        git -C "$wt_path" status
-        ;;
       cleanup|c)
         echo "This will remove the worktree at:"
-        echo "  $wt_path"
+        echo "  $(short_path "$wt_path")"
         if prompt_yn "Proceed?"; then
           remove_worktree "$wt_path"
           echo "Worktree removed."
@@ -389,11 +463,13 @@ worktree_repl() {
       exit|quit|q|e)
         exit 0
         ;;
+      help|h)
+        _worktree_help
+        ;;
       "")
         ;;
       *)
-        echo "Unknown command: $cmd"
-        echo "Commands: [o]pen, [s]tatus, [c]leanup, [e]xit"
+        echo "Unknown command: $cmd. Type 'help' for usage."
         ;;
     esac
   done
@@ -403,13 +479,10 @@ parse_json() {
   python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null
 }
 
-# worktree_post_setup <scripts-dir> <repo-root> <worktree-path> <label> <detail-lines...>
-# Handles copy-files, editor open, summary banner, and REPL.
-# label: e.g. "PR Worktree Ready!" or "Branch Worktree Ready!"
-# detail-lines: lines to print in the summary (e.g. "PR:  #123 - title")
+# worktree_post_setup <scripts-dir> <repo-root> <worktree-path>
+# Handles linking gitignored files, opening editor, and starting the REPL.
 worktree_post_setup() {
-  local scripts_dir="$1" repo_root="$2" wt_path="$3" label="$4"
-  shift 4
+  local scripts_dir="$1" repo_root="$2" wt_path="$3"
 
   # --- Link Gitignored Files ---
   link_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
@@ -418,16 +491,6 @@ worktree_post_setup() {
   echo ""
   detect_editor
   open_editor "$wt_path"
-
-  # --- Post-Setup Summary ---
-  echo ""
-  echo "============================================"
-  echo "$label"
-  echo "============================================"
-  echo ""
-  for line in "$@"; do
-    echo "$line"
-  done
 
   worktree_repl "$repo_root" "$wt_path"
 }
@@ -565,7 +628,7 @@ recreate_pr_worktree() {
     return 1
   fi
   WT_PATH="$(echo "$RESULT" | parse_json path)"
-  echo "Worktree recreated at: ${WT_PATH}"
+  echo "Worktree recreated at: $(short_path "$WT_PATH")"
 }
 
 # resolve_repo_root - Find the project repo to operate on.

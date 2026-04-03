@@ -36,14 +36,16 @@ case "$MODE" in
     ;;
 
   --list-dotfiles)
-    # Top-level dotfiles and dotdirs (excluding .git)
+    # Top-level dotfiles and dotdirs that are gitignored (excluding .git)
     for f in "$SOURCE_ROOT"/.*; do
       [ -e "$f" ] || continue
       base="$(basename "$f")"
       case "$base" in
         .|..|.git) continue ;;
       esac
-      echo "$base"
+      if git -C "$SOURCE_ROOT" check-ignore -q "$base" 2>/dev/null; then
+        echo "$base"
+      fi
     done
     ;;
 

@@ -13,11 +13,27 @@ SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
 # shellcheck source=../lib/helpers.sh
 source "$SCRIPTS_DIR/helpers.sh"
 
-# --- No arguments: list and select ---
+CYAN="$(tput setaf 6 2>/dev/null || true)"
+RESET="$(tput sgr0 2>/dev/null || true)"
+
+# --- No arguments: list and select (or enter REPL if inside a worktree) ---
 
 if [ $# -eq 0 ]; then
+  # Check if we're already inside a worktree under WORKTREES_BASE
+  CURRENT_DIR="$(pwd)"
+  if [[ "$CURRENT_DIR" == "$WORKTREES_BASE"/* ]]; then
+    WT_REL="${CURRENT_DIR#"$WORKTREES_BASE"/}"
+    WT_NAME="${WT_REL%%/*}"
+    WT_PATH="${WORKTREES_BASE}/${WT_NAME}"
+    if [ -e "$WT_PATH/.git" ]; then
+      REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+      worktree_repl "$REPO_ROOT" "$WT_PATH"
+      exit 0
+    fi
+  fi
+
   if [ ! -d "$WORKTREES_BASE" ]; then
-    echo "No worktrees found in $WORKTREES_BASE"
+    echo "No worktrees found in $(short_path "$WORKTREES_BASE")"
     exit 0
   fi
 
@@ -34,7 +50,7 @@ if [ $# -eq 0 ]; then
   done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
 
   if [ ${#worktrees[@]} -eq 0 ]; then
-    echo "No worktrees found in $WORKTREES_BASE"
+    echo "No worktrees found in $(short_path "$WORKTREES_BASE")"
     exit 0
   fi
 
@@ -57,7 +73,7 @@ if [ $# -eq 0 ]; then
   if $is_orphaned; then
     echo ""
     echo "This worktree is orphaned (no .git link — likely left over from a failed cleanup)."
-    echo "  $WT_PATH"
+    echo "  $(short_path "$WT_PATH")"
     if prompt_yn "Remove this directory?"; then
       force_rm "$WT_PATH"
       echo "Removed."
@@ -65,6 +81,7 @@ if [ $# -eq 0 ]; then
     exit 0
   fi
 
+  echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
   REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
   worktree_repl "$REPO_ROOT" "$WT_PATH"
   exit 0
@@ -75,7 +92,7 @@ ARG="$1"
 # --- Phase 0: Check for existing worktree ---
 
 if resolve_worktree "$ARG"; then
-  echo "Found existing worktree: $WT_PATH"
+  echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
   REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
   worktree_repl "$REPO_ROOT" "$WT_PATH"
   exit 0
@@ -167,11 +184,9 @@ if is_pr_arg "$ARG"; then
   WORKTREE_ABS="${WORKTREES_BASE}/${REPO_NAME}--${WORKTREE_NAME}"
 
   echo "PR #${PR_NUMBER}: ${PR_TITLE}"
-  echo "Worktree: ${WORKTREE_ABS}"
 
   mkdir -p "$WORKTREES_BASE"
 
-  echo ""
   if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
     MSG="$(echo "$RESULT" | parse_json message)"
     echo "ERROR: Failed to create worktree." >&2
@@ -189,10 +204,10 @@ if is_pr_arg "$ARG"; then
 
   case "$STATUS" in
     created)
-      echo "Worktree created at: ${WT_PATH}"
+      echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
       ;;
     exists)
-      echo "Worktree already exists and is up to date."
+      echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
       CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Recreate from scratch")"
       if [ "$CHOICE" = "Recreate from scratch" ]; then
         recreate_pr_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" "$WT_PATH" || exit 1
@@ -201,7 +216,8 @@ if is_pr_arg "$ARG"; then
     exists-outdated)
       LOCAL_HEAD="$(echo "$RESULT" | parse_json local_head)"
       REMOTE_HEAD="$(echo "$RESULT" | parse_json remote_head)"
-      echo "Worktree exists but is behind the PR's latest changes."
+      echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
+      echo "Worktree is behind the PR's latest changes."
       echo "  Local:  ${LOCAL_HEAD:0:12}"
       echo "  Remote: ${REMOTE_HEAD:0:12}"
       CHOICE="$(prompt_choice "What would you like to do?" "Update to latest" "Recreate from scratch" "Reuse as-is")"
@@ -234,7 +250,7 @@ if is_pr_arg "$ARG"; then
           exit 1
         fi
         WT_PATH="$(echo "$RESULT" | parse_json path)"
-        echo "Worktree created at: ${WT_PATH}"
+        echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
       else
         echo "Aborted." >&2
         exit 1
@@ -256,10 +272,7 @@ if is_pr_arg "$ARG"; then
   PR_LOCAL_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
   setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
 
-  worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" "PR Worktree Ready!" \
-    "PR:        #${PR_NUMBER} - ${PR_TITLE}" \
-    "URL:       ${PR_URL}" \
-    "Worktree:  ${WT_PATH}"
+  worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
 
 else
   # =============================================
@@ -282,12 +295,8 @@ else
   WORKTREE_NAME="${REPO_NAME}--${DIR_BRANCH}"
   WORKTREE_ABS="${WORKTREES_BASE}/${WORKTREE_NAME}"
 
-  echo "Branch:   ${BRANCH_NAME}"
-  echo "Worktree: ${WORKTREE_ABS}"
-
   mkdir -p "$WORKTREES_BASE"
 
-  echo ""
   if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" branch "$WORKTREE_ABS" "$BRANCH_NAME" 2>&1)"; then
     MSG="$(echo "$RESULT" | parse_json message)"
     echo "ERROR: Failed to create worktree." >&2
@@ -305,19 +314,22 @@ else
 
   case "$STATUS" in
     created)
-      echo "Worktree created at: ${WT_PATH}"
+      echo "${CYAN}Created branch:${RESET} ${BRANCH_NAME}"
+      echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
       ;;
     exists)
-      echo "Worktree already exists at: ${WT_PATH}"
+      echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
+      echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
       CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Recreate from scratch")"
       if [ "$CHOICE" = "Recreate from scratch" ]; then
         recreate_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
       fi
       ;;
     exists-elsewhere)
-      echo "Branch '${BRANCH_NAME}' is already checked out in a worktree at:"
-      echo "  ${WT_PATH}"
-      CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Move to new location (${WORKTREE_ABS})")"
+      echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
+      echo "Already checked out in a worktree at:"
+      echo "  $(short_path "$WT_PATH")"
+      CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Move to new location ($(short_path "$WORKTREE_ABS"))")"
       if [ "$CHOICE" != "Reuse existing worktree" ]; then
         recreate_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
       fi
@@ -334,7 +346,5 @@ else
       ;;
   esac
 
-  worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" "Branch Worktree Ready!" \
-    "Branch:    ${BRANCH_NAME}" \
-    "Worktree:  ${WT_PATH}"
+  worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
 fi
