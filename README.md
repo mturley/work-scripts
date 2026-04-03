@@ -26,14 +26,29 @@ export PATH=$HOME/git/work-scripts/bin:$PATH
 Unified command for creating and managing git worktrees. Accepts a PR number, PR URL, branch name, or worktree path.
 
 ```bash
-worktree <pr-number|pr-url|branch-name|worktree-path>
+worktree                             # list existing worktrees and select one
+worktree 1234                        # open or create a worktree for PR #1234
+worktree https://github.com/org/repo/pull/1234
+worktree my-feature-branch           # create a branch worktree from upstream/main
+worktree ~/git/.worktrees/repo--name # open an existing worktree by path
 ```
 
-**If a worktree already exists** for the given argument, opens an interactive REPL with commands to open the editor, check status, or clean up the worktree.
+**No arguments** — lists all worktrees under `$WORKTREES_BASE`, marks orphaned ones, and lets you select one to manage or clean up.
 
-**If no worktree exists**, detects the argument type and creates one:
-- PR number or GitHub PR URL → fetches the PR, creates a review worktree, sets up branch tracking
-- Branch name → creates a new branch from `upstream/main` in a worktree
+**Existing worktree** — if a worktree already exists for the argument, opens an interactive REPL with commands:
+- `open` / `o` — open in your editor
+- `status` / `s` — run `git status`
+- `cleanup` / `c` — remove the worktree and its branch
+- `exit` / `e` — quit
+
+**New PR worktree** (number or GitHub URL) — fetches the PR, creates a review worktree, and sets up branch tracking against the PR author's remote. If the worktree already exists, offers to reuse, update to latest, or recreate from scratch. Automatically locates the matching local clone if run from a different directory.
+
+**New branch worktree** — creates a new branch from `upstream/main` (or `origin/main`) in a worktree. If the branch is already checked out elsewhere, offers to reuse or move it.
+
+After creating a worktree, the command:
+1. Offers to **symlink** files from the main clone (node_modules, build outputs, dotfile config) — these are shared via symlink, so dependency changes affect both
+2. **Detects your editor** (VS Code or Cursor) or uses a cached preference, and opens a new window
+3. Drops into the **interactive REPL** for further management
 
 ### `gh-safe`
 
@@ -54,17 +69,6 @@ Set `WORKTREES_BASE` to control where worktrees are created (default: `~/git/.wo
 ```bash
 export WORKTREES_BASE=$HOME/git/.worktrees
 ```
-
-## Worktree details
-
-When creating a new worktree, the `worktree` command:
-
-1. If run from a workspace containing nested git repos, prompts to select a project repo
-2. Creates a worktree in `$WORKTREES_BASE` (default `~/git/.worktrees/`)
-3. If the branch is already checked out in another worktree, offers to reuse or move it
-4. Offers to copy useful files (node_modules, build outputs, dotfile config) from the main worktree
-5. Detects your editor (VS Code, Cursor) or uses your cached preference, and opens a new window
-6. Drops into an interactive REPL for managing the worktree
 
 ### Cleanup
 
