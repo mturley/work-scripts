@@ -92,10 +92,21 @@ ARG="$1"
 # --- Phase 0: Check for existing worktree ---
 
 if resolve_worktree "$ARG"; then
-  echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
-  REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-  worktree_repl "$REPO_ROOT" "$WT_PATH"
-  exit 0
+  if ! git -C "$WT_PATH" rev-parse --git-dir &>/dev/null; then
+    echo "Found worktree directory, but it is orphaned (no .git link)."
+    echo "  $(short_path "$WT_PATH")"
+    if prompt_yn "Remove this directory?"; then
+      force_rm "$WT_PATH"
+      echo "Removed."
+    else
+      exit 0
+    fi
+  else
+    echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
+    REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+    worktree_repl "$REPO_ROOT" "$WT_PATH"
+    exit 0
+  fi
 fi
 
 # --- Phase 1: Detect argument type and create worktree ---
