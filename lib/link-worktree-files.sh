@@ -13,6 +13,9 @@
 
 set -euo pipefail
 
+COLOR_RED="$(tput setaf 1 2>/dev/null || true)"
+COLOR_RESET="$(tput sgr0 2>/dev/null || true)"
+
 MODE="${1:?Usage: link-worktree-files.sh <--list|--link> <source-root> ...}"
 SOURCE_ROOT="${2:?Missing source root}"
 
@@ -98,24 +101,64 @@ case "$MODE" in
       echo "Errors: ${ERRORS}." >&2
     fi
 
-    # Add linked paths to the worktree's git exclude file so they don't
-    # show up as untracked. Each worktree has its own exclude file.
+    # Add linked paths to the shared git exclude file so they don't show
+    # up as untracked in worktrees. Only add paths that are already
+    # gitignored in the source repo, so the entries are redundant for the
+    # main clone and won't hide anything new there.
     if [ ${#LINKED_PATHS[@]} -gt 0 ] && [ -e "$DEST_ROOT/.git" ]; then
-      WT_GIT_DIR="$(git -C "$DEST_ROOT" rev-parse --git-dir 2>/dev/null)" || true
-      if [ -n "$WT_GIT_DIR" ]; then
+      COMMON_GIT_DIR="$(git -C "$DEST_ROOT" rev-parse --git-common-dir 2>/dev/null)" || true
+      if [ -n "$COMMON_GIT_DIR" ]; then
         # Make path absolute if it isn't already
-        case "$WT_GIT_DIR" in
+        case "$COMMON_GIT_DIR" in
           /*) ;;
-          *) WT_GIT_DIR="$DEST_ROOT/$WT_GIT_DIR" ;;
+          *) COMMON_GIT_DIR="$DEST_ROOT/$COMMON_GIT_DIR" ;;
         esac
-        mkdir -p "$WT_GIT_DIR/info"
-        EXCLUDE_FILE="$WT_GIT_DIR/info/exclude"
+        mkdir -p "$COMMON_GIT_DIR/info"
+        EXCLUDE_FILE="$COMMON_GIT_DIR/info/exclude"
+
+        # Collect entries that would be new
+        NEW_EXCLUDES=()
         for rel in "${LINKED_PATHS[@]}"; do
-          # Only add if not already present
+          # Only consider paths already gitignored in the source repo
+          if ! git -C "$SOURCE_ROOT" check-ignore -q "$rel" 2>/dev/null; then
+            continue
+          fi
           if ! grep -qxF "/$rel" "$EXCLUDE_FILE" 2>/dev/null; then
-            echo "/$rel" >> "$EXCLUDE_FILE"
+            NEW_EXCLUDES+=("/$rel")
           fi
         done
+
+        if [ ${#NEW_EXCLUDES[@]} -gt 0 ]; then
+          echo ""
+          echo "${COLOR_RED}To prevent linked files from showing as untracked, these entries"
+          echo "need to be added to .git/info/exclude (shared with main clone):${COLOR_RESET}"
+          for entry in "${NEW_EXCLUDES[@]}"; do
+            echo "  $entry"
+          done
+          printf "Add these entries? [y/n]: "
+          read -r yn
+          case "$yn" in
+            [Yy]*)
+              # Use section markers so cleanup can identify our entries
+              if ! grep -qxF '# begin worktree-link' "$EXCLUDE_FILE" 2>/dev/null; then
+                echo '# begin worktree-link' >> "$EXCLUDE_FILE"
+              fi
+              for entry in "${NEW_EXCLUDES[@]}"; do
+                echo "$entry" >> "$EXCLUDE_FILE"
+              done
+              # Remove old end marker and re-add at the end
+              if grep -qxF '# end worktree-link' "$EXCLUDE_FILE" 2>/dev/null; then
+                grep -vxF '# end worktree-link' "$EXCLUDE_FILE" > "${EXCLUDE_FILE}.tmp"
+                mv "${EXCLUDE_FILE}.tmp" "$EXCLUDE_FILE"
+              fi
+              echo '# end worktree-link' >> "$EXCLUDE_FILE"
+              echo "Added ${#NEW_EXCLUDES[@]} entries to .git/info/exclude."
+              ;;
+            *)
+              echo "Skipped. Linked files may show as untracked."
+              ;;
+          esac
+        fi
       fi
     fi
     ;;

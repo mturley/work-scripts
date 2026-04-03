@@ -175,6 +175,50 @@ remove_worktree() {
   fi
 }
 
+# cleanup_worktree_excludes <repo-root>
+# If no linked worktrees remain for the repo, removes entries tagged with
+# "# added by worktree-link" from .git/info/exclude.
+cleanup_worktree_excludes() {
+  local repo_root="$1"
+  local common_git_dir
+  common_git_dir="$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null)" || true
+  if [ -z "$common_git_dir" ]; then
+    return 0
+  fi
+  case "$common_git_dir" in
+    /*) ;;
+    *) common_git_dir="$repo_root/$common_git_dir" ;;
+  esac
+
+  local exclude_file="$common_git_dir/info/exclude"
+  # Check if there are any tagged entries to clean up
+  if ! grep -qxF '# begin worktree-link' "$exclude_file" 2>/dev/null; then
+    return 0
+  fi
+
+  # Count remaining linked worktrees (excluding the main one)
+  local wt_count=0
+  while IFS= read -r line; do
+    wt_count=$((wt_count + 1))
+  done < <(git -C "$repo_root" worktree list --porcelain 2>/dev/null | grep '^worktree ' | tail -n +2)
+
+  if [ "$wt_count" -gt 0 ]; then
+    return 0
+  fi
+
+  echo ""
+  echo "This was the last worktree for this repo. Cleaning up entries"
+  echo "added to .git/info/exclude by worktree linking:"
+  sed -n '/^# begin worktree-link$/,/^# end worktree-link$/p' "$exclude_file" | grep -v '^#' | while IFS= read -r line; do
+    echo "  $line"
+  done
+  if prompt_yn "Remove these entries?"; then
+    sed '/^# begin worktree-link$/,/^# end worktree-link$/d' "$exclude_file" > "${exclude_file}.tmp"
+    mv "${exclude_file}.tmp" "$exclude_file"
+    echo "Cleaned up .git/info/exclude."
+  fi
+}
+
 # link_worktree_files <scripts-dir> <repo-root> <worktree-path>
 # Finds linkable files, prompts user to select (with caching), and links.
 # Returns 0 if files were linked, 1 otherwise.
@@ -460,6 +504,7 @@ worktree_repl() {
           remove_worktree "$wt_path"
           echo "Worktree removed."
           git worktree prune 2>/dev/null
+          cleanup_worktree_excludes "$repo_root"
           exit 0
         fi
         ;;
