@@ -202,6 +202,10 @@ link_worktree_files() {
 
   local selected=()
 
+  echo "NOTE: Linked files are shared with the main clone. Changes like" >&2
+  echo "installing or removing dependencies will affect both. Select \"none\"" >&2
+  echo "and install separately if you need different versions." >&2
+
   # Check for cached selection
   if [ -f "$cache_file" ]; then
     local cached
@@ -228,9 +232,6 @@ link_worktree_files() {
 
   # If no cached selection was used, prompt
   if [ ${#selected[@]} -eq 0 ]; then
-    echo "NOTE: Linked files are shared with the main clone. Changes like" >&2
-    echo "installing or removing dependencies will affect both. Select \"none\"" >&2
-    echo "and install separately if you need different versions." >&2
     while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done < <(prompt_multi_select "Which files to link into the new worktree?" "${options[@]}")
     # Save selection
     if [ ${#selected[@]} -gt 0 ]; then
@@ -396,6 +397,7 @@ worktree_repl() {
 
   _worktree_info() {
     local show_path="${1:-true}"
+    echo ""
     if [ "$show_path" = "true" ]; then
       echo "${cyan}Path:${reset} $(short_path "$wt_path")"
     fi
