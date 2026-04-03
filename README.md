@@ -2,22 +2,25 @@
 
 Personal CLI tools for git and GitHub workflows.
 
+- [`worktree`](#worktree) — Create and manage git worktrees for PRs and branches, with optional symlinked dependencies
+- [`gh-safe`](#gh-safe) — Safety wrapper for agents using GitHub CLI that skips manual approval for read-only operations but blocks write operations unless approved
+
 ## Setup
 
-```bash
-git clone git@github.com:mturley/work-scripts.git ~/git/work-scripts
-```
-
-Add to your PATH (e.g. in `~/.zshrc`):
-
-```bash
-export PATH=$HOME/git/work-scripts/bin:$PATH
-```
-
-### Prerequisites
-
-- [GitHub CLI](https://cli.github.com/) (`gh`) must be installed and authenticated
-- Python 3 (for JSON parsing)
+- Install prerequisites: [GitHub CLI](https://cli.github.com/) (`gh`, must be authenticated) and Python 3
+- Clone the repo:
+  ```bash
+  git clone git@github.com:mturley/work-scripts.git ~/git/work-scripts
+  ```
+- Add the `bin` subdirectory to your PATH (e.g. in `~/.zshrc`):
+  ```bash
+  export PATH=$HOME/git/work-scripts/bin:$PATH
+  ```
+- Optionally, set `WORKTREES_BASE` to control where worktrees are created (default: `~/git/.worktrees`). This should be outside your project git clones.
+  ```bash
+  export WORKTREES_BASE=$HOME/git/.worktrees
+  ```
+- If using `gh-safe` with Claude Code, see the [integration instructions](#gh-safe) below for `CLAUDE.md` and `settings.json` changes.
 
 ## Commands
 
@@ -82,19 +85,3 @@ To benefit most from this script you can also add these to your Claude Code `set
 "Bash(APPROVE=true gh-safe *)",
 ```
 
-## Configuration
-
-Set `WORKTREES_BASE` to control where worktrees are created (default: `~/git/.worktrees`):
-
-```bash
-export WORKTREES_BASE=$HOME/git/.worktrees
-```
-
-### Cleanup
-
-Use `worktree <arg>` to open the REPL for an existing worktree, then use the `cleanup` command. Or remove directly:
-
-```bash
-git worktree remove ~/git/.worktrees/<name>
-git worktree list
-```
