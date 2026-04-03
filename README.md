@@ -50,6 +50,8 @@ Based on the arguments, the script detects what you're trying to do, finds or cr
 
 After creating a new worktree, the command offers to **symlink** gitignored files from the main clone (node_modules, build outputs, dotfile config) so you can run your dev environment in the worktree without setting things up again if you don't need different dependency versions in the worktree. If you do, you can decline this and install things yourself. It lets you choose which files you want to link and offers to reuse your choice from the last usage in that repo (cached in `/tmp`).
 
+**Git exclude management** — symlinked files would normally show as untracked in the worktree's `git status`. To prevent this, the script offers to add exclude patterns to the repo's `.git/info/exclude` file after linking. Only paths that are already gitignored in the main clone are added, so the entries are redundant for the main clone and won't hide anything new there. Entries are wrapped in `# begin worktree-link` / `# end worktree-link` section markers so the script can identify and clean them up later. When the last worktree for a repo is removed via the REPL's `cleanup` command, the script detects this and offers to remove the marked entries from `.git/info/exclude`.
+
 It then **detects your editor** (VS Code or Cursor) or uses a cached preference (in `/tmp`), opens an editor window (or focuses an existing one), and drops into the interactive REPL.
 
 **Interactive REPL** — all paths above end here. On entry and before each prompt, shows the available commands:
