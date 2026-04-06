@@ -1,0 +1,49 @@
+# worktree
+
+Unified command for creating and managing git worktrees that optionally share installed dependencies. Accepts a PR number, PR URL, branch name, or worktree path.
+
+Run `worktree` in multiple terminals to open editors in multiple branches at the same time! This is my preferred way to review multiple PRs in parallel: I use the `/review` skill from my [claude-skills](https://github.com/mturley/claude-skills) repo in each worktree's editor. It is also useful for using agents to work on multiple features/bugs in parallel.
+
+```bash
+worktree                             # list existing worktrees and select one
+worktree 1234                        # create or reopen a worktree for PR #1234
+worktree https://github.com/org/repo/pull/1234
+worktree my-feature-branch           # create or reopen a branch worktree
+worktree ~/git/.worktrees/repo--name # open an existing worktree by path
+```
+
+Based on the arguments, the script detects what you're trying to do, finds or creates the relevant worktree, then drops you into an interactive REPL (see below) to manage it.
+
+* **No arguments** — if run from within a worktree directory under `$WORKTREES_BASE`, drops directly into the REPL for that worktree. Otherwise, lists all worktrees, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up.
+
+* **PR number or GitHub URL** — fetches the PR and searches for any existing worktrees on related branches (the PR's head ref or a `review/pr-*` branch). If one is found, reuses it with a sync check (offering to back up and reset to the PR's latest commit if behind). If multiple are found, shows a selection with commit info and ahead/behind status. If none are found, creates a new review worktree and sets up branch tracking against the PR author's remote. Automatically locates the matching local clone if run from a different directory.
+
+* **Branch name** — creates a new branch from `upstream/main` (or `origin/main`) in a worktree. If the branch is already checked out elsewhere, offers to reuse or move it. Must be run from within a git repo.
+
+* **Worktree path** — if it matches an existing worktree, drops directly into the REPL for that worktree.
+
+After creating a new worktree, the command offers to **symlink** gitignored files from the main clone (node_modules, build outputs, dotfile config) so you can run your dev environment in the worktree without setting things up again if you don't need different dependency versions in the worktree. If you do, you can decline this and install things yourself. It lets you choose which files you want to link and offers to reuse your choice from the last usage in that repo (cached in `/tmp`).
+
+**Git exclude management** — symlinked files would normally show as untracked in the worktree's `git status`. To prevent this, the script offers to add exclude patterns to the repo's `.git/info/exclude` file after linking. Only paths that are already gitignored in the main clone are added, so the entries are redundant for the main clone and won't hide anything new there. Entries are wrapped in `# begin worktree-link` / `# end worktree-link` section markers so the script can identify and clean them up later. When the last worktree for a repo is removed via the REPL's `cleanup` command, the script detects this and offers to remove the marked entries from `.git/info/exclude`.
+
+It then **detects your editor** (VS Code or Cursor) or uses a cached preference (in `/tmp`), opens an editor window (or focuses an existing one), and drops into the interactive REPL.
+
+**Interactive REPL** — all paths above end here. On entry and before each prompt, shows the available commands:
+
+```
+worktree> help
+
+  info     (i)  Show PR URL (if applicable), worktree path, tracking status, and git status
+  log      (l)  Show git log
+  open     (o)  Open worktree in your editor (focuses existing window if already open)
+  shell    (s)  Start a nested shell in the worktree directory; exit to return to REPL
+  cleanup  (c)  Remove the worktree and its branch
+  exit     (e)  Exit the REPL
+  help     (h)  Show this help
+
+Commands: [i]nfo, [l]og, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp
+
+worktree [my-branch...origin/my-branch]>
+```
+
+I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it.

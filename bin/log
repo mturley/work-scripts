@@ -1,0 +1,844 @@
+#!/usr/bin/env bash
+# log - Append timestamped activity entries to today's Obsidian daily note.
+# Usage: log <category> <action> [reference]
+
+set -euo pipefail
+
+SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
+WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+
+# shellcheck source=../lib/helpers.sh
+source "$SCRIPTS_DIR/helpers.sh"
+
+# ---------------------------------------------------------------------------
+# Help / usage
+# ---------------------------------------------------------------------------
+
+usage() {
+  cat <<'EOF'
+Usage: log <category> <action> [reference]
+
+Append a timestamped, metadata-enriched activity entry to today's Obsidian
+daily note.
+
+Categories and actions:
+
+  pr      opened | seen | reviewed | commented | approved   <url-or-ref>
+  jira    opened | seen | updated  | commented              <url-or-ref>
+
+Reference formats:
+
+  PR:     https://github.com/owner/repo/pull/123
+          owner/repo#123
+          #123  (infers repo from current directory)
+          123   (infers repo from current directory)
+
+  Jira:   RHOAIENG-12345
+          https://issues.redhat.com/browse/RHOAIENG-12345
+          https://redhat.atlassian.net/browse/RHOAIENG-12345
+
+Examples:
+
+  log pr opened https://github.com/opendatahub-io/odh-dashboard/pull/6300
+  log pr reviewed odh-dashboard#6300
+  log jira seen RHOAIENG-12345
+  log jira commented https://issues.redhat.com/browse/RHOAIENG-12345
+
+Environment:
+
+  Requires the Obsidian CLI on PATH.
+    Enable in Obsidian: Settings → General → Advanced.
+
+  For Jira integration, create a .env file in the work-scripts directory:
+    cp .env.example .env   # then fill in your credentials
+EOF
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Dependency checks
+# ---------------------------------------------------------------------------
+
+require_obsidian() {
+  if ! command -v obsidian >/dev/null 2>&1; then
+    echo "ERROR: Obsidian CLI not found on PATH." >&2
+    echo "Enable it in Obsidian: Settings → General → Advanced." >&2
+    exit 1
+  fi
+}
+
+# check_already_seen <grep-pattern>
+# Reads today's daily note and checks if a "Seen" entry matching the pattern
+# already exists. Exits with a message if so.
+check_already_seen() {
+  local pattern="$1"
+  local daily_content
+  daily_content="$(obsidian daily:read 2>/dev/null || true)"
+  if [ -z "$daily_content" ]; then
+    return 0
+  fi
+  if echo "$daily_content" | grep -q "👀 Seen.*${pattern}"; then
+    echo "Already logged as seen today: ${pattern}" >&2
+    exit 0
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# .env loading
+# ---------------------------------------------------------------------------
+
+JIRA_EMAIL=""
+JIRA_API_TOKEN=""
+JIRA_LOADED=false
+
+load_env() {
+  local env_file="$WORK_SCRIPTS_DIR/.env"
+  if [ ! -f "$env_file" ]; then
+    return 1
+  fi
+  while IFS='=' read -r key value; do
+    # Skip comments and blank lines
+    case "$key" in
+      \#*|"") continue ;;
+    esac
+    # Strip surrounding whitespace
+    key="$(echo "$key" | tr -d '[:space:]')"
+    value="$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    case "$key" in
+      JIRA_EMAIL) JIRA_EMAIL="$value" ;;
+      JIRA_API_TOKEN) JIRA_API_TOKEN="$value" ;;
+    esac
+  done < "$env_file"
+  if [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ]; then
+    JIRA_LOADED=true
+    return 0
+  fi
+  return 1
+}
+
+require_jira_env() {
+  if [ "$JIRA_LOADED" = true ]; then
+    return 0
+  fi
+  echo "ERROR: Jira credentials not configured." >&2
+  echo "Create a .env file in $(short_path "$WORK_SCRIPTS_DIR"):" >&2
+  echo "  cp .env.example .env" >&2
+  echo "  # Then fill in JIRA_EMAIL and JIRA_API_TOKEN" >&2
+  echo "  # Generate a token at: https://id.atlassian.com/manage-profile/security/api-tokens" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Utility functions
+# ---------------------------------------------------------------------------
+
+TAB=$'\t'
+
+get_emoji() {
+  local category="$1" action="$2"
+  case "${category}/${action}" in
+    pr/opened)     echo "🔀" ;;
+    pr/seen)       echo "👀" ;;
+    pr/reviewed)   echo "📝" ;;
+    pr/commented)  echo "💬" ;;
+    pr/approved)   echo "✅" ;;
+    jira/seen)     echo "👀" ;;
+    jira/opened)   echo "🎫" ;;
+    jira/updated)  echo "📝" ;;
+    jira/commented) echo "💬" ;;
+    *)             echo "📌" ;;
+  esac
+}
+
+title_case() {
+  case "$1" in
+    opened)    echo "Opened" ;;
+    seen)      echo "Seen" ;;
+    reviewed)  echo "Reviewed" ;;
+    commented) echo "Commented on" ;;
+    approved)  echo "Approved" ;;
+    updated)   echo "Updated" ;;
+    *)         echo "$1" ;;
+  esac
+}
+
+get_timestamp() {
+  date "+%-I:%M %p"
+}
+
+truncate_text() {
+  local text="$1" max_len="${2:-80}"
+  # Collapse newlines to spaces
+  text="$(echo "$text" | tr '\n' ' ' | sed 's/  */ /g')"
+  if [ "${#text}" -gt "$max_len" ]; then
+    echo "${text:0:$max_len}..."
+  else
+    echo "$text"
+  fi
+}
+
+urlencode() {
+  python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$1" 2>/dev/null
+}
+
+# Extract a value from JSON using a Python expression.
+# Usage: echo '{"a":{"b":"c"}}' | extract_json 'data["a"]["b"]'
+# The JSON is loaded into a variable called 'data'.
+extract_json() {
+  local expr="$1"
+  python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+except:
+    sys.exit(1)
+try:
+    result = $expr
+    if result is None:
+        print('')
+    else:
+        print(result)
+except (KeyError, IndexError, TypeError):
+    print('')
+" 2>/dev/null
+}
+
+jira_api() {
+  local endpoint="$1"
+  curl -s -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "https://redhat.atlassian.net/rest/api/2/${endpoint}" 2>/dev/null
+}
+
+jira_search() {
+  local jql="$1" fields="${2:-key,summary}"
+  local encoded
+  encoded="$(urlencode "$jql")"
+  local encoded_fields
+  encoded_fields="$(urlencode "$fields")"
+  jira_api "search?jql=${encoded}&fields=${encoded_fields}&maxResults=10"
+}
+
+# ---------------------------------------------------------------------------
+# PR reference parsing
+# ---------------------------------------------------------------------------
+
+PR_OWNER=""
+PR_REPO=""
+PR_NUMBER=""
+
+parse_pr_ref() {
+  local ref="$1"
+  PR_OWNER=""
+  PR_REPO=""
+  PR_NUMBER=""
+
+  # Full GitHub URL: https://github.com/owner/repo/pull/123
+  if [[ "$ref" == *github.com* ]]; then
+    PR_NUMBER="$(echo "$ref" | grep -o '/pull/[0-9]*' | grep -o '[0-9]*')"
+    local path
+    path="$(echo "$ref" | sed 's|.*github\.com/||' | sed 's|/pull/.*||')"
+    PR_OWNER="$(echo "$path" | cut -d/ -f1)"
+    PR_REPO="$(echo "$path" | cut -d/ -f2)"
+    return 0
+  fi
+
+  # owner/repo#123
+  if [[ "$ref" == */*#* ]]; then
+    PR_OWNER="$(echo "$ref" | cut -d/ -f1)"
+    PR_REPO="$(echo "$ref" | cut -d/ -f2 | cut -d# -f1)"
+    PR_NUMBER="$(echo "$ref" | cut -d# -f2)"
+    return 0
+  fi
+
+  # repo#123 (no owner, infer org)
+  if [[ "$ref" == *#* ]]; then
+    PR_REPO="$(echo "$ref" | cut -d# -f1)"
+    PR_NUMBER="$(echo "$ref" | cut -d# -f2)"
+    if [ -n "$PR_REPO" ]; then
+      # Try to infer owner from gh
+      local nwo
+      nwo="$(gh repo view "$PR_REPO" --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
+      if [ -n "$nwo" ]; then
+        PR_OWNER="$(echo "$nwo" | cut -d/ -f1)"
+      fi
+    fi
+    return 0
+  fi
+
+  # Bare number (possibly with #)
+  local num
+  num="$(echo "$ref" | tr -d '#')"
+  if [[ "$num" =~ ^[0-9]+$ ]]; then
+    PR_NUMBER="$num"
+    # Infer repo from current directory
+    local nwo
+    nwo="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
+    if [ -n "$nwo" ]; then
+      PR_OWNER="$(echo "$nwo" | cut -d/ -f1)"
+      PR_REPO="$(echo "$nwo" | cut -d/ -f2)"
+    fi
+    return 0
+  fi
+
+  echo "ERROR: Could not parse PR reference: $ref" >&2
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# PR handler
+# ---------------------------------------------------------------------------
+
+handle_pr() {
+  local action="$1" ref="$2"
+
+  parse_pr_ref "$ref" || return 1
+
+  if [ -z "$PR_NUMBER" ]; then
+    echo "ERROR: Could not determine PR number from: $ref" >&2
+    return 1
+  fi
+
+  if [ "$action" = "seen" ] && [ -n "$PR_REPO" ]; then
+    check_already_seen "${PR_REPO}#${PR_NUMBER}"
+  fi
+
+  local repo_flag=""
+  if [ -n "$PR_OWNER" ] && [ -n "$PR_REPO" ]; then
+    repo_flag="--repo ${PR_OWNER}/${PR_REPO}"
+  fi
+
+  # Fetch PR metadata
+  local pr_json pr_title pr_author pr_url
+  pr_json="$(gh pr view "$PR_NUMBER" $repo_flag --json title,author,url,state 2>/dev/null || true)"
+
+  if [ -n "$pr_json" ]; then
+    pr_title="$(echo "$pr_json" | extract_json 'data["title"]')"
+    pr_author="$(echo "$pr_json" | extract_json 'data["author"]["login"]')"
+    pr_url="$(echo "$pr_json" | extract_json 'data["url"]')"
+  else
+    pr_title="(could not fetch PR info)"
+    pr_author=""
+    pr_url="https://github.com/${PR_OWNER}/${PR_REPO}/pull/${PR_NUMBER}"
+  fi
+
+  # Short display name
+  local display_repo="${PR_REPO}"
+  local display_ref="${display_repo}#${PR_NUMBER}"
+
+  # Build main line
+  local emoji timestamp action_text
+  emoji="$(get_emoji pr "$action")"
+  timestamp="$(get_timestamp)"
+  action_text="$(title_case "$action")"
+
+  local author_part=""
+  if [ -n "$pr_author" ]; then
+    author_part=" (by @${pr_author})"
+  fi
+
+  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} PR [${display_ref}](${pr_url}): \"${pr_title}\"${author_part}**"
+
+  # For reviewed/commented, try to get excerpt
+  if [ "$action" = "reviewed" ] || [ "$action" = "commented" ]; then
+    local gh_user excerpt=""
+    gh_user="$(gh api user --jq '.login' 2>/dev/null || true)"
+
+    if [ -n "$gh_user" ] && [ -n "$PR_OWNER" ] && [ -n "$PR_REPO" ]; then
+      if [ "$action" = "reviewed" ]; then
+        excerpt="$(gh api "repos/${PR_OWNER}/${PR_REPO}/pulls/${PR_NUMBER}/reviews" \
+          --jq "[.[] | select(.user.login==\"${gh_user}\" and .body != \"\")] | last | .body" 2>/dev/null || true)"
+      else
+        excerpt="$(gh api "repos/${PR_OWNER}/${PR_REPO}/issues/${PR_NUMBER}/comments" \
+          --jq "[.[] | select(.user.login==\"${gh_user}\")] | last | .body" 2>/dev/null || true)"
+      fi
+    fi
+
+    if [ -n "$excerpt" ] && [ "$excerpt" != "null" ]; then
+      local label="Comment"
+      [ "$action" = "reviewed" ] && label="Review"
+      excerpt="$(truncate_text "$excerpt" 120)"
+      LOG_ENTRY="${LOG_ENTRY}
+${TAB}- ${label}: \"${excerpt}\""
+    fi
+  fi
+
+  # Search Jira for linked issues (if credentials available)
+  if [ "$JIRA_LOADED" = true ] && [ -n "$PR_OWNER" ] && [ -n "$PR_REPO" ]; then
+    local jql="project = RHOAIENG AND \"Git Pull Request\" ~ \"${PR_OWNER}/${PR_REPO}/pull/${PR_NUMBER}\" AND sprint in openSprints()"
+    local search_json
+    search_json="$(jira_search "$jql" "key,summary,assignee,priority" 2>/dev/null || true)"
+
+    if [ -n "$search_json" ]; then
+      local linked_issues
+      linked_issues="$(echo "$search_json" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for issue in data.get('issues', []):
+        key = issue.get('key', '')
+        fields = issue.get('fields', {})
+        summary = fields.get('summary', '')
+        assignee = (fields.get('assignee') or {}).get('displayName', '')
+        priority = (fields.get('priority') or {}).get('name', '')
+        if key:
+            print(key + '|' + summary + '|' + assignee + '|' + priority)
+except:
+    pass
+" 2>/dev/null || true)"
+
+      if [ -n "$linked_issues" ]; then
+        while IFS='|' read -r jira_key jira_summary jira_assignee jira_priority; do
+          if [ -n "$jira_key" ]; then
+            local jira_url="https://issues.redhat.com/browse/${jira_key}"
+            local jira_detail=""
+            if [ -n "$jira_assignee" ] && [ -n "$jira_priority" ]; then
+              jira_detail=" (${jira_priority}, ${jira_assignee})"
+            elif [ -n "$jira_assignee" ]; then
+              jira_detail=" (${jira_assignee})"
+            elif [ -n "$jira_priority" ]; then
+              jira_detail=" (${jira_priority})"
+            fi
+            LOG_ENTRY="${LOG_ENTRY}
+${TAB}- Linked: [${jira_key}](${jira_url}) — ${jira_summary}${jira_detail}"
+          fi
+        done <<< "$linked_issues"
+      fi
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Jira reference parsing
+# ---------------------------------------------------------------------------
+
+JIRA_KEY=""
+
+parse_jira_ref() {
+  local ref="$1"
+  JIRA_KEY=""
+
+  # URL: https://issues.redhat.com/browse/RHOAIENG-12345
+  # or:  https://redhat.atlassian.net/browse/RHOAIENG-12345
+  if [[ "$ref" == *issues.redhat.com* ]] || [[ "$ref" == *redhat.atlassian.net* ]]; then
+    JIRA_KEY="$(echo "$ref" | sed 's|.*/browse/||' | sed 's|[?#].*||')"
+    return 0
+  fi
+
+  # Bare key: RHOAIENG-12345 (or any PROJECT-NUM pattern)
+  if [[ "$ref" =~ ^[A-Z]+-[0-9]+$ ]]; then
+    JIRA_KEY="$ref"
+    return 0
+  fi
+
+  echo "ERROR: Could not parse Jira reference: $ref" >&2
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Jira handler
+# ---------------------------------------------------------------------------
+
+handle_jira() {
+  local action="$1" ref="$2"
+
+  require_jira_env
+  parse_jira_ref "$ref" || return 1
+
+  if [ "$action" = "seen" ]; then
+    check_already_seen "$JIRA_KEY"
+  fi
+
+  local jira_url="https://issues.redhat.com/browse/${JIRA_KEY}"
+
+  # Fetch issue data
+  local issue_json
+  issue_json="$(jira_api "issue/${JIRA_KEY}?fields=summary,issuetype,assignee,priority,parent,customfield_10875,comment" 2>/dev/null || true)"
+
+  local summary issue_type assignee priority
+  local parent_key parent_summary
+
+  if [ -n "$issue_json" ]; then
+    summary="$(echo "$issue_json" | extract_json 'data["fields"]["summary"]')"
+    issue_type="$(echo "$issue_json" | extract_json 'data["fields"]["issuetype"]["name"]')"
+    assignee="$(echo "$issue_json" | extract_json 'data["fields"]["assignee"]["displayName"]')"
+    priority="$(echo "$issue_json" | extract_json 'data["fields"]["priority"]["name"]')"
+    parent_key="$(echo "$issue_json" | extract_json 'data["fields"]["parent"]["key"]')"
+    parent_summary="$(echo "$issue_json" | extract_json 'data["fields"]["parent"]["fields"]["summary"]')"
+  else
+    summary="(could not fetch issue info)"
+    issue_type=""
+    assignee=""
+    priority=""
+    parent_key=""
+    parent_summary=""
+  fi
+
+  # Build main line
+  local emoji timestamp action_text
+  emoji="$(get_emoji jira "$action")"
+  timestamp="$(get_timestamp)"
+  action_text="$(title_case "$action")"
+
+  local type_priority=""
+  if [ -n "$issue_type" ] && [ -n "$priority" ]; then
+    type_priority=" (${issue_type}, ${priority})"
+  elif [ -n "$issue_type" ]; then
+    type_priority=" (${issue_type})"
+  fi
+
+  local assignee_part=""
+  if [ -n "$assignee" ]; then
+    assignee_part=" — assigned to ${assignee}"
+  fi
+
+  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} [${JIRA_KEY}](${jira_url})${type_priority}: \"${summary}\"${assignee_part}**"
+
+  # Epic parent
+  if [ -n "$parent_key" ]; then
+    local parent_url="https://issues.redhat.com/browse/${parent_key}"
+    local parent_text="[${parent_key}](${parent_url})"
+    if [ -n "$parent_summary" ]; then
+      parent_text="${parent_text} — ${parent_summary}"
+    fi
+    LOG_ENTRY="${LOG_ENTRY}
+${TAB}- Epic: ${parent_text}"
+  fi
+
+  # For commented action, get latest comment excerpt
+  if [ "$action" = "commented" ] && [ -n "$issue_json" ]; then
+    local comment_body
+    comment_body="$(echo "$issue_json" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    comments = data.get('fields', {}).get('comment', {}).get('comments', [])
+    if comments:
+        print(comments[-1].get('body', ''))
+except:
+    pass
+" 2>/dev/null || true)"
+
+    if [ -n "$comment_body" ]; then
+      comment_body="$(truncate_text "$comment_body" 120)"
+      LOG_ENTRY="${LOG_ENTRY}
+${TAB}- Comment: \"${comment_body}\""
+    fi
+  fi
+
+  # Linked PRs from customfield_10875
+  if [ -n "$issue_json" ]; then
+    local pr_urls
+    pr_urls="$(echo "$issue_json" | python3 -c "
+import sys, json, re
+try:
+    data = json.load(sys.stdin)
+    field = data.get('fields', {}).get('customfield_10875', '')
+    if not field:
+        sys.exit(0)
+    # Field could be a string (plain text or HTML) or ADF structure
+    urls = []
+    if isinstance(field, str):
+        urls = re.findall(r'https://github\.com/[^\s\"<>]+/pull/\d+', field)
+    elif isinstance(field, dict):
+        # ADF format - walk the tree looking for URLs
+        def walk(node):
+            if isinstance(node, dict):
+                # inlineCard
+                url = node.get('attrs', {}).get('url', '')
+                if url and '/pull/' in url:
+                    urls.append(url)
+                # link mark
+                for mark in node.get('marks', []):
+                    href = mark.get('attrs', {}).get('href', '')
+                    if href and '/pull/' in href:
+                        urls.append(href)
+                for child in node.get('content', []):
+                    walk(child)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+        walk(field)
+    for url in urls:
+        print(url)
+except:
+    pass
+" 2>/dev/null || true)"
+
+    if [ -n "$pr_urls" ]; then
+      local pr_links=""
+      while IFS= read -r url; do
+        if [ -n "$url" ]; then
+          # Extract owner/repo#number from URL
+          local pr_path
+          pr_path="$(echo "$url" | sed 's|.*/github\.com/||')"
+          local pr_repo_name pr_num_part
+          pr_repo_name="$(echo "$pr_path" | cut -d/ -f2)"
+          pr_num_part="$(echo "$pr_path" | grep -o '[0-9]*$')"
+          local display="${pr_repo_name}#${pr_num_part}"
+          if [ -n "$pr_links" ]; then
+            pr_links="${pr_links}, [${display}](${url})"
+          else
+            pr_links="[${display}](${url})"
+          fi
+        fi
+      done <<< "$pr_urls"
+
+      if [ -n "$pr_links" ]; then
+        LOG_ENTRY="${LOG_ENTRY}
+${TAB}- PRs: ${pr_links}"
+      fi
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Test handler — generates fake entries for every permutation
+# ---------------------------------------------------------------------------
+
+handle_test() {
+  local timestamp
+  timestamp="$(get_timestamp)"
+
+  local pr_url="https://github.com/opendatahub-io/odh-dashboard/pull/6300"
+  local pr_ref="odh-dashboard#6300"
+  local pr_title="Fix model registry pagination for large result sets"
+  local pr_author="chrjones-rh"
+
+  local jira_key="RHOAIENG-50351"
+  local jira_url="https://issues.redhat.com/browse/RHOAIENG-50351"
+  local jira_summary="Fix model registry pagination for large result sets"
+  local jira_type="Bug"
+  local jira_priority="Major"
+  local jira_assignee="Mike Turley"
+
+  local epic_key="RHOAIENG-48000"
+  local epic_url="https://issues.redhat.com/browse/RHOAIENG-48000"
+  local epic_summary="Model Registry improvements"
+
+  local pr_url_2="https://github.com/kubeflow/model-registry/pull/2288"
+  local pr_ref_2="model-registry#2288"
+
+  local review_excerpt="Looks good overall, one minor nit on the error handling path in the submit handler. Can we add a fallback for the empty state?"
+  local comment_excerpt="I think we should also handle the case where the API returns an empty list vs null — they have different semantics downstream."
+
+  LOG_ENTRY=""
+  local entry
+
+  # --- Free-form ---
+  entry="- **${timestamp} — 📌 Caught up on Slack messages and replied to a thread about the release timeline**"
+  LOG_ENTRY="${entry}"
+
+  # --- PR: all actions ---
+  local pr_action
+  for pr_action in opened seen reviewed commented approved; do
+    local emoji action_text
+    emoji="$(get_emoji pr "$pr_action")"
+    action_text="$(title_case "$pr_action")"
+
+    local author_part=" (by @${pr_author})"
+    entry="- **${timestamp} — ${emoji} ${action_text} PR [${pr_ref}](${pr_url}): \"${pr_title}\"${author_part}**"
+
+    # Add excerpt for reviewed/commented
+    if [ "$pr_action" = "reviewed" ]; then
+      entry="${entry}
+${TAB}- Review: \"${review_excerpt}\""
+    elif [ "$pr_action" = "commented" ]; then
+      entry="${entry}
+${TAB}- Comment: \"${comment_excerpt}\""
+    fi
+
+    # Add linked Jira on some entries to show the variation
+    if [ "$pr_action" = "opened" ] || [ "$pr_action" = "reviewed" ] || [ "$pr_action" = "approved" ]; then
+      entry="${entry}
+${TAB}- Linked: [${jira_key}](${jira_url}) — ${jira_summary} (${jira_priority}, ${jira_assignee})"
+    fi
+
+    # Add notes on one entry
+    if [ "$pr_action" = "reviewed" ]; then
+      entry="${entry}
+${TAB}- Notes: Requested a small change, otherwise LGTM"
+    fi
+
+    LOG_ENTRY="${LOG_ENTRY}
+${entry}"
+  done
+
+  # --- Jira: all actions ---
+  local jira_action
+  for jira_action in opened seen updated commented; do
+    local emoji action_text
+    emoji="$(get_emoji jira "$jira_action")"
+    action_text="$(title_case "$jira_action")"
+
+    entry="- **${timestamp} — ${emoji} ${action_text} [${jira_key}](${jira_url}) (${jira_type}, ${jira_priority}): \"${jira_summary}\" — assigned to ${jira_assignee}**"
+
+    # Add epic on some entries
+    if [ "$jira_action" = "opened" ] || [ "$jira_action" = "seen" ] || [ "$jira_action" = "commented" ]; then
+      entry="${entry}
+${TAB}- Epic: [${epic_key}](${epic_url}) — ${epic_summary}"
+    fi
+
+    # Add comment excerpt for commented
+    if [ "$jira_action" = "commented" ]; then
+      entry="${entry}
+${TAB}- Comment: \"${comment_excerpt}\""
+    fi
+
+    # Add linked PRs on some entries
+    if [ "$jira_action" = "seen" ] || [ "$jira_action" = "updated" ]; then
+      entry="${entry}
+${TAB}- PRs: [${pr_ref}](${pr_url}), [${pr_ref_2}](${pr_url_2})"
+    fi
+
+    # Add notes on one entry
+    if [ "$jira_action" = "updated" ]; then
+      entry="${entry}
+${TAB}- Notes: Moved to In Progress and updated the description with the latest requirements"
+    fi
+
+    LOG_ENTRY="${LOG_ENTRY}
+${entry}"
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Notes prompt and Obsidian append
+# ---------------------------------------------------------------------------
+
+prompt_and_append() {
+  # Display the entry
+  echo ""
+  echo "${COLOR_CYAN}Log entry:${COLOR_RESET}"
+  echo "$LOG_ENTRY"
+  echo ""
+
+  # Prompt for additional notes
+  printf "${COLOR_BLUE}Add any additional notes? (press Enter to skip):${COLOR_RESET} "
+  read -r notes
+  if [ -n "$notes" ]; then
+    LOG_ENTRY="${LOG_ENTRY}
+${TAB}- Notes: ${notes}"
+    echo ""
+    echo "${COLOR_CYAN}Updated entry:${COLOR_RESET}"
+    echo "$LOG_ENTRY"
+  fi
+
+  # Convert newlines and tabs to escape sequences for obsidian CLI
+  local escaped
+  escaped="${LOG_ENTRY//$'\n'/\\n}"
+  escaped="${escaped//$'\t'/\\t}"
+
+  # Append to daily note and open it
+  echo ""
+  echo "${COLOR_GREEN}Appending to daily note...${COLOR_RESET}"
+  obsidian daily:append "content=${escaped}" open >/dev/null 2>&1
+
+  echo "${COLOR_GREEN}Done!${COLOR_RESET}"
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+# Handle help
+case "${1:-}" in
+  -h|--help|help)
+    usage
+    ;;
+esac
+
+require_obsidian
+
+# Test mode: generate all permutations with fake data
+if [ "${1:-}" = "test" ]; then
+  handle_test
+  # Show all entries, then append without prompting for notes
+  echo ""
+  echo "${COLOR_CYAN}Test entries:${COLOR_RESET}"
+  echo "$LOG_ENTRY"
+  echo ""
+
+  escaped="${LOG_ENTRY//$'\n'/\\n}"
+  escaped="${escaped//$'\t'/\\t}"
+
+  echo "${COLOR_GREEN}Appending test entries to daily note...${COLOR_RESET}"
+  obsidian daily:append "content=${escaped}" open >/dev/null 2>&1
+  echo "${COLOR_GREEN}Done! Check your daily note in Obsidian.${COLOR_RESET}"
+  exit 0
+fi
+
+# No arguments: free-form log entry
+if [ $# -eq 0 ]; then
+  printf "${COLOR_BLUE}What do you want to log?${COLOR_RESET} "
+  read -r freeform
+  if [ -z "$freeform" ]; then
+    echo "Nothing to log." >&2
+    exit 0
+  fi
+  local_timestamp="$(get_timestamp)"
+  LOG_ENTRY="- **${local_timestamp} — 📌 ${freeform}**"
+  prompt_and_append
+  exit 0
+fi
+
+CATEGORY="${1:-}"
+ACTION="${2:-}"
+REFERENCE="${3:-}"
+
+# Validate category and action
+case "$CATEGORY" in
+  pr)
+    case "$ACTION" in
+      opened|seen|reviewed|commented|approved) ;;
+      *)
+        echo "ERROR: Invalid PR action: ${ACTION:-<missing>}" >&2
+        echo "Valid actions: opened, seen, reviewed, commented, approved" >&2
+        exit 1
+        ;;
+    esac
+    if [ -z "$REFERENCE" ]; then
+      echo "ERROR: PR reference required." >&2
+      echo "Example: log pr opened https://github.com/owner/repo/pull/123" >&2
+      exit 1
+    fi
+    ;;
+  jira)
+    case "$ACTION" in
+      opened|seen|updated|commented) ;;
+      *)
+        echo "ERROR: Invalid Jira action: ${ACTION:-<missing>}" >&2
+        echo "Valid actions: opened, seen, updated, commented" >&2
+        exit 1
+        ;;
+    esac
+    if [ -z "$REFERENCE" ]; then
+      echo "ERROR: Jira reference required." >&2
+      echo "Example: log jira seen RHOAIENG-12345" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "ERROR: Unknown category: $CATEGORY" >&2
+    echo "Valid categories: pr, jira" >&2
+    echo "Run 'log help' for full usage." >&2
+    exit 1
+    ;;
+esac
+
+# Load Jira credentials (non-fatal for PR commands)
+load_env || true
+
+LOG_ENTRY=""
+
+case "$CATEGORY" in
+  pr)   handle_pr "$ACTION" "$REFERENCE" ;;
+  jira) handle_jira "$ACTION" "$REFERENCE" ;;
+esac
+
+if [ -z "$LOG_ENTRY" ]; then
+  echo "ERROR: Failed to build log entry." >&2
+  exit 1
+fi
+
+prompt_and_append
