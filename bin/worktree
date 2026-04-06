@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # worktree - Manage git worktrees for PRs and branches
 #
-# Usage: worktree [pr-number|pr-url|branch-name|worktree-path]
+# Usage: worktree [pr-number|pr-url|branch-name|worktree-path] ...
 #
 # With no arguments, lists existing worktrees and prompts to select one.
-# If a worktree already exists for the given argument, opens the REPL directly.
-# Otherwise creates a new worktree (PR or branch) and opens the REPL.
+# With one argument, opens or creates a worktree for the given PR/branch.
+# With multiple arguments, opens each in a separate terminal pane (requires
+# iTerm2 or tmux).
 
 # Detect if the current directory has been deleted (e.g. after worktree cleanup)
 if ! pwd &>/dev/null; then
@@ -22,6 +23,56 @@ source "$SCRIPTS_DIR/helpers.sh"
 
 CYAN="$(tput setaf 6 2>/dev/null || true)"
 RESET="$(tput sgr0 2>/dev/null || true)"
+
+# --- Helper: generate a pane label from an argument ---
+pane_label() {
+  local arg="$1"
+  local label="$arg"
+  if [[ "$arg" =~ ^[0-9]+$ ]]; then
+    label="PR #$arg"
+  elif [[ "$arg" == *github.com* ]]; then
+    local pr_num
+    pr_num="$(echo "$arg" | grep -o '[0-9]*$')"
+    if [ -n "$pr_num" ]; then
+      label="PR #$pr_num"
+    fi
+  fi
+  echo "worktree $label"
+}
+
+# --- Inside mprocs: add pane(s) to the existing session ---
+if [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
+  SELF="$(readlink -f "$0")"
+  for arg in "$@"; do
+    label="$(pane_label "$arg")"
+    mprocs --ctl "{c: add-proc, cmd: \"WORKTREE_MPROCS_PANE=1 $SELF $arg\", name: \"$label\"}"
+  done
+  exit 0
+fi
+
+# --- Multiple arguments: launch mprocs with a command pane + worktree panes ---
+if [ $# -gt 1 ]; then
+  if ! command -v mprocs &>/dev/null; then
+    echo "ERROR: Multiple worktrees require mprocs." >&2
+    echo "  Install it: brew install mprocs" >&2
+    exit 1
+  fi
+  SELF="$(readlink -f "$0")"
+  MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
+  rm -f "$MPROCS_CFG"
+  trap "rm -f '$MPROCS_CFG'" EXIT
+  echo "procs:" > "$MPROCS_CFG"
+  echo "  shell:" >> "$MPROCS_CFG"
+  echo "    shell: \"$SHELL\"" >> "$MPROCS_CFG"
+  for arg in "$@"; do
+    label="$(pane_label "$arg")"
+    echo "  \"$label\":" >> "$MPROCS_CFG"
+    echo "    shell: \"$SELF $arg\"" >> "$MPROCS_CFG"
+    echo "    env:" >> "$MPROCS_CFG"
+    echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
+  done
+  exec mprocs --config "$MPROCS_CFG"
+fi
 
 # --- No arguments: list and select (or enter REPL if inside a worktree) ---
 

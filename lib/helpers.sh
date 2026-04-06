@@ -541,10 +541,18 @@ worktree_repl() {
           echo "Worktree removed."
           git worktree prune 2>/dev/null
           cleanup_worktree_excludes "$repo_root"
+          if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
+            echo ""
+            echo "To close this pane: Ctrl+A → d → y"
+          fi
           exit 0
         fi
         ;;
       exit|quit|q|e)
+        if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
+          echo ""
+          echo "To close this pane: Ctrl+A → d → y"
+        fi
         exit 0
         ;;
       help|h)
