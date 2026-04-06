@@ -574,8 +574,9 @@ worktree_repl() {
         fi
         ;;
       exit|quit|q|e)
-        if [ -n "${WORKTREE_MPROCS_ID:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
-          mprocs --server "$MPROCS_SOCKET" --ctl "{c: remove-proc, id: $WORKTREE_MPROCS_ID}" 2>/dev/null || true
+        if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
+          echo ""
+          echo "To close this pane: Ctrl+A → d → y"
         fi
         exit 0
         ;;

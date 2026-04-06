@@ -45,7 +45,7 @@ if [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
   SELF="$(readlink -f "$0")"
   for arg in "$@"; do
     label="$(pane_label "$arg")"
-    mprocs --ctl "{c: add-proc, cmd: \"WORKTREE_MPROCS_PANE=1 $SELF $arg\", name: \"$label\"}"
+    mprocs --server "$MPROCS_SOCKET" --ctl "{c: add-proc, cmd: \"cd $(pwd) && WORKTREE_MPROCS_PANE=1 MPROCS_SOCKET=$MPROCS_SOCKET $SELF $arg\", name: \"$label\"}"
   done
   exit 0
 fi
@@ -59,19 +59,23 @@ if [ $# -gt 1 ]; then
   fi
   SELF="$(readlink -f "$0")"
   MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
+  MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
   rm -f "$MPROCS_CFG"
   trap "rm -f '$MPROCS_CFG'" EXIT
   echo "procs:" > "$MPROCS_CFG"
   echo "  shell:" >> "$MPROCS_CFG"
   echo "    shell: \"$SHELL\"" >> "$MPROCS_CFG"
+  echo "    env:" >> "$MPROCS_CFG"
+  echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
   for arg in "$@"; do
     label="$(pane_label "$arg")"
     echo "  \"$label\":" >> "$MPROCS_CFG"
     echo "    shell: \"$SELF $arg\"" >> "$MPROCS_CFG"
     echo "    env:" >> "$MPROCS_CFG"
     echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
+    echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
   done
-  exec mprocs --config "$MPROCS_CFG"
+  exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
 fi
 
 # --- No arguments: list and select (or enter REPL if inside a worktree) ---
