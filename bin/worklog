@@ -410,6 +410,27 @@ else:
             table_end = i
         else:
             break
+
+    # Fix extra empty columns (e.g. from accidental clicks in Obsidian)
+    import re
+    # Split on unescaped pipes (not preceded by backslash)
+    def split_row(line):
+        return re.split(r'(?<!\\)\|', line)
+    # Header and separator: replace with canonical versions
+    header_cols = len(split_row('$TABLE_HEADER')) - 2  # subtract leading/trailing empties
+    actual_cols = len(split_row(lines[table_start])) - 2
+    if actual_cols > header_cols:
+        lines[table_start] = '$TABLE_HEADER'
+        lines[table_start + 1] = '$TABLE_SEPARATOR'
+        # For data rows, strip trailing empty cells
+        for i in range(table_start + 2, table_end + 1):
+            parts = split_row(lines[i])
+            # parts: ['', col1, col2, ..., '']
+            inner = parts[1:-1]
+            while len(inner) > header_cols and inner[-1].strip() == '':
+                inner.pop()
+            lines[i] = '|' + '|'.join(inner) + '|'
+
     lines.insert(table_end + 1, new_row)
 
 with open(filepath, 'w') as f:
