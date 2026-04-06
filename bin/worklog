@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# log - Append timestamped activity entries to today's Obsidian daily note.
-# Usage: log <category> <action> [reference]
+# worklog - Append timestamped activity entries to today's Obsidian daily note.
+# Usage: worklog <category> <action> [reference]
 
 set -euo pipefail
 
@@ -14,35 +14,81 @@ source "$SCRIPTS_DIR/helpers.sh"
 # Help / usage
 # ---------------------------------------------------------------------------
 
+PR_ACTIONS="opened | seen | reviewed | commented | approved"
+PR_REFS="  https://github.com/owner/repo/pull/123
+  owner/repo#123
+  #123  (infers repo from current directory)
+  123   (infers repo from current directory)"
+PR_EXAMPLES="  worklog pr opened https://github.com/opendatahub-io/odh-dashboard/pull/6300
+  worklog pr reviewed odh-dashboard#6300
+  worklog pr approved #123"
+
+JIRA_ACTIONS="opened | seen | updated | commented"
+JIRA_REFS="  RHOAIENG-12345
+  https://issues.redhat.com/browse/RHOAIENG-12345
+  https://redhat.atlassian.net/browse/RHOAIENG-12345"
+JIRA_EXAMPLES="  worklog jira seen RHOAIENG-12345
+  worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345"
+
+usage_pr() {
+  cat <<EOF
+Usage: worklog pr <action> <ref>
+
+Actions:  ${PR_ACTIONS}
+
+Reference formats:
+${PR_REFS}
+
+Examples:
+${PR_EXAMPLES}
+EOF
+}
+
+usage_jira() {
+  cat <<EOF
+Usage: worklog jira <action> <ref>
+
+Actions:  ${JIRA_ACTIONS}
+
+Reference formats:
+${JIRA_REFS}
+
+Examples:
+${JIRA_EXAMPLES}
+EOF
+}
+
 usage() {
-  cat <<'EOF'
-Usage: log <category> <action> [reference]
+  cat <<EOF
+Usage: worklog <category> <action> [reference]
 
 Append a timestamped, metadata-enriched activity entry to today's Obsidian
 daily note.
 
 Categories and actions:
 
-  pr      opened | seen | reviewed | commented | approved   <url-or-ref>
-  jira    opened | seen | updated  | commented              <url-or-ref>
+  pr      ${PR_ACTIONS}   <ref>
+  jira    ${JIRA_ACTIONS}              <ref>
 
 Reference formats:
 
-  PR:     https://github.com/owner/repo/pull/123
-          owner/repo#123
-          #123  (infers repo from current directory)
-          123   (infers repo from current directory)
+  PR:
+${PR_REFS}
 
-  Jira:   RHOAIENG-12345
-          https://issues.redhat.com/browse/RHOAIENG-12345
-          https://redhat.atlassian.net/browse/RHOAIENG-12345
+  Jira:
+${JIRA_REFS}
 
 Examples:
 
-  log pr opened https://github.com/opendatahub-io/odh-dashboard/pull/6300
-  log pr reviewed odh-dashboard#6300
-  log jira seen RHOAIENG-12345
-  log jira commented https://issues.redhat.com/browse/RHOAIENG-12345
+${PR_EXAMPLES}
+${JIRA_EXAMPLES}
+
+Other commands:
+
+  worklog              free-form log entry (prompts for text)
+  worklog open         open today's daily note in Obsidian
+  worklog test         generate all format permutations with fake data
+  worklog help         show this help
 
 Environment:
 
@@ -87,6 +133,7 @@ check_already_seen() {
 # .env loading
 # ---------------------------------------------------------------------------
 
+JIRA_HOST=""
 JIRA_EMAIL=""
 JIRA_API_TOKEN=""
 JIRA_LOADED=false
@@ -105,11 +152,12 @@ load_env() {
     key="$(echo "$key" | tr -d '[:space:]')"
     value="$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     case "$key" in
+      JIRA_HOST) JIRA_HOST="$value" ;;
       JIRA_EMAIL) JIRA_EMAIL="$value" ;;
       JIRA_API_TOKEN) JIRA_API_TOKEN="$value" ;;
     esac
   done < "$env_file"
-  if [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ]; then
+  if [ -n "$JIRA_HOST" ] && [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ]; then
     JIRA_LOADED=true
     return 0
   fi
@@ -123,7 +171,7 @@ require_jira_env() {
   echo "ERROR: Jira credentials not configured." >&2
   echo "Create a .env file in $(short_path "$WORK_SCRIPTS_DIR"):" >&2
   echo "  cp .env.example .env" >&2
-  echo "  # Then fill in JIRA_EMAIL and JIRA_API_TOKEN" >&2
+  echo "  # Then fill in JIRA_HOST, JIRA_EMAIL, and JIRA_API_TOKEN" >&2
   echo "  # Generate a token at: https://id.atlassian.com/manage-profile/security/api-tokens" >&2
   exit 1
 }
@@ -207,7 +255,7 @@ jira_api() {
   local endpoint="$1"
   curl -s -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
     -H "Content-Type: application/json" \
-    "https://redhat.atlassian.net/rest/api/2/${endpoint}" 2>/dev/null
+    "https://${JIRA_HOST}/rest/api/2/${endpoint}" 2>/dev/null
 }
 
 jira_search() {
@@ -390,7 +438,7 @@ except:
       if [ -n "$linked_issues" ]; then
         while IFS='|' read -r jira_key jira_summary jira_assignee jira_priority; do
           if [ -n "$jira_key" ]; then
-            local jira_url="https://issues.redhat.com/browse/${jira_key}"
+            local jira_url="https://${JIRA_HOST}/browse/${jira_key}"
             local jira_detail=""
             if [ -n "$jira_assignee" ] && [ -n "$jira_priority" ]; then
               jira_detail=" (${jira_priority}, ${jira_assignee})"
@@ -418,9 +466,8 @@ parse_jira_ref() {
   local ref="$1"
   JIRA_KEY=""
 
-  # URL: https://issues.redhat.com/browse/RHOAIENG-12345
-  # or:  https://redhat.atlassian.net/browse/RHOAIENG-12345
-  if [[ "$ref" == *issues.redhat.com* ]] || [[ "$ref" == *redhat.atlassian.net* ]]; then
+  # URL containing /browse/KEY (any Jira host)
+  if [[ "$ref" == */browse/* ]]; then
     JIRA_KEY="$(echo "$ref" | sed 's|.*/browse/||' | sed 's|[?#].*||')"
     return 0
   fi
@@ -449,7 +496,7 @@ handle_jira() {
     check_already_seen "$JIRA_KEY"
   fi
 
-  local jira_url="https://issues.redhat.com/browse/${JIRA_KEY}"
+  local jira_url="https://${JIRA_HOST}/browse/${JIRA_KEY}"
 
   # Fetch issue data
   local issue_json
@@ -496,7 +543,7 @@ handle_jira() {
 
   # Epic parent
   if [ -n "$parent_key" ]; then
-    local parent_url="https://issues.redhat.com/browse/${parent_key}"
+    local parent_url="https://${JIRA_HOST}/browse/${parent_key}"
     local parent_text="[${parent_key}](${parent_url})"
     if [ -n "$parent_summary" ]; then
       parent_text="${parent_text} — ${parent_summary}"
@@ -606,14 +653,14 @@ handle_test() {
   local pr_author="chrjones-rh"
 
   local jira_key="RHOAIENG-50351"
-  local jira_url="https://issues.redhat.com/browse/RHOAIENG-50351"
+  local jira_url="https://${JIRA_HOST}/browse/RHOAIENG-50351"
   local jira_summary="Fix model registry pagination for large result sets"
   local jira_type="Bug"
   local jira_priority="Major"
   local jira_assignee="Mike Turley"
 
   local epic_key="RHOAIENG-48000"
-  local epic_url="https://issues.redhat.com/browse/RHOAIENG-48000"
+  local epic_url="https://${JIRA_HOST}/browse/RHOAIENG-48000"
   local epic_summary="Model Registry improvements"
 
   local pr_url_2="https://github.com/kubeflow/model-registry/pull/2288"
@@ -715,7 +762,7 @@ prompt_and_append() {
 
   # Prompt for additional notes
   printf "${COLOR_BLUE}Add any additional notes? (press Enter to skip):${COLOR_RESET} "
-  read -r notes
+  read -r notes || true
   if [ -n "$notes" ]; then
     LOG_ENTRY="${LOG_ENTRY}
 ${TAB}- Notes: ${notes}"
@@ -750,6 +797,15 @@ esac
 
 require_obsidian
 
+# Load .env early (non-fatal — needed for test mode and Jira commands)
+load_env || true
+
+# Open daily note shorthand
+if [ "${1:-}" = "open" ]; then
+  obsidian daily >/dev/null 2>&1
+  exit 0
+fi
+
 # Test mode: generate all permutations with fake data
 if [ "${1:-}" = "test" ]; then
   handle_test
@@ -771,7 +827,7 @@ fi
 # No arguments: free-form log entry
 if [ $# -eq 0 ]; then
   printf "${COLOR_BLUE}What do you want to log?${COLOR_RESET} "
-  read -r freeform
+  read -r freeform || true
   if [ -z "$freeform" ]; then
     echo "Nothing to log." >&2
     exit 0
@@ -789,45 +845,54 @@ REFERENCE="${3:-}"
 # Validate category and action
 case "$CATEGORY" in
   pr)
+    if [ -z "$ACTION" ]; then
+      usage_pr
+      exit 0
+    fi
     case "$ACTION" in
       opened|seen|reviewed|commented|approved) ;;
       *)
-        echo "ERROR: Invalid PR action: ${ACTION:-<missing>}" >&2
-        echo "Valid actions: opened, seen, reviewed, commented, approved" >&2
+        echo "ERROR: Invalid PR action: $ACTION" >&2
+        echo "" >&2
+        usage_pr >&2
         exit 1
         ;;
     esac
     if [ -z "$REFERENCE" ]; then
       echo "ERROR: PR reference required." >&2
-      echo "Example: log pr opened https://github.com/owner/repo/pull/123" >&2
+      echo "" >&2
+      usage_pr >&2
       exit 1
     fi
     ;;
   jira)
+    if [ -z "$ACTION" ]; then
+      usage_jira
+      exit 0
+    fi
     case "$ACTION" in
       opened|seen|updated|commented) ;;
       *)
-        echo "ERROR: Invalid Jira action: ${ACTION:-<missing>}" >&2
-        echo "Valid actions: opened, seen, updated, commented" >&2
+        echo "ERROR: Invalid Jira action: $ACTION" >&2
+        echo "" >&2
+        usage_jira >&2
         exit 1
         ;;
     esac
     if [ -z "$REFERENCE" ]; then
       echo "ERROR: Jira reference required." >&2
-      echo "Example: log jira seen RHOAIENG-12345" >&2
+      echo "" >&2
+      usage_jira >&2
       exit 1
     fi
     ;;
   *)
     echo "ERROR: Unknown category: $CATEGORY" >&2
     echo "Valid categories: pr, jira" >&2
-    echo "Run 'log help' for full usage." >&2
+    echo "Run 'worklog help' for full usage." >&2
     exit 1
     ;;
 esac
-
-# Load Jira credentials (non-fatal for PR commands)
-load_env || true
 
 LOG_ENTRY=""
 

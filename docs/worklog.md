@@ -1,20 +1,20 @@
-# log
+# worklog
 
 Append timestamped, metadata-enriched activity entries to today's [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes). Designed as a quick way to record what you've been doing throughout the day for scrum updates and personal reference.
 
 ```bash
-log                                    # free-form log entry (prompts for text)
-log help                               # show full usage
-log pr opened https://github.com/org/repo/pull/123
-log pr reviewed org/repo#123
-log pr approved #123                   # infers repo from current directory
-log jira seen RHOAIENG-12345
-log jira commented https://issues.redhat.com/browse/RHOAIENG-12345
+worklog                                    # free-form log entry (prompts for text)
+worklog help                               # show full usage
+worklog pr opened https://github.com/org/repo/pull/123
+worklog pr reviewed org/repo#123
+worklog pr approved #123                   # infers repo from current directory
+worklog jira seen RHOAIENG-12345
+worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345
 ```
 
 ## PR commands
 
-`log pr <action> <ref>`
+`worklog pr <action> <ref>`
 
 Actions: `opened`, `seen`, `reviewed`, `commented`, `approved`
 
@@ -26,7 +26,7 @@ Reference formats: full GitHub URL, `owner/repo#123`, `repo#123`, `#123`, or bar
 
 ## Jira commands
 
-`log jira <action> <ref>`
+`worklog jira <action> <ref>`
 
 Actions: `opened`, `seen`, `updated`, `commented`
 
@@ -57,6 +57,6 @@ Each entry is a markdown bullet appended to the daily note. The main line is bol
 2. For Jira integration, create a `.env` file in the work-scripts directory:
    ```bash
    cp .env.example .env
-   # Fill in JIRA_EMAIL and JIRA_API_TOKEN
+   # Fill in JIRA_HOST, JIRA_EMAIL and JIRA_API_TOKEN
    # Generate a token at: https://id.atlassian.com/manage-profile/security/api-tokens
    ```

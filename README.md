@@ -4,7 +4,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 
 - [`worktree`](docs/worktree.md) — Create and manage git worktrees for PRs and branches
 - [`gh-safe`](docs/gh-safe.md) — AI agent guardrail for the GitHub CLI
-- [`log`](docs/log.md) — Append timestamped activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes)
+- [`worklog`](docs/worklog.md) (or `wlog`) — Append timestamped activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes)
 
 ## Setup
 
@@ -48,14 +48,14 @@ APPROVE=true gh-safe pr merge 123  # allowed
 
 ## Commands for Obsidian Notes
 
-### [`log`](docs/log.md) — Activity Logger
+### [`worklog`](docs/worklog.md) — Activity Logger
 
-Append timestamped, metadata-enriched activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes). Fetches context from GitHub and Jira APIs automatically.
+Append timestamped, metadata-enriched activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes). Fetches context from GitHub and Jira APIs automatically. Also available as `wlog`.
 
 ```bash
-log                                  # free-form log entry
-log pr reviewed org/repo#123         # log a PR review with metadata
-log jira seen RHOAIENG-12345         # log viewing a Jira issue
+worklog                                  # free-form log entry
+worklog pr reviewed org/repo#123         # log a PR review with metadata
+worklog jira seen RHOAIENG-12345         # log viewing a Jira issue
 ```
 
-Requires the [Obsidian CLI](https://obsidian.md/) and a `.env` file for Jira integration (see [docs](docs/log.md#setup)).
+Requires the [Obsidian CLI](https://obsidian.md/) and a `.env` file for Jira integration (see [docs](docs/worklog.md#setup)).
