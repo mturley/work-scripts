@@ -43,16 +43,17 @@ Reference formats: issue key (`RHOAIENG-12345`) or full URL (`https://issues.red
 Each entry is a markdown bullet appended to the daily note. The main line is bold for readability. Sub-bullets include linked issues/PRs, review excerpts, and optional user notes.
 
 ```markdown
-- **3:15 PM — 📝 Reviewed PR [odh-dashboard#6300](url) (by @author)**
-  *Fix pagination*
+- **3:15 PM — 🔀 📝 Reviewed PR [odh-dashboard#6300](url) (by @author)**
+				*Fix pagination*
 	- Review: "Looks good overall, one minor nit on the error handling..."
-	- Linked: [RHOAIENG-12345](url) — Fix pagination (Major, Mike Turley)
+	- Linked: [RHOAIENG-12345](url) — *Fix pagination*
+	  (Major, Assigned to Mike Turley)
 	- Notes: discussed approach in standup
 
-- **4:00 PM — 🎫 Seen [RHOAIENG-12345](url) (Bug, Major) — assigned to Mike Turley**
-  *Fix pagination*
-	- Epic: [RHOAIENG-12000](url) — Model Registry improvements
-	- PRs: [odh-dashboard#6300](url)
+- **4:00 PM — 📋 👀 Seen [RHOAIENG-12345](url) (Bug, Major) — assigned to Mike Turley**
+				*Fix pagination*
+	- Epic: [RHOAIENG-12000](url) — *Model Registry improvements*
+	- PR: [odh-dashboard#6300](url) (by @author): *Fix pagination*
 ```
 
 ## Setup

@@ -184,18 +184,22 @@ TAB=$'\t'
 
 get_emoji() {
   local category="$1" action="$2"
-  case "${category}/${action}" in
-    pr/opened)     echo "🔀" ;;
-    pr/seen)       echo "👀" ;;
-    pr/reviewed)   echo "📝" ;;
-    pr/commented)  echo "💬" ;;
-    pr/approved)   echo "✅" ;;
-    jira/seen)     echo "👀" ;;
-    jira/opened)   echo "🎫" ;;
-    jira/updated)  echo "📝" ;;
-    jira/commented) echo "💬" ;;
-    *)             echo "📌" ;;
+  local cat_emoji action_emoji
+  case "$category" in
+    pr)   cat_emoji="🔀" ;;
+    jira) cat_emoji="📋" ;;
+    *)    echo "📌"; return ;;
   esac
+  case "$action" in
+    opened)    action_emoji="✨" ;;
+    seen)      action_emoji="👀" ;;
+    reviewed)  action_emoji="📝" ;;
+    commented) action_emoji="💬" ;;
+    approved)  action_emoji="✅" ;;
+    updated)   action_emoji="✏️" ;;
+    *)         action_emoji="📌" ;;
+  esac
+  echo "${cat_emoji} ${action_emoji}"
 }
 
 title_case() {
@@ -412,7 +416,7 @@ handle_pr() {
   fi
 
   LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} PR [${display_ref}](${pr_url})${author_part}**
-  *${pr_title}*"
+${TAB}${TAB}${TAB}${TAB}*${pr_title}*"
 
   # For reviewed/commented, try to get excerpt
   if [ "$action" = "reviewed" ] || [ "$action" = "commented" ]; then
@@ -468,14 +472,17 @@ except:
             local jira_url="https://${JIRA_HOST}/browse/${jira_key}"
             local jira_detail=""
             if [ -n "$jira_assignee" ] && [ -n "$jira_priority" ]; then
-              jira_detail=" (${jira_priority}, ${jira_assignee})"
+              jira_detail="
+${TAB}  (${jira_priority}, Assigned to ${jira_assignee})"
             elif [ -n "$jira_assignee" ]; then
-              jira_detail=" (${jira_assignee})"
+              jira_detail="
+${TAB}  (Assigned to ${jira_assignee})"
             elif [ -n "$jira_priority" ]; then
-              jira_detail=" (${jira_priority})"
+              jira_detail="
+${TAB}  (${jira_priority})"
             fi
             LOG_ENTRY="${LOG_ENTRY}
-${TAB}- Linked: [${jira_key}](${jira_url}) — ${jira_summary}${jira_detail}"
+${TAB}- Linked: [${jira_key}](${jira_url}) — *${jira_summary}*${jira_detail}"
           fi
         done <<< "$linked_issues"
       fi
@@ -567,14 +574,14 @@ handle_jira() {
   fi
 
   LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} [${JIRA_KEY}](${jira_url})${type_priority}${assignee_part}**
-  *${summary}*"
+${TAB}${TAB}${TAB}${TAB}*${summary}*"
 
   # Epic parent
   if [ -n "$parent_key" ]; then
     local parent_url="https://${JIRA_HOST}/browse/${parent_key}"
     local parent_text="[${parent_key}](${parent_url})"
     if [ -n "$parent_summary" ]; then
-      parent_text="${parent_text} — ${parent_summary}"
+      parent_text="${parent_text} — *${parent_summary}*"
     fi
     LOG_ENTRY="${LOG_ENTRY}
 ${TAB}- Epic: ${parent_text}"
@@ -672,7 +679,7 @@ except:
             pr_detail="${pr_detail} (by @${pr_linked_author})"
           fi
           if [ -n "$pr_linked_title" ]; then
-            pr_detail="${pr_detail}: ${pr_linked_title}"
+            pr_detail="${pr_detail}: *${pr_linked_title}*"
           fi
           LOG_ENTRY="${LOG_ENTRY}
 ${TAB}- PR: ${pr_detail}"
@@ -728,7 +735,7 @@ handle_test() {
 
     local author_part=" (by @${pr_author})"
     entry="- **${timestamp} — ${emoji} ${action_text} PR [${pr_ref}](${pr_url})${author_part}**
-  *${pr_title}*"
+${TAB}${TAB}${TAB}${TAB}*${pr_title}*"
 
     # Add excerpt for reviewed/commented
     if [ "$pr_action" = "reviewed" ]; then
@@ -742,7 +749,8 @@ ${TAB}- Comment: \"${comment_excerpt}\""
     # Add linked Jira on some entries to show the variation
     if [ "$pr_action" = "opened" ] || [ "$pr_action" = "reviewed" ] || [ "$pr_action" = "approved" ]; then
       entry="${entry}
-${TAB}- Linked: [${jira_key}](${jira_url}) — ${jira_summary} (${jira_priority}, ${jira_assignee})"
+${TAB}- Linked: [${jira_key}](${jira_url}) — *${jira_summary}*
+${TAB}  (${jira_priority}, Assigned to ${jira_assignee})"
     fi
 
     # Add notes on one entry
@@ -763,12 +771,12 @@ ${entry}"
     action_text="$(title_case "$jira_action")"
 
     entry="- **${timestamp} — ${emoji} ${action_text} [${jira_key}](${jira_url}) (${jira_type}, ${jira_priority}) — assigned to ${jira_assignee}**
-  *${jira_summary}*"
+${TAB}${TAB}${TAB}${TAB}*${jira_summary}*"
 
     # Add epic on some entries
     if [ "$jira_action" = "opened" ] || [ "$jira_action" = "seen" ] || [ "$jira_action" = "commented" ]; then
       entry="${entry}
-${TAB}- Epic: [${epic_key}](${epic_url}) — ${epic_summary}"
+${TAB}- Epic: [${epic_key}](${epic_url}) — *${epic_summary}*"
     fi
 
     # Add comment excerpt for commented
@@ -780,8 +788,8 @@ ${TAB}- Comment: \"${comment_excerpt}\""
     # Add linked PRs on some entries
     if [ "$jira_action" = "seen" ] || [ "$jira_action" = "updated" ]; then
       entry="${entry}
-${TAB}- PR: [${pr_ref}](${pr_url}) (by @${pr_author}): ${pr_title}
-${TAB}- PR: [${pr_ref_2}](${pr_url_2}) (by @${pr_author}): ${pr_title}"
+${TAB}- PR: [${pr_ref}](${pr_url}) (by @${pr_author}): *${pr_title}*
+${TAB}- PR: [${pr_ref_2}](${pr_url_2}) (by @${pr_author}): *${pr_title}*"
     fi
 
     # Add notes on one entry
