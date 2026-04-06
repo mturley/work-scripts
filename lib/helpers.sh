@@ -436,6 +436,16 @@ worktree_repl() {
     fi
   fi
 
+  # If no PR was found from the worktree name, check if the branch has an open PR
+  if [ -z "$pr_url" ] && [ "$branch" != "unknown" ]; then
+    local detected_pr_url
+    detected_pr_url="$(gh pr view "$branch" --json url --jq '.url' 2>/dev/null || true)"
+    if [ -n "$detected_pr_url" ]; then
+      pr_url="$detected_pr_url"
+      pr_num="$(echo "$detected_pr_url" | grep -o '[0-9]*$')"
+    fi
+  fi
+
   local blue cyan green red reset
   blue="$(tput setaf 12 2>/dev/null || true)"
   cyan="$(tput setaf 6 2>/dev/null || true)"
@@ -479,7 +489,11 @@ worktree_repl() {
   }
 
   _worktree_commands() {
-    echo "${blue}Commands: [i]nfo, [l]og, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp${reset}"
+    local pr_cmd=""
+    if [ -n "${pr_url:-}" ]; then
+      pr_cmd="[p]r, "
+    fi
+    echo "${blue}Commands: [i]nfo, [l]og, [o]pen, ${pr_cmd}[s]hell, [c]leanup, [e]xit, [h]elp${reset}"
   }
 
   _worktree_help() {
@@ -487,6 +501,9 @@ worktree_repl() {
     echo "  ${blue}info${reset}     (i)  Show PR URL (if applicable), worktree path, and git status"
     echo "  ${blue}log${reset}      (l)  Show git log"
     echo "  ${blue}open${reset}     (o)  Open worktree in your editor (focuses existing window if already open)"
+    if [ -n "${pr_url:-}" ]; then
+      echo "  ${blue}pr${reset}       (p)  Open the pull request page on GitHub"
+    fi
     echo "  ${blue}shell${reset}    (s)  Start a nested shell in the worktree directory; exit to return to REPL"
     echo "  ${blue}cleanup${reset}  (c)  Remove the worktree and its branch"
     echo "  ${blue}exit${reset}     (e)  Exit the REPL"
@@ -519,6 +536,20 @@ worktree_repl() {
         echo ""
         _worktree_info
         ;;
+      log|l)
+        git -C "$wt_path" log --oneline --graph --decorate || true
+        ;;
+      open|o)
+        open_editor "$wt_path"
+        ;;
+      pr|p)
+        if [ -n "${pr_url:-}" ]; then
+          echo "Opening ${pr_url}"
+          open "$pr_url"
+        else
+          echo "No open pull request found for this branch."
+        fi
+        ;;
       shell|s)
         echo "Starting shell in $(short_path "$wt_path")"
         echo "Exit the shell to return to this REPL."
@@ -526,12 +557,6 @@ worktree_repl() {
         echo ""
         echo "Back in worktree REPL."
         _worktree_info
-        ;;
-      log|l)
-        git -C "$wt_path" log --oneline --graph --decorate || true
-        ;;
-      open|o)
-        open_editor "$wt_path"
         ;;
       cleanup|c)
         echo "This will remove the worktree at:"
@@ -549,9 +574,8 @@ worktree_repl() {
         fi
         ;;
       exit|quit|q|e)
-        if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
-          echo ""
-          echo "To close this pane: Ctrl+A → d → y"
+        if [ -n "${WORKTREE_MPROCS_ID:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
+          mprocs --server "$MPROCS_SOCKET" --ctl "{c: remove-proc, id: $WORKTREE_MPROCS_ID}" 2>/dev/null || true
         fi
         exit 0
         ;;

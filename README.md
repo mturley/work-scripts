@@ -32,7 +32,7 @@ worktree my-feature-branch           # create or reopen a branch worktree
 ```
 
 ```
-Commands: [i]nfo, [l]og, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp
+Commands: [i]nfo, [l]og, [o]pen, [p]r, [s]hell, [c]leanup, [e]xit, [h]elp
 
 worktree [my-branch...origin/my-branch]>
 ```

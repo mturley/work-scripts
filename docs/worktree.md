@@ -53,12 +53,13 @@ worktree> help
   info     (i)  Show PR URL (if applicable), worktree path, tracking status, and git status
   log      (l)  Show git log
   open     (o)  Open worktree in your editor (focuses existing window if already open)
+  pr       (p)  Open the pull request page on GitHub (shown when a PR exists for the branch)
   shell    (s)  Start a nested shell in the worktree directory; exit to return to REPL
   cleanup  (c)  Remove the worktree and its branch
   exit     (e)  Exit the REPL
   help     (h)  Show this help
 
-Commands: [i]nfo, [l]og, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp
+Commands: [i]nfo, [l]og, [o]pen, [p]r, [s]hell, [c]leanup, [e]xit, [h]elp
 
 worktree [my-branch...origin/my-branch]>
 ```
