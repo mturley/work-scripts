@@ -2,25 +2,24 @@
 
 Personal CLI tools for git, GitHub, and daily workflow automation.
 
+- [`worktree`](docs/worktree.md) — Create and manage git worktrees for PRs and branches
+- [`gh-safe`](docs/gh-safe.md) — AI agent guardrail for the GitHub CLI
+- [`log`](docs/log.md) — Append timestamped activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes)
+
 ## Setup
 
-- Install prerequisites: [GitHub CLI](https://cli.github.com/) (`gh`, must be authenticated) and Python 3
-- Clone the repo:
-  ```bash
-  git clone git@github.com:mturley/work-scripts.git ~/git/work-scripts
-  ```
-- Add the `bin` subdirectory to your PATH (e.g. in `~/.zshrc`):
-  ```bash
-  export PATH=$HOME/git/work-scripts/bin:$PATH
-  ```
-- Optionally, set `WORKTREES_BASE` to control where worktrees are created (default: `~/git/.worktrees`). This should be outside your project git clones.
-  ```bash
-  export WORKTREES_BASE=$HOME/git/.worktrees
-  ```
+Clone the repo and add its `bin` subdirectory to your PATH:
 
-## Git Worktree Tools
+```bash
+git clone git@github.com:mturley/work-scripts.git ~/git/work-scripts
+export PATH=$HOME/git/work-scripts/bin:$PATH  # add to ~/.zshrc or ~/.bashrc
+```
 
-### [`worktree`](docs/worktree.md)
+Further prerequisites and setup for each command are documented in its [docs file](docs/).
+
+## Commands for Git and GitHub
+
+### [`worktree`](docs/worktree.md) — Git Worktree Manager
 
 Create and manage git worktrees for PRs and branches, with optional symlinked dependencies and an interactive REPL.
 
@@ -31,9 +30,15 @@ worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
 ```
 
-### [`gh-safe`](docs/gh-safe.md)
+```
+Commands: [i]nfo, [l]og, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp
 
-Safety wrapper for agents using GitHub CLI — read-only operations pass through, write operations require `APPROVE=true`.
+worktree [my-branch...origin/my-branch]>
+```
+
+### [`gh-safe`](docs/gh-safe.md) — AI Agent Guardrail for GitHub CLI
+
+Safety wrapper for the GitHub CLI for use with AI agents — read-only operations pass through, write operations require explicit `APPROVE=true`.
 
 ```bash
 gh-safe pr list                    # passes through (read-only)
@@ -41,9 +46,9 @@ gh-safe pr merge 123               # blocked (write operation)
 APPROVE=true gh-safe pr merge 123  # allowed
 ```
 
-## Obsidian Tools
+## Commands for Obsidian Notes
 
-### [`log`](docs/log.md)
+### [`log`](docs/log.md) — Activity Logger
 
 Append timestamped, metadata-enriched activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes). Fetches context from GitHub and Jira APIs automatically.
 
