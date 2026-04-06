@@ -108,8 +108,15 @@ if resolve_worktree "$ARG"; then
     fi
     exit 0
   else
-    echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
     REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+    if [ "$WT_PATH" = "$REPO_ROOT" ]; then
+      echo "${CYAN}Branch is already checked out in the main worktree:${RESET} $(short_path "$WT_PATH")"
+      echo "  Branch: $(git -C "$WT_PATH" branch --show-current)"
+      echo "  Commit: $(git -C "$WT_PATH" log --oneline -1)"
+      exit 0
+    else
+      echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
+    fi
     worktree_repl "$REPO_ROOT" "$WT_PATH"
     exit 0
   fi
@@ -204,92 +211,157 @@ if is_pr_arg "$ARG"; then
 
   mkdir -p "$WORKTREES_BASE"
 
-  if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
-    MSG="$(echo "$RESULT" | parse_json message)"
-    echo "ERROR: Failed to create worktree." >&2
-    [ -n "$MSG" ] && echo "  $MSG" >&2
-    exit 1
+  # Check if a local branch matching the PR's head ref already exists
+  USE_EXISTING_BRANCH=false
+  if git rev-parse --verify "$PR_HEAD_REF" &>/dev/null; then
+    echo "Found existing local branch '${PR_HEAD_REF}' matching the PR's head ref."
+    CHOICE="$(prompt_choice "Use this branch or create a new review branch?" "Reuse '${PR_HEAD_REF}'" "Create new 'review/pr-${PR_NUMBER}-${SLUG}'")"
+    if [ "$CHOICE" = "Reuse '${PR_HEAD_REF}'" ]; then
+      USE_EXISTING_BRANCH=true
+    fi
   fi
 
-  STATUS="$(echo "$RESULT" | parse_json status)"
-  WT_PATH="$(echo "$RESULT" | parse_json path)"
-
-  if [ -z "$STATUS" ]; then
-    echo "ERROR: Unexpected output from worktree-ensure: $RESULT" >&2
-    exit 1
-  fi
-
-  case "$STATUS" in
-    created)
-      echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
-      ;;
-    exists)
-      echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
-      CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Recreate from scratch")"
-      if [ "$CHOICE" = "Recreate from scratch" ]; then
-        recreate_pr_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" "$WT_PATH" || exit 1
-      fi
-      ;;
-    exists-outdated)
-      LOCAL_HEAD="$(echo "$RESULT" | parse_json local_head)"
-      REMOTE_HEAD="$(echo "$RESULT" | parse_json remote_head)"
-      echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
-      echo "Worktree is behind the PR's latest changes."
-      echo "  Local:  ${LOCAL_HEAD:0:12}"
-      echo "  Remote: ${REMOTE_HEAD:0:12}"
-      CHOICE="$(prompt_choice "What would you like to do?" "Update to latest" "Recreate from scratch" "Reuse as-is")"
-      case "$CHOICE" in
-        "Update to latest")
-          warn_pr_local_changes "$WT_PATH" || exit 1
-          PR_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
-          git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head:${PR_BRANCH}" --force
-          git -C "$WT_PATH" reset --hard "$PR_BRANCH"
-          echo "Updated to latest PR state."
-          ;;
-        "Recreate from scratch")
-          recreate_pr_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" "$WT_PATH" || exit 1
-          ;;
-        "Reuse as-is")
-          echo "Keeping worktree as-is."
-          ;;
-      esac
-      ;;
-    branch-exists)
-      STALE_BRANCH="$(echo "$RESULT" | parse_json branch)"
-      echo "A local branch '${STALE_BRANCH}' already exists (likely leftover from a previous worktree)."
-      CHOICE="$(prompt_choice "Delete the old branch and re-fetch the PR?" "Yes" "No")"
-      if [ "$CHOICE" = "Yes" ]; then
-        git branch -D "$STALE_BRANCH"
-        if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
-          MSG="$(echo "$RESULT" | parse_json message)"
-          echo "ERROR: Failed to create worktree after deleting branch." >&2
-          [ -n "$MSG" ] && echo "  $MSG" >&2
-          exit 1
-        fi
-        WT_PATH="$(echo "$RESULT" | parse_json path)"
-        echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+  if $USE_EXISTING_BRANCH; then
+    # Check if the branch is already checked out in another worktree
+    CHECKED_OUT_IN="$(git worktree list --porcelain | awk -v branch="$PR_HEAD_REF" '
+      /^worktree / { wt = $0; sub(/^worktree /, "", wt) }
+      /^branch refs\/heads\// {
+        b = $0; sub(/^branch refs\/heads\//, "", b)
+        if (b == branch) { print wt; exit }
+      }
+    ')"
+    if [ -n "$CHECKED_OUT_IN" ]; then
+      if [ "$CHECKED_OUT_IN" = "$REPO_ROOT" ]; then
+        echo "${CYAN}Branch is already checked out in the main worktree:${RESET} $(short_path "$CHECKED_OUT_IN")"
       else
-        echo "Aborted." >&2
+        echo "${CYAN}Reusing worktree:${RESET} $(short_path "$CHECKED_OUT_IN")"
+      fi
+      WT_PATH="$CHECKED_OUT_IN"
+
+      # Check if the local branch is up to date with the PR
+      git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head" 2>/dev/null
+      REMOTE_HEAD="$(git rev-parse FETCH_HEAD)"
+      LOCAL_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)"
+      if [ "$REMOTE_HEAD" != "$LOCAL_HEAD" ]; then
+        echo "Local branch is not on the same commit as the PR."
+        echo "  Local:  ${LOCAL_HEAD:0:12}"
+        echo "  Remote: ${REMOTE_HEAD:0:12}"
+        CHOICE="$(prompt_choice "What would you like to do?" "Reset to PR's latest commit" "Keep as-is")"
+        if [ "$CHOICE" = "Reset to PR's latest commit" ]; then
+          BACKUP_BRANCH="${PR_HEAD_REF}-${LOCAL_HEAD:0:7}"
+          git branch "$BACKUP_BRANCH" "$LOCAL_HEAD"
+          echo "Backed up current state to branch '${BACKUP_BRANCH}'"
+          git -C "$WT_PATH" reset --hard "$REMOTE_HEAD"
+          echo "Reset to PR's latest commit."
+        fi
+      fi
+
+      setup_pr_tracking "$WT_PATH" "$PR_HEAD_REF" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
+      if [ "$CHECKED_OUT_IN" = "$REPO_ROOT" ]; then
+        exit 0
+      fi
+      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+    else
+      if ! OUTPUT="$(git worktree add "$WORKTREE_ABS" "$PR_HEAD_REF" 2>&1)"; then
+        echo "ERROR: Failed to create worktree with branch '${PR_HEAD_REF}'." >&2
+        echo "  $OUTPUT" >&2
         exit 1
       fi
-      ;;
-    error)
+      WT_PATH="$(cd "$WORKTREE_ABS" && pwd)"
+      echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+
+      setup_pr_tracking "$WT_PATH" "$PR_HEAD_REF" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
+      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+    fi
+
+  else
+    if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
       MSG="$(echo "$RESULT" | parse_json message)"
       echo "ERROR: Failed to create worktree." >&2
       [ -n "$MSG" ] && echo "  $MSG" >&2
       exit 1
-      ;;
-    *)
-      echo "ERROR: Unexpected status '${STATUS}' from worktree-ensure." >&2
+    fi
+
+    STATUS="$(echo "$RESULT" | parse_json status)"
+    WT_PATH="$(echo "$RESULT" | parse_json path)"
+
+    if [ -z "$STATUS" ]; then
+      echo "ERROR: Unexpected output from worktree-ensure: $RESULT" >&2
       exit 1
-      ;;
-  esac
+    fi
 
-  # Set up branch tracking
-  PR_LOCAL_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
-  setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
+    case "$STATUS" in
+      created)
+        echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+        ;;
+      exists)
+        echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
+        CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Recreate from scratch")"
+        if [ "$CHOICE" = "Recreate from scratch" ]; then
+          recreate_pr_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" "$WT_PATH" || exit 1
+        fi
+        ;;
+      exists-outdated)
+        LOCAL_HEAD="$(echo "$RESULT" | parse_json local_head)"
+        REMOTE_HEAD="$(echo "$RESULT" | parse_json remote_head)"
+        echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
+        echo "Worktree is behind the PR's latest changes."
+        echo "  Local:  ${LOCAL_HEAD:0:12}"
+        echo "  Remote: ${REMOTE_HEAD:0:12}"
+        CHOICE="$(prompt_choice "What would you like to do?" "Update to latest" "Recreate from scratch" "Reuse as-is")"
+        case "$CHOICE" in
+          "Update to latest")
+            warn_pr_local_changes "$WT_PATH" || exit 1
+            PR_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
+            git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head:${PR_BRANCH}" --force
+            git -C "$WT_PATH" reset --hard "$PR_BRANCH"
+            echo "Updated to latest PR state."
+            ;;
+          "Recreate from scratch")
+            recreate_pr_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" "$WT_PATH" || exit 1
+            ;;
+          "Reuse as-is")
+            echo "Keeping worktree as-is."
+            ;;
+        esac
+        ;;
+      branch-exists)
+        STALE_BRANCH="$(echo "$RESULT" | parse_json branch)"
+        echo "A local branch '${STALE_BRANCH}' already exists (likely leftover from a previous worktree)."
+        CHOICE="$(prompt_choice "Delete the old branch and re-fetch the PR?" "Yes" "No")"
+        if [ "$CHOICE" = "Yes" ]; then
+          git branch -D "$STALE_BRANCH"
+          if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
+            MSG="$(echo "$RESULT" | parse_json message)"
+            echo "ERROR: Failed to create worktree after deleting branch." >&2
+            [ -n "$MSG" ] && echo "  $MSG" >&2
+            exit 1
+          fi
+          WT_PATH="$(echo "$RESULT" | parse_json path)"
+          echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+        else
+          echo "Aborted." >&2
+          exit 1
+        fi
+        ;;
+      error)
+        MSG="$(echo "$RESULT" | parse_json message)"
+        echo "ERROR: Failed to create worktree." >&2
+        [ -n "$MSG" ] && echo "  $MSG" >&2
+        exit 1
+        ;;
+      *)
+        echo "ERROR: Unexpected status '${STATUS}' from worktree-ensure." >&2
+        exit 1
+        ;;
+    esac
 
-  worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+    # Set up branch tracking
+    PR_LOCAL_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
+    setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
+
+    worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+  fi
 
 else
   # =============================================
