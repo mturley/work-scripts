@@ -6,6 +6,7 @@ Unified command for creating and managing git worktrees that optionally share in
 
 - [GitHub CLI](https://cli.github.com/) (`gh`, must be authenticated)
 - Python 3
+- For multi-worktree support: [iTerm2](https://iterm2.com/) or [mprocs](https://github.com/pvolok/mprocs) (`brew install mprocs`)
 - Optionally, set `WORKTREES_BASE` to control where worktrees are created (default: `~/git/.worktrees`). This should be outside your project git clones.
   ```bash
   export WORKTREES_BASE=$HOME/git/.worktrees
@@ -21,11 +22,21 @@ worktree 1234                        # create or reopen a worktree for PR #1234
 worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
 worktree ~/git/.worktrees/repo--name # open an existing worktree by path
+worktree 1234 5678 my-branch         # open multiple worktrees in parallel
 ```
 
 Based on the arguments, the script detects what you're trying to do, finds or creates the relevant worktree, then drops you into an interactive REPL (see below) to manage it.
 
-* **No arguments** — if run from within a worktree directory under `$WORKTREES_BASE`, drops directly into the REPL for that worktree. Otherwise, lists all worktrees, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up.
+### Multiple Worktrees
+
+When given multiple arguments, each worktree opens in its own pane:
+
+- **iTerm2** — opens each worktree in a new tab (named "worktree PR #1234", etc.)
+- **Fallback** — uses [mprocs](https://github.com/pvolok/mprocs) with a shell pane for running further commands and one pane per worktree. Running `worktree` from the shell pane dynamically adds new panes to the session.
+
+Install mprocs if not using iTerm: `brew install mprocs`
+
+* **No arguments** — if run from within a worktree directory under `$WORKTREES_BASE`, drops directly into the REPL for that worktree. Otherwise, lists all worktrees, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up. Supports comma-separated selections (e.g. `1,3,5`) or `all` to open multiple worktrees in parallel.
 
 * **PR number or GitHub URL** — fetches the PR and searches for any existing worktrees on related branches (the PR's head ref or a `review/pr-*` branch). If one is found, reuses it with a sync check (offering to back up and reset to the PR's latest commit if behind). If multiple are found, shows a selection with commit info and ahead/behind status. If none are found, creates a new review worktree and sets up branch tracking against the PR author's remote. Automatically locates the matching local clone if run from a different directory.
 

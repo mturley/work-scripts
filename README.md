@@ -25,10 +25,11 @@ Further prerequisites and setup for each command are documented in its [docs fil
 Create and manage git worktrees for PRs and branches, with optional symlinked dependencies and an interactive REPL.
 
 ```bash
-worktree                             # list existing worktrees and select one
+worktree                             # list worktrees; select one, many (1,3,5), or all
 worktree 1234                        # create or reopen a worktree for PR #1234
 worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
+worktree 1234 5678 my-branch         # open multiple worktrees in parallel
 ```
 
 ```

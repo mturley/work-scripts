@@ -127,9 +127,73 @@ if [ $# -eq 0 ]; then
     exit 0
   fi
 
-  choice="$(prompt_choice "Select a worktree:" "${worktrees[@]}")"
+  # Display worktree list
+  echo ""
+  echo "Select a worktree (comma-separated for multiple, 'all' for all):"
+  for i in "${!worktrees[@]}"; do
+    echo "  ${COLOR_BLUE}$((i+1)))${COLOR_RESET} ${worktrees[$i]}"
+  done
 
-  # Check if the selection is orphaned
+  while true; do
+    printf "Choice [${COLOR_BLUE}1-%d${COLOR_RESET}, or ${COLOR_BLUE}all${COLOR_RESET}]: " "${#worktrees[@]}"
+    read -r input
+
+    if [ "$input" = "all" ]; then
+      # Collect all non-orphaned worktree paths
+      selected_paths=()
+      for i in "${!worktrees[@]}"; do
+        name="${worktrees[$i]% (orphaned)}"
+        is_orph=false
+        if [ ${#orphaned[@]} -gt 0 ]; then
+          for o in "${orphaned[@]}"; do
+            if [ "$o" = "$name" ]; then is_orph=true; break; fi
+          done
+        fi
+        if ! $is_orph; then
+          selected_paths+=("${WORKTREES_BASE}/${name}")
+        fi
+      done
+      if [ ${#selected_paths[@]} -eq 0 ]; then
+        echo "No non-orphaned worktrees to open."
+        exit 0
+      fi
+      exec "$0" "${selected_paths[@]}"
+    fi
+
+    # Parse comma-separated numbers
+    IFS=',' read -ra picks <<< "$input"
+    valid=true
+    selected_indices=()
+    for pick in "${picks[@]}"; do
+      pick="$(echo "$pick" | tr -d '[:space:]')"
+      if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "${#worktrees[@]}" ]; then
+        selected_indices+=("$((pick-1))")
+      else
+        valid=false
+        break
+      fi
+    done
+
+    if ! $valid || [ ${#selected_indices[@]} -eq 0 ]; then
+      echo "Invalid choice, try again."
+      continue
+    fi
+
+    # Multiple selections: re-exec with all selected paths
+    if [ ${#selected_indices[@]} -gt 1 ]; then
+      selected_paths=()
+      for idx in "${selected_indices[@]}"; do
+        name="${worktrees[$idx]% (orphaned)}"
+        selected_paths+=("${WORKTREES_BASE}/${name}")
+      done
+      exec "$0" "${selected_paths[@]}"
+    fi
+
+    # Single selection: handle inline
+    break
+  done
+
+  choice="${worktrees[${selected_indices[0]}]}"
   selected_name="${choice% (orphaned)}"
   is_orphaned=false
   if [ ${#orphaned[@]} -gt 0 ]; then
