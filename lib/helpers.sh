@@ -493,6 +493,17 @@ worktree_repl() {
     echo "  ${blue}help${reset}     (h)  Show this help"
   }
 
+  # Rename iTerm2 session if running in iTerm
+  if [ "$TERM_PROGRAM" = "iTerm.app" ]; then
+    local iterm_label
+    if [ -n "${pr_num:-}" ]; then
+      iterm_label="worktree #${pr_num}"
+    else
+      iterm_label="worktree ${branch}"
+    fi
+    printf '\033]1;%s\007' "$iterm_label"
+  fi
+
   _worktree_info false
   while true; do
     echo ""

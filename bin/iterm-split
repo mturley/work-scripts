@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# iterm-split - Split iTerm2 and run a command
+#
+# Usage: iterm-split [-h|-v] <command>
+#
+# Options:
+#   -v  Split vertically (default)
+#   -h  Split horizontally
+#
+# Opens a new split in the current iTerm2 window, names the pane
+# after the command, cds to the current directory, and runs the command.
+
+set -euo pipefail
+
+DIRECTION="vertically"
+
+if [ "${1:-}" = "-h" ]; then
+  DIRECTION="horizontally"
+  shift
+elif [ "${1:-}" = "-v" ]; then
+  shift
+fi
+
+if [ $# -eq 0 ]; then
+  echo "Usage: iterm-split [-h|-v] <command>"
+  exit 1
+fi
+
+CMD="$*"
+DIR="$(pwd)"
+
+osascript -e "tell application \"iTerm2\" to tell current session of current window
+  set newSession to (split $DIRECTION with default profile)
+  tell newSession
+    set name to \"$CMD\"
+    write text \"cd $DIR && $CMD\"
+  end tell
+end tell"

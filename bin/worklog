@@ -219,7 +219,33 @@ truncate_text() {
   # Collapse newlines to spaces
   text="$(echo "$text" | tr '\n' ' ' | sed 's/  */ /g')"
   if [ "${#text}" -gt "$max_len" ]; then
-    echo "${text:0:$max_len}..."
+    local truncated="${text:0:$max_len}"
+    # If we cut inside a URL, back up to before it started
+    # Check if there's an unfinished URL (http/https with no trailing space)
+    local before_url
+    if echo "$truncated" | grep -q 'https\{0,1\}://[^ ]*$'; then
+      before_url="$(echo "$truncated" | sed 's/https\{0,1\}:\/\/[^ ]*$//')"
+      # Trim trailing whitespace
+      before_url="$(echo "$before_url" | sed 's/[[:space:]]*$//')"
+      if [ -n "$before_url" ]; then
+        truncated="$before_url"
+      fi
+    fi
+    # Check for unclosed markdown link: [text](url..., [text..., or ](...
+    if echo "$truncated" | grep -q '\[[^]]*\]([^)]*$'; then
+      before_url="$(echo "$truncated" | sed 's/\[[^]]*\]([^)]*$//')"
+      before_url="$(echo "$before_url" | sed 's/[[:space:]]*$//')"
+      if [ -n "$before_url" ]; then
+        truncated="$before_url"
+      fi
+    elif echo "$truncated" | grep -q '\[[^]]*$'; then
+      before_url="$(echo "$truncated" | sed 's/\[[^]]*$//')"
+      before_url="$(echo "$before_url" | sed 's/[[:space:]]*$//')"
+      if [ -n "$before_url" ]; then
+        truncated="$before_url"
+      fi
+    fi
+    echo "${truncated}..."
   else
     echo "$text"
   fi
@@ -385,7 +411,8 @@ handle_pr() {
     author_part=" (by @${pr_author})"
   fi
 
-  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} PR [${display_ref}](${pr_url}): \"${pr_title}\"${author_part}**"
+  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} PR [${display_ref}](${pr_url})${author_part}**
+  *${pr_title}*"
 
   # For reviewed/commented, try to get excerpt
   if [ "$action" = "reviewed" ] || [ "$action" = "commented" ]; then
@@ -539,7 +566,8 @@ handle_jira() {
     assignee_part=" — assigned to ${assignee}"
   fi
 
-  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} [${JIRA_KEY}](${jira_url})${type_priority}: \"${summary}\"${assignee_part}**"
+  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} [${JIRA_KEY}](${jira_url})${type_priority}${assignee_part}**
+  *${summary}*"
 
   # Epic parent
   if [ -n "$parent_key" ]; then
@@ -584,9 +612,9 @@ try:
     if not field:
         sys.exit(0)
     # Field could be a string (plain text or HTML) or ADF structure
-    urls = []
+    urls = set()
     if isinstance(field, str):
-        urls = re.findall(r'https://github\.com/[^\s\"<>]+/pull/\d+', field)
+        urls = set(re.findall(r'https://github\.com/[^\s\"<>|]+/pull/\d+', field))
     elif isinstance(field, dict):
         # ADF format - walk the tree looking for URLs
         def walk(node):
@@ -594,47 +622,62 @@ try:
                 # inlineCard
                 url = node.get('attrs', {}).get('url', '')
                 if url and '/pull/' in url:
-                    urls.append(url)
+                    # Clean pipe-separated duplicates
+                    for u in url.split('|'):
+                        m = re.match(r'(https://github\.com/[^\s\"<>|]+/pull/\d+)', u)
+                        if m:
+                            urls.add(m.group(1))
                 # link mark
                 for mark in node.get('marks', []):
                     href = mark.get('attrs', {}).get('href', '')
                     if href and '/pull/' in href:
-                        urls.append(href)
+                        for u in href.split('|'):
+                            m = re.match(r'(https://github\.com/[^\s\"<>|]+/pull/\d+)', u)
+                            if m:
+                                urls.add(m.group(1))
                 for child in node.get('content', []):
                     walk(child)
             elif isinstance(node, list):
                 for item in node:
                     walk(item)
         walk(field)
-    for url in urls:
+    for url in sorted(urls):
         print(url)
 except:
     pass
 " 2>/dev/null || true)"
 
     if [ -n "$pr_urls" ]; then
-      local pr_links=""
       while IFS= read -r url; do
         if [ -n "$url" ]; then
           # Extract owner/repo#number from URL
           local pr_path
           pr_path="$(echo "$url" | sed 's|.*/github\.com/||')"
-          local pr_repo_name pr_num_part
+          local pr_repo_name pr_num_part pr_owner_part
+          pr_owner_part="$(echo "$pr_path" | cut -d/ -f1)"
           pr_repo_name="$(echo "$pr_path" | cut -d/ -f2)"
           pr_num_part="$(echo "$pr_path" | grep -o '[0-9]*$')"
           local display="${pr_repo_name}#${pr_num_part}"
-          if [ -n "$pr_links" ]; then
-            pr_links="${pr_links}, [${display}](${url})"
-          else
-            pr_links="[${display}](${url})"
+
+          # Fetch PR title and author via gh
+          local pr_linked_title="" pr_linked_author="" pr_linked_json=""
+          pr_linked_json="$(gh pr view "$url" --json title,author 2>/dev/null || true)"
+          if [ -n "$pr_linked_json" ]; then
+            pr_linked_title="$(echo "$pr_linked_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('title',''))" 2>/dev/null || true)"
+            pr_linked_author="$(echo "$pr_linked_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('author',{}).get('login',''))" 2>/dev/null || true)"
           fi
+
+          local pr_detail="[${display}](${url})"
+          if [ -n "$pr_linked_author" ]; then
+            pr_detail="${pr_detail} (by @${pr_linked_author})"
+          fi
+          if [ -n "$pr_linked_title" ]; then
+            pr_detail="${pr_detail}: ${pr_linked_title}"
+          fi
+          LOG_ENTRY="${LOG_ENTRY}
+${TAB}- PR: ${pr_detail}"
         fi
       done <<< "$pr_urls"
-
-      if [ -n "$pr_links" ]; then
-        LOG_ENTRY="${LOG_ENTRY}
-${TAB}- PRs: ${pr_links}"
-      fi
     fi
   fi
 }
@@ -684,7 +727,8 @@ handle_test() {
     action_text="$(title_case "$pr_action")"
 
     local author_part=" (by @${pr_author})"
-    entry="- **${timestamp} — ${emoji} ${action_text} PR [${pr_ref}](${pr_url}): \"${pr_title}\"${author_part}**"
+    entry="- **${timestamp} — ${emoji} ${action_text} PR [${pr_ref}](${pr_url})${author_part}**
+  *${pr_title}*"
 
     # Add excerpt for reviewed/commented
     if [ "$pr_action" = "reviewed" ]; then
@@ -718,7 +762,8 @@ ${entry}"
     emoji="$(get_emoji jira "$jira_action")"
     action_text="$(title_case "$jira_action")"
 
-    entry="- **${timestamp} — ${emoji} ${action_text} [${jira_key}](${jira_url}) (${jira_type}, ${jira_priority}): \"${jira_summary}\" — assigned to ${jira_assignee}**"
+    entry="- **${timestamp} — ${emoji} ${action_text} [${jira_key}](${jira_url}) (${jira_type}, ${jira_priority}) — assigned to ${jira_assignee}**
+  *${jira_summary}*"
 
     # Add epic on some entries
     if [ "$jira_action" = "opened" ] || [ "$jira_action" = "seen" ] || [ "$jira_action" = "commented" ]; then
@@ -735,7 +780,8 @@ ${TAB}- Comment: \"${comment_excerpt}\""
     # Add linked PRs on some entries
     if [ "$jira_action" = "seen" ] || [ "$jira_action" = "updated" ]; then
       entry="${entry}
-${TAB}- PRs: [${pr_ref}](${pr_url}), [${pr_ref_2}](${pr_url_2})"
+${TAB}- PR: [${pr_ref}](${pr_url}) (by @${pr_author}): ${pr_title}
+${TAB}- PR: [${pr_ref_2}](${pr_url_2}) (by @${pr_author}): ${pr_title}"
     fi
 
     # Add notes on one entry

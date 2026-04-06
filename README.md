@@ -5,6 +5,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`worktree`](docs/worktree.md) — Create and manage git worktrees for PRs and branches
 - [`gh-safe`](docs/gh-safe.md) — AI agent guardrail for the GitHub CLI
 - [`worklog`](docs/worklog.md) (or `wlog`) — Append timestamped activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes)
+- [`iterm-split`](docs/iterm-split.md) — Split iTerm2 and run a command in the new pane
 
 ## Setup
 
@@ -59,3 +60,15 @@ worklog jira seen RHOAIENG-12345         # log viewing a Jira issue
 ```
 
 Requires the [Obsidian CLI](https://obsidian.md/) and a `.env` file for Jira integration (see [docs](docs/worklog.md#setup)).
+
+## Commands for iTerm2
+
+### [`iterm-split`](docs/iterm-split.md) — Split and Run
+
+Split the current [iTerm2](https://iterm2.com/) window and run a command in the new pane. The pane is named after the command for easy identification.
+
+```bash
+iterm-split npm run dev              # vertical split (default)
+iterm-split -v npm run dev           # vertical split (explicit)
+iterm-split -h npm run dev           # horizontal split
+```

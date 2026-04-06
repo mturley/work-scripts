@@ -2,6 +2,8 @@
 
 Append timestamped, metadata-enriched activity entries to today's [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes). Designed as a quick way to record what you've been doing throughout the day for scrum updates and personal reference.
 
+Also available as `wlog` (symlink).
+
 ```bash
 worklog                                    # free-form log entry (prompts for text)
 worklog help                               # show full usage
@@ -41,14 +43,16 @@ Reference formats: issue key (`RHOAIENG-12345`) or full URL (`https://issues.red
 Each entry is a markdown bullet appended to the daily note. The main line is bold for readability. Sub-bullets include linked issues/PRs, review excerpts, and optional user notes.
 
 ```markdown
-- **3:15 PM — 📝 Reviewed PR [odh-dashboard#6300](url): "Fix pagination" (by @author)**
-  - Review: "Looks good overall, one minor nit on the error handling..."
-  - Linked: [RHOAIENG-12345](url) — Fix pagination (Major, Mike Turley)
-  - Notes: discussed approach in standup
+- **3:15 PM — 📝 Reviewed PR [odh-dashboard#6300](url) (by @author)**
+  *Fix pagination*
+	- Review: "Looks good overall, one minor nit on the error handling..."
+	- Linked: [RHOAIENG-12345](url) — Fix pagination (Major, Mike Turley)
+	- Notes: discussed approach in standup
 
-- **4:00 PM — 🎫 Seen [RHOAIENG-12345](url) (Bug, Major): "Fix pagination" — assigned to Mike Turley**
-  - Epic: [RHOAIENG-12000](url) — Model Registry improvements
-  - PRs: [odh-dashboard#6300](url)
+- **4:00 PM — 🎫 Seen [RHOAIENG-12345](url) (Bug, Major) — assigned to Mike Turley**
+  *Fix pagination*
+	- Epic: [RHOAIENG-12000](url) — Model Registry improvements
+	- PRs: [odh-dashboard#6300](url)
 ```
 
 ## Setup
