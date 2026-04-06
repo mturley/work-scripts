@@ -451,6 +451,25 @@ worktree_repl() {
     if [ -n "${pr_num:-}" ]; then
       echo "${cyan}PR:${reset} #${pr_num}${pr_url:+ — $pr_url}"
     fi
+    if [ -n "$tracking" ]; then
+      local info_ahead info_behind info_parts=""
+      info_ahead="$(git -C "$wt_path" rev-list --count "${tracking}..HEAD" 2>/dev/null || echo 0)"
+      info_behind="$(git -C "$wt_path" rev-list --count "HEAD..${tracking}" 2>/dev/null || echo 0)"
+      if [ "$info_ahead" -eq 0 ] && [ "$info_behind" -eq 0 ]; then
+        echo "${cyan}Tracking:${reset} up to date with ${tracking}"
+      else
+        if [ "$info_ahead" -gt 0 ]; then
+          local w="commits"; [ "$info_ahead" -eq 1 ] && w="commit"
+          info_parts="${info_ahead} ${w} ahead"
+        fi
+        if [ "$info_behind" -gt 0 ]; then
+          local w="commits"; [ "$info_behind" -eq 1 ] && w="commit"
+          [ -n "$info_parts" ] && info_parts="${info_parts}, "
+          info_parts="${info_parts}${info_behind} ${w} behind"
+        fi
+        echo "${cyan}Tracking:${reset} ${info_parts} ${tracking}"
+      fi
+    fi
     if [ -z "$(git -C "$wt_path" status --short)" ]; then
       echo "${cyan}Git status:${reset} working tree clean"
     else
@@ -460,12 +479,13 @@ worktree_repl() {
   }
 
   _worktree_commands() {
-    echo "${blue}Commands: [i]nfo, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp${reset}"
+    echo "${blue}Commands: [i]nfo, [l]og, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp${reset}"
   }
 
   _worktree_help() {
     echo ""
     echo "  ${blue}info${reset}     (i)  Show PR URL (if applicable), worktree path, and git status"
+    echo "  ${blue}log${reset}      (l)  Show git log"
     echo "  ${blue}open${reset}     (o)  Open worktree in your editor (focuses existing window if already open)"
     echo "  ${blue}shell${reset}    (s)  Start a nested shell in the worktree directory; exit to return to REPL"
     echo "  ${blue}cleanup${reset}  (c)  Remove the worktree and its branch"
@@ -495,6 +515,9 @@ worktree_repl() {
         echo ""
         echo "Back in worktree REPL."
         _worktree_info
+        ;;
+      log|l)
+        git -C "$wt_path" log --oneline --graph --decorate || true
         ;;
       open|o)
         open_editor "$wt_path"

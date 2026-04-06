@@ -117,8 +117,30 @@ if ! is_pr_arg "$ARG" && resolve_worktree "$ARG"; then
     REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
     if [ "$WT_PATH" = "$REPO_ROOT" ]; then
       echo "${CYAN}Branch is already checked out in the main worktree:${RESET} $(short_path "$WT_PATH")"
-      echo "  Branch: $(git -C "$WT_PATH" branch --show-current)"
+      WT_BRANCH="$(git -C "$WT_PATH" branch --show-current)"
+      echo "  Branch: ${WT_BRANCH}"
       echo "  Commit: $(git -C "$WT_PATH" log --oneline -1)"
+      WT_UPSTREAM="$(git -C "$WT_PATH" rev-parse --abbrev-ref "${WT_BRANCH}@{upstream}" 2>/dev/null || true)"
+      if [ -n "$WT_UPSTREAM" ]; then
+        git -C "$WT_PATH" fetch "${WT_UPSTREAM%%/*}" "${WT_UPSTREAM#*/}" 2>/dev/null || true
+        wt_ahead="$(git -C "$WT_PATH" rev-list --count "${WT_UPSTREAM}..HEAD" 2>/dev/null || echo 0)"
+        wt_behind="$(git -C "$WT_PATH" rev-list --count "HEAD..${WT_UPSTREAM}" 2>/dev/null || echo 0)"
+        if [ "$wt_ahead" -eq 0 ] && [ "$wt_behind" -eq 0 ]; then
+          echo "  Status: up to date with ${WT_UPSTREAM}"
+        else
+          wt_parts=""
+          if [ "$wt_ahead" -gt 0 ]; then
+            wt_word="commits"; [ "$wt_ahead" -eq 1 ] && wt_word="commit"
+            wt_parts="${wt_ahead} ${wt_word} ahead"
+          fi
+          if [ "$wt_behind" -gt 0 ]; then
+            wt_word="commits"; [ "$wt_behind" -eq 1 ] && wt_word="commit"
+            [ -n "$wt_parts" ] && wt_parts="${wt_parts}, "
+            wt_parts="${wt_parts}${wt_behind} ${wt_word} behind"
+          fi
+          echo "  Status: ${wt_parts} ${WT_UPSTREAM}"
+        fi
+      fi
       exit 0
     else
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"

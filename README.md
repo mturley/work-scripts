@@ -42,7 +42,7 @@ Based on the arguments, the script detects what you're trying to do, finds or cr
 
 * **No arguments** — if run from within a worktree directory under `$WORKTREES_BASE`, drops directly into the REPL for that worktree. Otherwise, lists all worktrees, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up.
 
-* **PR number or GitHub URL** — fetches the PR, creates a review worktree, and sets up branch tracking against the PR author's remote. If the worktree already exists: offers to reuse, update to latest, or recreate from scratch. Automatically locates the matching local clone if run from a different directory.
+* **PR number or GitHub URL** — fetches the PR and searches for any existing worktrees on related branches (the PR's head ref or a `review/pr-*` branch). If one is found, reuses it with a sync check (offering to back up and reset to the PR's latest commit if behind). If multiple are found, shows a selection with commit info and ahead/behind status. If none are found, creates a new review worktree and sets up branch tracking against the PR author's remote. Automatically locates the matching local clone if run from a different directory.
 
 * **Branch name** — creates a new branch from `upstream/main` (or `origin/main`) in a worktree. If the branch is already checked out elsewhere, offers to reuse or move it. Must be run from within a git repo.
 
@@ -59,14 +59,15 @@ It then **detects your editor** (VS Code or Cursor) or uses a cached preference 
 ```
 worktree> help
 
-  info     (i)  Show PR URL (if applicable), worktree path, and git status
+  info     (i)  Show PR URL (if applicable), worktree path, tracking status, and git status
+  log      (l)  Show git log
   open     (o)  Open worktree in your editor (focuses existing window if already open)
   shell    (s)  Start a nested shell in the worktree directory; exit to return to REPL
   cleanup  (c)  Remove the worktree and its branch
   exit     (e)  Exit the REPL
   help     (h)  Show this help
 
-Commands: [i]nfo, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp
+Commands: [i]nfo, [l]og, [o]pen, [s]hell, [c]leanup, [e]xit, [h]elp
 
 worktree [my-branch...origin/my-branch]>
 ```
