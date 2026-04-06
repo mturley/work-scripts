@@ -800,6 +800,7 @@ ${TAB}- Notes: Requested a small change, otherwise LGTM"
     fi
 
     LOG_ENTRY="${LOG_ENTRY}
+
 ${entry}"
   done
 
@@ -839,6 +840,7 @@ ${TAB}- Notes: Moved to In Progress and updated the description with the latest 
     fi
 
     LOG_ENTRY="${LOG_ENTRY}
+
 ${entry}"
   done
 }
