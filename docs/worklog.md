@@ -46,11 +46,11 @@ Each entry is a markdown bullet appended to the daily note. The main line is bol
 - **3:15 PM — 🔀 📝 Reviewed PR [odh-dashboard#6300](url) (by @author)**
 				*Fix pagination*
 	- Review: "Looks good overall, one minor nit on the error handling..."
-	- Linked: [RHOAIENG-12345](url) — *Fix pagination*
-	  (Major, Assigned to Mike Turley)
+	- Jira: [RHOAIENG-12345](url) — *Fix pagination*
+	  (Major, mine)
 	- Notes: discussed approach in standup
 
-- **4:00 PM — 📋 👀 Seen [RHOAIENG-12345](url) (Bug, Major) — assigned to Mike Turley**
+- **4:00 PM — 📋 👀 Seen [RHOAIENG-12345](url) (Bug, Major) — (mine)**
 				*Fix pagination*
 	- Epic: [RHOAIENG-12000](url) — *Model Registry improvements*
 	- PR: [odh-dashboard#6300](url) (by @author): *Fix pagination*

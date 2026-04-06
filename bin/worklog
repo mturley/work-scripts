@@ -388,12 +388,15 @@ handle_pr() {
 
   # Fetch PR metadata
   local pr_json pr_title pr_author pr_url
-  pr_json="$(gh pr view "$PR_NUMBER" $repo_flag --json title,author,url,state 2>/dev/null || true)"
+  pr_json="$(gh pr view "$PR_NUMBER" $repo_flag --json title,author,url,state,isDraft 2>/dev/null || true)"
 
   if [ -n "$pr_json" ]; then
     pr_title="$(echo "$pr_json" | extract_json 'data["title"]')"
     pr_author="$(echo "$pr_json" | extract_json 'data["author"]["login"]')"
     pr_url="$(echo "$pr_json" | extract_json 'data["url"]')"
+    local pr_state pr_is_draft
+    pr_state="$(echo "$pr_json" | extract_json 'data["state"]')"
+    pr_is_draft="$(echo "$pr_json" | extract_json 'data["isDraft"]')"
   else
     pr_title="(could not fetch PR info)"
     pr_author=""
@@ -415,7 +418,18 @@ handle_pr() {
     author_part=" (by @${pr_author})"
   fi
 
-  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} PR [${display_ref}](${pr_url})${author_part}**
+  local state_part=""
+  if [ "$action" = "seen" ]; then
+    if [ "$pr_is_draft" = "True" ] || [ "$pr_is_draft" = "true" ]; then
+      state_part=" [Draft]"
+    elif [ "$pr_state" = "MERGED" ]; then
+      state_part=" [Merged]"
+    elif [ "$pr_state" = "CLOSED" ]; then
+      state_part=" [Closed]"
+    fi
+  fi
+
+  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} PR [${display_ref}](${pr_url})${author_part}${state_part}**
 ${TAB}${TAB}${TAB}${TAB}*${pr_title}*"
 
   # For reviewed/commented, try to get excerpt
@@ -458,20 +472,32 @@ try:
         key = issue.get('key', '')
         fields = issue.get('fields', {})
         summary = fields.get('summary', '')
-        assignee = (fields.get('assignee') or {}).get('displayName', '')
+        assignee_obj = fields.get('assignee') or {}
+        assignee = assignee_obj.get('displayName', '')
+        assignee_email = assignee_obj.get('emailAddress', '')
         priority = (fields.get('priority') or {}).get('name', '')
         if key:
-            print(key + '|' + summary + '|' + assignee + '|' + priority)
+            print(key + '|' + summary + '|' + assignee + '|' + priority + '|' + assignee_email)
 except:
     pass
 " 2>/dev/null || true)"
 
       if [ -n "$linked_issues" ]; then
-        while IFS='|' read -r jira_key jira_summary jira_assignee jira_priority; do
+        while IFS='|' read -r jira_key jira_summary jira_assignee jira_priority jira_assignee_email; do
           if [ -n "$jira_key" ]; then
             local jira_url="https://${JIRA_HOST}/browse/${jira_key}"
             local jira_detail=""
-            if [ -n "$jira_assignee" ] && [ -n "$jira_priority" ]; then
+            local is_mine=false
+            if [ -n "$jira_assignee_email" ] && [ "$jira_assignee_email" = "$JIRA_EMAIL" ]; then
+              is_mine=true
+            fi
+            if [ "$is_mine" = true ] && [ -n "$jira_priority" ]; then
+              jira_detail="
+${TAB}  (${jira_priority}, mine)"
+            elif [ "$is_mine" = true ]; then
+              jira_detail="
+${TAB}  (mine)"
+            elif [ -n "$jira_assignee" ] && [ -n "$jira_priority" ]; then
               jira_detail="
 ${TAB}  (${jira_priority}, Assigned to ${jira_assignee})"
             elif [ -n "$jira_assignee" ]; then
@@ -482,7 +508,7 @@ ${TAB}  (Assigned to ${jira_assignee})"
 ${TAB}  (${jira_priority})"
             fi
             LOG_ENTRY="${LOG_ENTRY}
-${TAB}- Linked: [${jira_key}](${jira_url}) — *${jira_summary}*${jira_detail}"
+${TAB}- Jira: [${jira_key}](${jira_url}) — *${jira_summary}*${jira_detail}"
           fi
         done <<< "$linked_issues"
       fi
@@ -543,6 +569,8 @@ handle_jira() {
     summary="$(echo "$issue_json" | extract_json 'data["fields"]["summary"]')"
     issue_type="$(echo "$issue_json" | extract_json 'data["fields"]["issuetype"]["name"]')"
     assignee="$(echo "$issue_json" | extract_json 'data["fields"]["assignee"]["displayName"]')"
+    local assignee_email
+    assignee_email="$(echo "$issue_json" | extract_json 'data["fields"]["assignee"]["emailAddress"]')"
     priority="$(echo "$issue_json" | extract_json 'data["fields"]["priority"]["name"]')"
     parent_key="$(echo "$issue_json" | extract_json 'data["fields"]["parent"]["key"]')"
     parent_summary="$(echo "$issue_json" | extract_json 'data["fields"]["parent"]["fields"]["summary"]')"
@@ -570,7 +598,11 @@ handle_jira() {
 
   local assignee_part=""
   if [ -n "$assignee" ]; then
-    assignee_part=" — assigned to ${assignee}"
+    if [ -n "$assignee_email" ] && [ "$assignee_email" = "$JIRA_EMAIL" ]; then
+      assignee_part=" — (mine)"
+    else
+      assignee_part=" — assigned to ${assignee}"
+    fi
   fi
 
   LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} [${JIRA_KEY}](${jira_url})${type_priority}${assignee_part}**
@@ -734,7 +766,11 @@ handle_test() {
     action_text="$(title_case "$pr_action")"
 
     local author_part=" (by @${pr_author})"
-    entry="- **${timestamp} — ${emoji} ${action_text} PR [${pr_ref}](${pr_url})${author_part}**
+    local state_part=""
+    if [ "$pr_action" = "seen" ]; then
+      state_part=" [Merged]"
+    fi
+    entry="- **${timestamp} — ${emoji} ${action_text} PR [${pr_ref}](${pr_url})${author_part}${state_part}**
 ${TAB}${TAB}${TAB}${TAB}*${pr_title}*"
 
     # Add excerpt for reviewed/commented
@@ -747,9 +783,13 @@ ${TAB}- Comment: \"${comment_excerpt}\""
     fi
 
     # Add linked Jira on some entries to show the variation
-    if [ "$pr_action" = "opened" ] || [ "$pr_action" = "reviewed" ] || [ "$pr_action" = "approved" ]; then
+    if [ "$pr_action" = "opened" ] || [ "$pr_action" = "approved" ]; then
       entry="${entry}
-${TAB}- Linked: [${jira_key}](${jira_url}) — *${jira_summary}*
+${TAB}- Jira: [${jira_key}](${jira_url}) — *${jira_summary}*
+${TAB}  (${jira_priority}, mine)"
+    elif [ "$pr_action" = "reviewed" ]; then
+      entry="${entry}
+${TAB}- Jira: [${jira_key}](${jira_url}) — *${jira_summary}*
 ${TAB}  (${jira_priority}, Assigned to ${jira_assignee})"
     fi
 
@@ -770,7 +810,7 @@ ${entry}"
     emoji="$(get_emoji jira "$jira_action")"
     action_text="$(title_case "$jira_action")"
 
-    entry="- **${timestamp} — ${emoji} ${action_text} [${jira_key}](${jira_url}) (${jira_type}, ${jira_priority}) — assigned to ${jira_assignee}**
+    entry="- **${timestamp} — ${emoji} ${action_text} [${jira_key}](${jira_url}) (${jira_type}, ${jira_priority}) — (mine)**
 ${TAB}${TAB}${TAB}${TAB}*${jira_summary}*"
 
     # Add epic on some entries
@@ -829,6 +869,8 @@ ${TAB}- Notes: ${notes}"
   local escaped
   escaped="${LOG_ENTRY//$'\n'/\\n}"
   escaped="${escaped//$'\t'/\\t}"
+  # Blank line before entry for visual separation
+  escaped="\\n${escaped}"
 
   # Append to daily note and open it
   echo ""
@@ -871,6 +913,7 @@ if [ "${1:-}" = "test" ]; then
 
   escaped="${LOG_ENTRY//$'\n'/\\n}"
   escaped="${escaped//$'\t'/\\t}"
+  escaped="\\n${escaped}"
 
   echo "${COLOR_GREEN}Appending test entries to daily note...${COLOR_RESET}"
   obsidian daily:append "content=${escaped}" open >/dev/null 2>&1
