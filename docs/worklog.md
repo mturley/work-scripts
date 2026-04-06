@@ -18,7 +18,7 @@ worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345
 
 `worklog pr <action> <ref>`
 
-Actions: `opened`, `seen`, `reviewed`, `commented`, `approved`
+Actions: `opened`, `closed`, `seen`, `reviewed`, `commented`, `approved`
 
 - Fetches PR title, author, and URL via `gh`
 - For `reviewed`/`commented`, includes a truncated excerpt of your latest review or comment
@@ -38,15 +38,21 @@ Actions: `opened`, `seen`, `updated`, `commented`
 
 Reference formats: issue key (`RHOAIENG-12345`) or full URL (`https://issues.redhat.com/browse/RHOAIENG-12345` or `https://redhat.atlassian.net/browse/RHOAIENG-12345`).
 
+## Other commands
+
+- `worklog open` — open today's daily note in Obsidian
+- `worklog test` — insert sample entries into today's daily note to preview formatting
+- `worklog help` — show full usage
+
 ## Log entry format
 
-Each entry is a row in a markdown table appended to the daily note. Sub-details (linked issues/PRs, review excerpts, notes) appear as a bulleted list in the Details column.
+Each entry is a row in a 2-column markdown table appended to the daily note (or created if missing). The table auto-repairs extra empty columns that Obsidian's editor may add accidentally.
 
 ```markdown
 | Time | |
 |---|---|
-| 3:15 PM | 🔀 📝 Reviewed PR [odh-dashboard#6300](url)<br>(by @author)<br>*Fix pagination*<ul><li>Review: "Looks good overall..."</li><li>Jira: [RHOAIENG-12345](url) — *Fix pagination* (Major, mine)</li></ul> |
-| 4:00 PM | 📋 👀 Seen [RHOAIENG-12345](url)<br>(Bug, Major, mine)<br>*Fix pagination*<ul><li>Epic: [RHOAIENG-12000](url) — *Model Registry improvements*</li><li>PR: [odh-dashboard#6300](url) (by @author): *Fix pagination*</li></ul> |
+| 3:15 PM | 🔀 📝 Reviewed PR<br><br>[odh-dashboard#6300](url) (by @author)<br>*Fix pagination*<ul><li>Review: "Looks good overall..."</li><li>Jira: [RHOAIENG-12345](url) — *Fix pagination* (Major, mine)</li></ul> |
+| 4:00 PM | 📋 👀 Seen Jira Bug<br><br>[RHOAIENG-12345](url) (Major, mine)<br>*Fix pagination*<ul><li>Epic: [RHOAIENG-12000](url) — *Model Registry improvements*</li><li>PR: [odh-dashboard#6300](url) (by @author): *Fix pagination*</li></ul> |
 ```
 
 ## Setup

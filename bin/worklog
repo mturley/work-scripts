@@ -14,7 +14,7 @@ source "$SCRIPTS_DIR/helpers.sh"
 # Help / usage
 # ---------------------------------------------------------------------------
 
-PR_ACTIONS="opened | seen | reviewed | commented | approved"
+PR_ACTIONS="opened | closed | seen | reviewed | commented | approved"
 PR_REFS="  https://github.com/owner/repo/pull/123
   owner/repo#123
   #123  (infers repo from current directory)
@@ -194,6 +194,7 @@ get_emoji() {
   esac
   case "$action" in
     opened)    action_emoji="✨" ;;
+    closed)    action_emoji="🏁" ;;
     seen)      action_emoji="👀" ;;
     reviewed)  action_emoji="📝" ;;
     commented) action_emoji="💬" ;;
@@ -207,6 +208,7 @@ get_emoji() {
 title_case() {
   case "$1" in
     opened)    echo "Opened" ;;
+    closed)    echo "Closed" ;;
     seen)      echo "Seen" ;;
     reviewed)  echo "Reviewed" ;;
     commented) echo "Commented on" ;;
@@ -415,7 +417,7 @@ else:
     import re
     # Split on unescaped pipes (not preceded by backslash)
     def split_row(line):
-        return re.split(r'(?<!\\)\|', line)
+        return re.split(r'(?<!\\\\)\|', line)
     # Header and separator: replace with canonical versions
     header_cols = len(split_row('$TABLE_HEADER')) - 2  # subtract leading/trailing empties
     actual_cols = len(split_row(lines[table_start])) - 2
@@ -560,7 +562,7 @@ handle_pr() {
   if [ -n "$pr_author" ]; then
     ref_meta="by @${pr_author}"
   fi
-  if [ "$action" = "seen" ]; then
+  if [ "$action" = "seen" ] || [ "$action" = "closed" ]; then
     local state_label=""
     if [ "$pr_is_draft" = "True" ] || [ "$pr_is_draft" = "true" ]; then
       state_label="Draft"
@@ -901,7 +903,7 @@ handle_test() {
 
   # --- PR: all actions ---
   local pr_action
-  for pr_action in opened seen reviewed commented approved; do
+  for pr_action in opened closed seen reviewed commented approved; do
     ROW_TIME="$timestamp"
     ROW_EMOJI="$(get_emoji pr "$pr_action")"
     ROW_ACTION="$(title_case "$pr_action") PR"
@@ -911,6 +913,8 @@ handle_test() {
     local ref_meta="by @${pr_author}"
     if [ "$pr_action" = "seen" ]; then
       ref_meta="${ref_meta}, Merged"
+    elif [ "$pr_action" = "closed" ]; then
+      ref_meta="${ref_meta}, Closed"
     fi
     ROW_REF="[${pr_ref}](${pr_url}) (${ref_meta})"
 
@@ -922,7 +926,7 @@ handle_test() {
     fi
 
     # Add linked Jira on some entries
-    if [ "$pr_action" = "opened" ] || [ "$pr_action" = "approved" ]; then
+    if [ "$pr_action" = "opened" ] || [ "$pr_action" = "closed" ] || [ "$pr_action" = "approved" ]; then
       ROW_SUB_DETAILS+=("Jira: [${jira_key}](${jira_url}) — *${jira_summary}* (${jira_priority}, mine)")
     elif [ "$pr_action" = "reviewed" ]; then
       ROW_SUB_DETAILS+=("Jira: [${jira_key}](${jira_url}) — *${jira_summary}* (${jira_priority}, Assigned to ${jira_assignee})")
@@ -1077,7 +1081,7 @@ case "$CATEGORY" in
       exit 0
     fi
     case "$ACTION" in
-      opened|seen|reviewed|commented|approved) ;;
+      opened|closed|seen|reviewed|commented|approved) ;;
       *)
         echo "ERROR: Invalid PR action: $ACTION" >&2
         echo "" >&2
