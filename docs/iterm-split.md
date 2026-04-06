@@ -22,6 +22,8 @@ iterm-split -h npm run dev           # horizontal split
 3. `cd`s to the caller's working directory
 4. Runs the command
 
+The command exits immediately, so to open multiple concurrent panes you can chain multiple calls with `&&` or `;`.
+
 ## Setup
 
 Requires [iTerm2](https://iterm2.com/). No additional configuration needed.

@@ -123,7 +123,7 @@ check_already_seen() {
   if [ -z "$daily_content" ]; then
     return 0
   fi
-  if echo "$daily_content" | grep -q "👀 Seen.*${pattern}"; then
+  if echo "$daily_content" | grep -q "👀.*Seen.*${pattern}"; then
     echo "Already logged as seen today: ${pattern}" >&2
     exit 0
   fi
@@ -133,6 +133,7 @@ check_already_seen() {
 # .env loading
 # ---------------------------------------------------------------------------
 
+OBSIDIAN_VAULT=""
 JIRA_HOST=""
 JIRA_EMAIL=""
 JIRA_API_TOKEN=""
@@ -152,6 +153,7 @@ load_env() {
     key="$(echo "$key" | tr -d '[:space:]')"
     value="$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     case "$key" in
+      OBSIDIAN_VAULT) OBSIDIAN_VAULT="$value" ;;
       JIRA_HOST) JIRA_HOST="$value" ;;
       JIRA_EMAIL) JIRA_EMAIL="$value" ;;
       JIRA_API_TOKEN) JIRA_API_TOKEN="$value" ;;
@@ -298,6 +300,124 @@ jira_search() {
 }
 
 # ---------------------------------------------------------------------------
+# Table formatting
+# ---------------------------------------------------------------------------
+
+TABLE_HEADER="| Time | |"
+TABLE_SEPARATOR="|---|---|"
+
+# Row components (set by handlers, composed into a row by compose_row)
+ROW_TIME=""
+ROW_EMOJI=""
+ROW_ACTION=""
+ROW_REF=""
+ROW_TITLE=""
+ROW_SUB_DETAILS=()
+
+# Escape pipe characters in table cell content
+escape_cell() {
+  echo "$1" | sed 's/|/\\|/g'
+}
+
+# Get full filesystem path to today's daily note
+get_daily_note_path() {
+  if [ -z "$OBSIDIAN_VAULT" ]; then
+    echo "ERROR: OBSIDIAN_VAULT not set in .env" >&2
+    echo "Add OBSIDIAN_VAULT=/path/to/your/vault to your .env file." >&2
+    exit 1
+  fi
+  local relative_path
+  relative_path="$(obsidian daily:path 2>/dev/null | tail -1)"
+  if [ -z "$relative_path" ]; then
+    echo "ERROR: Could not get daily note path from Obsidian CLI" >&2
+    exit 1
+  fi
+  echo "${OBSIDIAN_VAULT}/${relative_path}"
+}
+
+# Compose a table row from ROW_* globals and ROW_SUB_DETAILS array
+compose_row() {
+  local ref_escaped title_escaped
+  ref_escaped="$(escape_cell "$ROW_REF")"
+  title_escaped="$(escape_cell "$ROW_TITLE")"
+
+  local content="${ROW_EMOJI} ${ROW_ACTION}"
+  if [ -n "$ROW_REF" ]; then
+    content="${content}<br><br>${ref_escaped}"
+  fi
+  content="${content}<br>*${title_escaped}*"
+  if [ ${#ROW_SUB_DETAILS[@]} -gt 0 ]; then
+    content="${content}<ul>"
+    local detail
+    for detail in "${ROW_SUB_DETAILS[@]}"; do
+      local detail_escaped
+      detail_escaped="$(escape_cell "$detail")"
+      content="${content}<li>${detail_escaped}</li>"
+    done
+    content="${content}</ul>"
+  fi
+
+  echo "| ${ROW_TIME} | ${content} |"
+}
+
+# Insert a table row into today's daily note
+insert_table_row() {
+  local row="$1"
+  local daily_note
+  daily_note="$(get_daily_note_path)"
+
+  # Ensure the daily note exists
+  if [ ! -f "$daily_note" ]; then
+    obsidian daily >/dev/null 2>&1
+    sleep 1
+  fi
+
+  if [ ! -f "$daily_note" ]; then
+    echo "ERROR: Daily note not found at: $daily_note" >&2
+    exit 1
+  fi
+
+  python3 -c "
+import sys
+
+filepath = sys.argv[1]
+new_row = sys.argv[2]
+
+with open(filepath, 'r') as f:
+    content = f.read()
+
+lines = content.split('\n')
+
+# Find the table header
+table_start = -1
+for i, line in enumerate(lines):
+    if line.startswith('| Time |'):
+        table_start = i
+        break
+
+if table_start == -1:
+    # No table found — append one
+    if lines and lines[-1].strip():
+        lines.append('')
+    lines.append('$TABLE_HEADER')
+    lines.append('$TABLE_SEPARATOR')
+    lines.append(new_row)
+else:
+    # Find end of table (last line starting with |)
+    table_end = table_start + 1  # at least the separator
+    for i in range(table_start + 1, len(lines)):
+        if lines[i].startswith('|'):
+            table_end = i
+        else:
+            break
+    lines.insert(table_end + 1, new_row)
+
+with open(filepath, 'w') as f:
+    f.write('\n'.join(lines))
+" "$daily_note" "$row"
+}
+
+# ---------------------------------------------------------------------------
 # PR reference parsing
 # ---------------------------------------------------------------------------
 
@@ -407,30 +527,37 @@ handle_pr() {
   local display_repo="${PR_REPO}"
   local display_ref="${display_repo}#${PR_NUMBER}"
 
-  # Build main line
-  local emoji timestamp action_text
-  emoji="$(get_emoji pr "$action")"
-  timestamp="$(get_timestamp)"
-  action_text="$(title_case "$action")"
+  # Build row components
+  ROW_TIME="$(get_timestamp)"
+  ROW_EMOJI="$(get_emoji pr "$action")"
+  ROW_ACTION="$(title_case "$action") PR"
+  ROW_TITLE="$pr_title"
+  ROW_SUB_DETAILS=()
 
-  local author_part=""
+  # Reference: link on first line, metadata on second
+  local ref_meta=""
   if [ -n "$pr_author" ]; then
-    author_part=" (by @${pr_author})"
+    ref_meta="by @${pr_author}"
   fi
-
-  local state_part=""
   if [ "$action" = "seen" ]; then
+    local state_label=""
     if [ "$pr_is_draft" = "True" ] || [ "$pr_is_draft" = "true" ]; then
-      state_part=" [Draft]"
+      state_label="Draft"
     elif [ "$pr_state" = "MERGED" ]; then
-      state_part=" [Merged]"
+      state_label="Merged"
     elif [ "$pr_state" = "CLOSED" ]; then
-      state_part=" [Closed]"
+      state_label="Closed"
+    fi
+    if [ -n "$state_label" ] && [ -n "$ref_meta" ]; then
+      ref_meta="${ref_meta}, ${state_label}"
+    elif [ -n "$state_label" ]; then
+      ref_meta="${state_label}"
     fi
   fi
-
-  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} PR [${display_ref}](${pr_url})${author_part}${state_part}**
-${TAB}${TAB}${TAB}${TAB}*${pr_title}*"
+  ROW_REF="[${display_ref}](${pr_url})"
+  if [ -n "$ref_meta" ]; then
+    ROW_REF="${ROW_REF} (${ref_meta})"
+  fi
 
   # For reviewed/commented, try to get excerpt
   if [ "$action" = "reviewed" ] || [ "$action" = "commented" ]; then
@@ -451,8 +578,7 @@ ${TAB}${TAB}${TAB}${TAB}*${pr_title}*"
       local label="Comment"
       [ "$action" = "reviewed" ] && label="Review"
       excerpt="$(truncate_text "$excerpt" 120)"
-      LOG_ENTRY="${LOG_ENTRY}
-${TAB}- ${label}: \"${excerpt}\""
+      ROW_SUB_DETAILS+=("${label}: \"${excerpt}\"")
     fi
   fi
 
@@ -486,29 +612,23 @@ except:
         while IFS='|' read -r jira_key jira_summary jira_assignee jira_priority jira_assignee_email; do
           if [ -n "$jira_key" ]; then
             local jira_url="https://${JIRA_HOST}/browse/${jira_key}"
-            local jira_detail=""
+            local jira_meta=""
             local is_mine=false
             if [ -n "$jira_assignee_email" ] && [ "$jira_assignee_email" = "$JIRA_EMAIL" ]; then
               is_mine=true
             fi
             if [ "$is_mine" = true ] && [ -n "$jira_priority" ]; then
-              jira_detail="
-${TAB}  (${jira_priority}, mine)"
+              jira_meta=" (${jira_priority}, mine)"
             elif [ "$is_mine" = true ]; then
-              jira_detail="
-${TAB}  (mine)"
+              jira_meta=" (mine)"
             elif [ -n "$jira_assignee" ] && [ -n "$jira_priority" ]; then
-              jira_detail="
-${TAB}  (${jira_priority}, Assigned to ${jira_assignee})"
+              jira_meta=" (${jira_priority}, Assigned to ${jira_assignee})"
             elif [ -n "$jira_assignee" ]; then
-              jira_detail="
-${TAB}  (Assigned to ${jira_assignee})"
+              jira_meta=" (Assigned to ${jira_assignee})"
             elif [ -n "$jira_priority" ]; then
-              jira_detail="
-${TAB}  (${jira_priority})"
+              jira_meta=" (${jira_priority})"
             fi
-            LOG_ENTRY="${LOG_ENTRY}
-${TAB}- Jira: [${jira_key}](${jira_url}) — *${jira_summary}*${jira_detail}"
+            ROW_SUB_DETAILS+=("Jira: [${jira_key}](${jira_url}) — *${jira_summary}*${jira_meta}")
           fi
         done <<< "$linked_issues"
       fi
@@ -583,30 +703,40 @@ handle_jira() {
     parent_summary=""
   fi
 
-  # Build main line
-  local emoji timestamp action_text
-  emoji="$(get_emoji jira "$action")"
-  timestamp="$(get_timestamp)"
-  action_text="$(title_case "$action")"
-
-  local type_priority=""
-  if [ -n "$issue_type" ] && [ -n "$priority" ]; then
-    type_priority=" (${issue_type}, ${priority})"
-  elif [ -n "$issue_type" ]; then
-    type_priority=" (${issue_type})"
+  # Build row components
+  ROW_TIME="$(get_timestamp)"
+  ROW_EMOJI="$(get_emoji jira "$action")"
+  local action_text="$(title_case "$action")"
+  if [ -n "$issue_type" ]; then
+    ROW_ACTION="${action_text} Jira ${issue_type}"
+  else
+    ROW_ACTION="${action_text} Jira"
   fi
+  ROW_TITLE="$summary"
+  ROW_SUB_DETAILS=()
 
-  local assignee_part=""
+  # Reference: link with priority/assignee inline
+  local ref_meta_parts=""
+  if [ -n "$priority" ]; then
+    ref_meta_parts="${priority}"
+  fi
   if [ -n "$assignee" ]; then
+    local assignee_text
     if [ -n "$assignee_email" ] && [ "$assignee_email" = "$JIRA_EMAIL" ]; then
-      assignee_part=" — (mine)"
+      assignee_text="mine"
     else
-      assignee_part=" — assigned to ${assignee}"
+      assignee_text="Assigned to ${assignee}"
+    fi
+    if [ -n "$ref_meta_parts" ]; then
+      ref_meta_parts="${ref_meta_parts}, ${assignee_text}"
+    else
+      ref_meta_parts="${assignee_text}"
     fi
   fi
-
-  LOG_ENTRY="- **${timestamp} — ${emoji} ${action_text} [${JIRA_KEY}](${jira_url})${type_priority}${assignee_part}**
-${TAB}${TAB}${TAB}${TAB}*${summary}*"
+  ROW_REF="[${JIRA_KEY}](${jira_url})"
+  if [ -n "$ref_meta_parts" ]; then
+    ROW_REF="${ROW_REF} (${ref_meta_parts})"
+  fi
 
   # Epic parent
   if [ -n "$parent_key" ]; then
@@ -615,8 +745,7 @@ ${TAB}${TAB}${TAB}${TAB}*${summary}*"
     if [ -n "$parent_summary" ]; then
       parent_text="${parent_text} — *${parent_summary}*"
     fi
-    LOG_ENTRY="${LOG_ENTRY}
-${TAB}- Epic: ${parent_text}"
+    ROW_SUB_DETAILS+=("Epic: ${parent_text}")
   fi
 
   # For commented action, get latest comment excerpt
@@ -635,8 +764,7 @@ except:
 
     if [ -n "$comment_body" ]; then
       comment_body="$(truncate_text "$comment_body" 120)"
-      LOG_ENTRY="${LOG_ENTRY}
-${TAB}- Comment: \"${comment_body}\""
+      ROW_SUB_DETAILS+=("Comment: \"${comment_body}\"")
     fi
   fi
 
@@ -650,23 +778,18 @@ try:
     field = data.get('fields', {}).get('customfield_10875', '')
     if not field:
         sys.exit(0)
-    # Field could be a string (plain text or HTML) or ADF structure
     urls = set()
     if isinstance(field, str):
         urls = set(re.findall(r'https://github\.com/[^\s\"<>|]+/pull/\d+', field))
     elif isinstance(field, dict):
-        # ADF format - walk the tree looking for URLs
         def walk(node):
             if isinstance(node, dict):
-                # inlineCard
                 url = node.get('attrs', {}).get('url', '')
                 if url and '/pull/' in url:
-                    # Clean pipe-separated duplicates
                     for u in url.split('|'):
                         m = re.match(r'(https://github\.com/[^\s\"<>|]+/pull/\d+)', u)
                         if m:
                             urls.add(m.group(1))
-                # link mark
                 for mark in node.get('marks', []):
                     href = mark.get('attrs', {}).get('href', '')
                     if href and '/pull/' in href:
@@ -689,16 +812,13 @@ except:
     if [ -n "$pr_urls" ]; then
       while IFS= read -r url; do
         if [ -n "$url" ]; then
-          # Extract owner/repo#number from URL
           local pr_path
           pr_path="$(echo "$url" | sed 's|.*/github\.com/||')"
-          local pr_repo_name pr_num_part pr_owner_part
-          pr_owner_part="$(echo "$pr_path" | cut -d/ -f1)"
+          local pr_repo_name pr_num_part
           pr_repo_name="$(echo "$pr_path" | cut -d/ -f2)"
           pr_num_part="$(echo "$pr_path" | grep -o '[0-9]*$')"
           local display="${pr_repo_name}#${pr_num_part}"
 
-          # Fetch PR title and author via gh
           local pr_linked_title="" pr_linked_author="" pr_linked_json=""
           pr_linked_json="$(gh pr view "$url" --json title,author 2>/dev/null || true)"
           if [ -n "$pr_linked_json" ]; then
@@ -706,15 +826,14 @@ except:
             pr_linked_author="$(echo "$pr_linked_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('author',{}).get('login',''))" 2>/dev/null || true)"
           fi
 
-          local pr_detail="[${display}](${url})"
+          local pr_detail="PR: [${display}](${url})"
           if [ -n "$pr_linked_author" ]; then
             pr_detail="${pr_detail} (by @${pr_linked_author})"
           fi
           if [ -n "$pr_linked_title" ]; then
             pr_detail="${pr_detail}: *${pr_linked_title}*"
           fi
-          LOG_ENTRY="${LOG_ENTRY}
-${TAB}- PR: ${pr_detail}"
+          ROW_SUB_DETAILS+=("$pr_detail")
         fi
       done <<< "$pr_urls"
     fi
@@ -751,97 +870,83 @@ handle_test() {
   local review_excerpt="Looks good overall, one minor nit on the error handling path in the submit handler. Can we add a fallback for the empty state?"
   local comment_excerpt="I think we should also handle the case where the API returns an empty list vs null — they have different semantics downstream."
 
-  LOG_ENTRY=""
-  local entry
+  TEST_ROWS=()
 
   # --- Free-form ---
-  entry="- **${timestamp} — 📌 Caught up on Slack messages and replied to a thread about the release timeline**"
-  LOG_ENTRY="${entry}"
+  ROW_TIME="$timestamp"; ROW_EMOJI="📌"; ROW_ACTION="Note"; ROW_REF=""
+  ROW_TITLE="Caught up on Slack messages and replied to a thread about the release timeline"
+  ROW_SUB_DETAILS=()
+  TEST_ROWS+=("$(compose_row)")
 
   # --- PR: all actions ---
   local pr_action
   for pr_action in opened seen reviewed commented approved; do
-    local emoji action_text
-    emoji="$(get_emoji pr "$pr_action")"
-    action_text="$(title_case "$pr_action")"
+    ROW_TIME="$timestamp"
+    ROW_EMOJI="$(get_emoji pr "$pr_action")"
+    ROW_ACTION="$(title_case "$pr_action") PR"
+    ROW_TITLE="$pr_title"
+    ROW_SUB_DETAILS=()
 
-    local author_part=" (by @${pr_author})"
-    local state_part=""
+    local ref_meta="by @${pr_author}"
     if [ "$pr_action" = "seen" ]; then
-      state_part=" [Merged]"
+      ref_meta="${ref_meta}, Merged"
     fi
-    entry="- **${timestamp} — ${emoji} ${action_text} PR [${pr_ref}](${pr_url})${author_part}${state_part}**
-${TAB}${TAB}${TAB}${TAB}*${pr_title}*"
+    ROW_REF="[${pr_ref}](${pr_url}) (${ref_meta})"
 
     # Add excerpt for reviewed/commented
     if [ "$pr_action" = "reviewed" ]; then
-      entry="${entry}
-${TAB}- Review: \"${review_excerpt}\""
+      ROW_SUB_DETAILS+=("Review: \"${review_excerpt}\"")
     elif [ "$pr_action" = "commented" ]; then
-      entry="${entry}
-${TAB}- Comment: \"${comment_excerpt}\""
+      ROW_SUB_DETAILS+=("Comment: \"${comment_excerpt}\"")
     fi
 
-    # Add linked Jira on some entries to show the variation
+    # Add linked Jira on some entries
     if [ "$pr_action" = "opened" ] || [ "$pr_action" = "approved" ]; then
-      entry="${entry}
-${TAB}- Jira: [${jira_key}](${jira_url}) — *${jira_summary}*
-${TAB}  (${jira_priority}, mine)"
+      ROW_SUB_DETAILS+=("Jira: [${jira_key}](${jira_url}) — *${jira_summary}* (${jira_priority}, mine)")
     elif [ "$pr_action" = "reviewed" ]; then
-      entry="${entry}
-${TAB}- Jira: [${jira_key}](${jira_url}) — *${jira_summary}*
-${TAB}  (${jira_priority}, Assigned to ${jira_assignee})"
+      ROW_SUB_DETAILS+=("Jira: [${jira_key}](${jira_url}) — *${jira_summary}* (${jira_priority}, Assigned to ${jira_assignee})")
     fi
 
     # Add notes on one entry
     if [ "$pr_action" = "reviewed" ]; then
-      entry="${entry}
-${TAB}- Notes: Requested a small change, otherwise LGTM"
+      ROW_SUB_DETAILS+=("Notes: Requested a small change, otherwise LGTM")
     fi
 
-    LOG_ENTRY="${LOG_ENTRY}
-
-${entry}"
+    TEST_ROWS+=("$(compose_row)")
   done
 
   # --- Jira: all actions ---
   local jira_action
   for jira_action in opened seen updated commented; do
-    local emoji action_text
-    emoji="$(get_emoji jira "$jira_action")"
-    action_text="$(title_case "$jira_action")"
-
-    entry="- **${timestamp} — ${emoji} ${action_text} [${jira_key}](${jira_url}) (${jira_type}, ${jira_priority}) — (mine)**
-${TAB}${TAB}${TAB}${TAB}*${jira_summary}*"
+    ROW_TIME="$timestamp"
+    ROW_EMOJI="$(get_emoji jira "$jira_action")"
+    ROW_ACTION="$(title_case "$jira_action") Jira ${jira_type}"
+    ROW_TITLE="$jira_summary"
+    ROW_SUB_DETAILS=()
+    ROW_REF="[${jira_key}](${jira_url}) (${jira_priority}, mine)"
 
     # Add epic on some entries
     if [ "$jira_action" = "opened" ] || [ "$jira_action" = "seen" ] || [ "$jira_action" = "commented" ]; then
-      entry="${entry}
-${TAB}- Epic: [${epic_key}](${epic_url}) — *${epic_summary}*"
+      ROW_SUB_DETAILS+=("Epic: [${epic_key}](${epic_url}) — *${epic_summary}*")
     fi
 
     # Add comment excerpt for commented
     if [ "$jira_action" = "commented" ]; then
-      entry="${entry}
-${TAB}- Comment: \"${comment_excerpt}\""
+      ROW_SUB_DETAILS+=("Comment: \"${comment_excerpt}\"")
     fi
 
     # Add linked PRs on some entries
     if [ "$jira_action" = "seen" ] || [ "$jira_action" = "updated" ]; then
-      entry="${entry}
-${TAB}- PR: [${pr_ref}](${pr_url}) (by @${pr_author}): *${pr_title}*
-${TAB}- PR: [${pr_ref_2}](${pr_url_2}) (by @${pr_author}): *${pr_title}*"
+      ROW_SUB_DETAILS+=("PR: [${pr_ref}](${pr_url}) (by @${pr_author}): *${pr_title}*")
+      ROW_SUB_DETAILS+=("PR: [${pr_ref_2}](${pr_url_2}) (by @${pr_author}): *${pr_title}*")
     fi
 
     # Add notes on one entry
     if [ "$jira_action" = "updated" ]; then
-      entry="${entry}
-${TAB}- Notes: Moved to In Progress and updated the description with the latest requirements"
+      ROW_SUB_DETAILS+=("Notes: Moved to In Progress and updated the description with the latest requirements")
     fi
 
-    LOG_ENTRY="${LOG_ENTRY}
-
-${entry}"
+    TEST_ROWS+=("$(compose_row)")
   done
 }
 
@@ -850,34 +955,30 @@ ${entry}"
 # ---------------------------------------------------------------------------
 
 prompt_and_append() {
-  # Display the entry
+  # Compose and display the entry
+  local row
+  row="$(compose_row)"
   echo ""
   echo "${COLOR_CYAN}Log entry:${COLOR_RESET}"
-  echo "$LOG_ENTRY"
+  echo "$row"
   echo ""
 
   # Prompt for additional notes
   printf "${COLOR_BLUE}Add any additional notes? (press Enter to skip):${COLOR_RESET} "
   read -r notes || true
   if [ -n "$notes" ]; then
-    LOG_ENTRY="${LOG_ENTRY}
-${TAB}- Notes: ${notes}"
+    ROW_SUB_DETAILS+=("Notes: ${notes}")
+    row="$(compose_row)"
     echo ""
     echo "${COLOR_CYAN}Updated entry:${COLOR_RESET}"
-    echo "$LOG_ENTRY"
+    echo "$row"
   fi
 
-  # Convert newlines and tabs to escape sequences for obsidian CLI
-  local escaped
-  escaped="${LOG_ENTRY//$'\n'/\\n}"
-  escaped="${escaped//$'\t'/\\t}"
-  # Blank line before entry for visual separation
-  escaped="\\n${escaped}"
-
-  # Append to daily note and open it
+  # Insert into daily note and open it
   echo ""
   echo "${COLOR_GREEN}Appending to daily note...${COLOR_RESET}"
-  obsidian daily:append "content=${escaped}" open >/dev/null 2>&1
+  insert_table_row "$row"
+  obsidian daily >/dev/null 2>&1
 
   echo "${COLOR_GREEN}Done!${COLOR_RESET}"
 }
@@ -907,18 +1008,20 @@ fi
 # Test mode: generate all permutations with fake data
 if [ "${1:-}" = "test" ]; then
   handle_test
-  # Show all entries, then append without prompting for notes
   echo ""
   echo "${COLOR_CYAN}Test entries:${COLOR_RESET}"
-  echo "$LOG_ENTRY"
+  echo "$TABLE_HEADER"
+  echo "$TABLE_SEPARATOR"
+  for row in "${TEST_ROWS[@]}"; do
+    echo "$row"
+  done
   echo ""
 
-  escaped="${LOG_ENTRY//$'\n'/\\n}"
-  escaped="${escaped//$'\t'/\\t}"
-  escaped="\\n${escaped}"
-
-  echo "${COLOR_GREEN}Appending test entries to daily note...${COLOR_RESET}"
-  obsidian daily:append "content=${escaped}" open >/dev/null 2>&1
+  echo "${COLOR_GREEN}Inserting test entries into daily note...${COLOR_RESET}"
+  for row in "${TEST_ROWS[@]}"; do
+    insert_table_row "$row"
+  done
+  obsidian daily >/dev/null 2>&1
   echo "${COLOR_GREEN}Done! Check your daily note in Obsidian.${COLOR_RESET}"
   exit 0
 fi
@@ -931,8 +1034,12 @@ if [ $# -eq 0 ]; then
     echo "Nothing to log." >&2
     exit 0
   fi
-  local_timestamp="$(get_timestamp)"
-  LOG_ENTRY="- **${local_timestamp} — 📌 ${freeform}**"
+  ROW_TIME="$(get_timestamp)"
+  ROW_EMOJI="📌"
+  ROW_ACTION="Note"
+  ROW_REF=""
+  ROW_TITLE="$freeform"
+  ROW_SUB_DETAILS=()
   prompt_and_append
   exit 0
 fi
@@ -993,14 +1100,12 @@ case "$CATEGORY" in
     ;;
 esac
 
-LOG_ENTRY=""
-
 case "$CATEGORY" in
   pr)   handle_pr "$ACTION" "$REFERENCE" ;;
   jira) handle_jira "$ACTION" "$REFERENCE" ;;
 esac
 
-if [ -z "$LOG_ENTRY" ]; then
+if [ -z "$ROW_TIME" ]; then
   echo "ERROR: Failed to build log entry." >&2
   exit 1
 fi

@@ -22,7 +22,7 @@ Actions: `opened`, `seen`, `reviewed`, `commented`, `approved`
 
 - Fetches PR title, author, and URL via `gh`
 - For `reviewed`/`commented`, includes a truncated excerpt of your latest review or comment
-- Searches Jira for linked issues (current sprint) and includes them as sub-bullets
+- Searches Jira for linked issues (current sprint) and includes them as sub-details
 
 Reference formats: full GitHub URL, `owner/repo#123`, `repo#123`, `#123`, or bare `123` (the last two infer the repo from the current directory).
 
@@ -40,28 +40,21 @@ Reference formats: issue key (`RHOAIENG-12345`) or full URL (`https://issues.red
 
 ## Log entry format
 
-Each entry is a markdown bullet appended to the daily note. The main line is bold for readability. Sub-bullets include linked issues/PRs, review excerpts, and optional user notes.
+Each entry is a row in a markdown table appended to the daily note. Sub-details (linked issues/PRs, review excerpts, notes) appear as a bulleted list in the Details column.
 
 ```markdown
-- **3:15 PM — 🔀 📝 Reviewed PR [odh-dashboard#6300](url) (by @author)**
-				*Fix pagination*
-	- Review: "Looks good overall, one minor nit on the error handling..."
-	- Jira: [RHOAIENG-12345](url) — *Fix pagination*
-	  (Major, mine)
-	- Notes: discussed approach in standup
-
-- **4:00 PM — 📋 👀 Seen [RHOAIENG-12345](url) (Bug, Major) — (mine)**
-				*Fix pagination*
-	- Epic: [RHOAIENG-12000](url) — *Model Registry improvements*
-	- PR: [odh-dashboard#6300](url) (by @author): *Fix pagination*
+| Time | |
+|---|---|
+| 3:15 PM | 🔀 📝 Reviewed PR [odh-dashboard#6300](url)<br>(by @author)<br>*Fix pagination*<ul><li>Review: "Looks good overall..."</li><li>Jira: [RHOAIENG-12345](url) — *Fix pagination* (Major, mine)</li></ul> |
+| 4:00 PM | 📋 👀 Seen [RHOAIENG-12345](url)<br>(Bug, Major, mine)<br>*Fix pagination*<ul><li>Epic: [RHOAIENG-12000](url) — *Model Registry improvements*</li><li>PR: [odh-dashboard#6300](url) (by @author): *Fix pagination*</li></ul> |
 ```
 
 ## Setup
 
 1. Enable the Obsidian CLI: Obsidian → Settings → General → Advanced
-2. For Jira integration, create a `.env` file in the work-scripts directory:
+2. Create a `.env` file in the work-scripts directory:
    ```bash
    cp .env.example .env
-   # Fill in JIRA_HOST, JIRA_EMAIL and JIRA_API_TOKEN
-   # Generate a token at: https://id.atlassian.com/manage-profile/security/api-tokens
+   # Fill in OBSIDIAN_VAULT, JIRA_HOST, JIRA_EMAIL, and JIRA_API_TOKEN
+   # Generate a Jira token at: https://id.atlassian.com/manage-profile/security/api-tokens
    ```
