@@ -7,7 +7,9 @@ WORKTREES_BASE="${WORKTREES_BASE:-$HOME/git/.worktrees}"
 # Terminal colors
 COLOR_BLUE="$(tput setaf 12 2>/dev/null || true)"
 COLOR_CYAN="$(tput setaf 6 2>/dev/null || true)"
+COLOR_GREEN="$(tput setaf 2 2>/dev/null || true)"
 COLOR_RED="$(tput setaf 1 2>/dev/null || true)"
+COLOR_YELLOW="$(tput setaf 3 2>/dev/null || true)"
 COLOR_RESET="$(tput sgr0 2>/dev/null || true)"
 
 # short_path <path> - Replace $HOME prefix with ~
