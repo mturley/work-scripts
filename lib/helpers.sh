@@ -657,6 +657,9 @@ setup_pr_tracking() {
 
   git fetch "$remote_name" "$head_ref" 2>/dev/null || true
   git -C "$wt_path" branch --set-upstream-to="${remote_name}/${head_ref}" "$local_branch" 2>/dev/null || true
+  # The local branch name (review/pr-*) differs from the remote branch name,
+  # so set push.default=upstream to allow `git push` without the name mismatch error.
+  git -C "$wt_path" config push.default upstream
 }
 
 # recreate_pr_worktree <scripts-dir> <worktree-abs> <pr-number> <slug> <base-repo> <wt-path>
