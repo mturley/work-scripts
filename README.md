@@ -5,7 +5,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`worktree`](docs/worktree.md) — Create and manage git worktrees for PRs and branches
 - [`gh-safe`](docs/gh-safe.md) — AI agent guardrail for the GitHub CLI
 - [`worklog`](docs/worklog.md) (or `wlog`) — Append timestamped activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes)
-- [`iterm-split`](docs/iterm-split.md) — Split iTerm2 and run a command in the new pane
+- [`iterm-new`](docs/iterm-new.md) — Open a new iTerm2 tab or split pane and run a command
 
 ## Setup
 
@@ -63,12 +63,13 @@ Requires the [Obsidian CLI](https://obsidian.md/) and a `.env` file for Jira int
 
 ## Commands for iTerm2
 
-### [`iterm-split`](docs/iterm-split.md) — Split and Run
+### [`iterm-new`](docs/iterm-new.md) — New Tab or Split Pane
 
-Split the current [iTerm2](https://iterm2.com/) window and run a command in the new pane. The pane is named after the command for easy identification.
+Open a new [iTerm2](https://iterm2.com/) tab or split pane and run a command. The tab/pane is named after the command or a custom name.
 
 ```bash
-iterm-split npm run dev              # vertical split (default)
-iterm-split -v npm run dev           # vertical split (explicit)
-iterm-split -h npm run dev           # horizontal split
+iterm-new tab npm run dev            # new tab
+iterm-new split-v npm run dev        # vertical split
+iterm-new split-h npm run dev        # horizontal split
+iterm-new tab -n "my app" npm start  # new tab with custom name
 ```

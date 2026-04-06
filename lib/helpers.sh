@@ -510,11 +510,11 @@ worktree_repl() {
     echo "  ${blue}help${reset}     (h)  Show this help"
   }
 
-  # Rename iTerm2 session if running in iTerm
+  # Set iTerm2 tab title
+  local iterm_label=""
   if [ "$TERM_PROGRAM" = "iTerm.app" ]; then
-    local iterm_label
     if [ -n "${pr_num:-}" ]; then
-      iterm_label="worktree #${pr_num}"
+      iterm_label="worktree PR #${pr_num}"
     else
       iterm_label="worktree ${branch}"
     fi
@@ -556,6 +556,9 @@ worktree_repl() {
         (cd "$wt_path" && "$SHELL")
         echo ""
         echo "Back in worktree REPL."
+        if [ -n "$iterm_label" ]; then
+          printf '\033]1;%s\007' "$iterm_label"
+        fi
         _worktree_info
         ;;
       cleanup|c)

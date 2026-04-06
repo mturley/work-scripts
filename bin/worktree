@@ -50,14 +50,25 @@ if [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
   exit 0
 fi
 
-# --- Multiple arguments: launch mprocs with a command pane + worktree panes ---
+# --- Multiple arguments ---
 if [ $# -gt 1 ]; then
+  SELF="$(readlink -f "$0")"
+
+  if [ "$TERM_PROGRAM" = "iTerm.app" ]; then
+    # iTerm: open each worktree in a new tab
+    for arg in "$@"; do
+      label="$(pane_label "$arg")"
+      iterm-new tab -n "$label" "$SELF" "$arg"
+    done
+    exit 0
+  fi
+
+  # Fallback: mprocs
   if ! command -v mprocs &>/dev/null; then
-    echo "ERROR: Multiple worktrees require mprocs." >&2
-    echo "  Install it: brew install mprocs" >&2
+    echo "ERROR: Multiple worktrees require iTerm2 or mprocs." >&2
+    echo "  Install mprocs: brew install mprocs" >&2
     exit 1
   fi
-  SELF="$(readlink -f "$0")"
   MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
   MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
   rm -f "$MPROCS_CFG"
