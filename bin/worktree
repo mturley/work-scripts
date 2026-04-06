@@ -278,7 +278,7 @@ if is_pr_arg "$ARG"; then
   SLUG="$(echo "$PR_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//' | cut -c1-40 | sed 's/-$//')"
   WORKTREE_NAME="pr-${PR_NUMBER}-${SLUG}"
   REPO_ROOT="$(git rev-parse --show-toplevel)"
-  BASE_REPO="$(gh repo view --json nameWithOwner --jq '.nameWithOwner')"
+  BASE_REPO="$(echo "$PR_URL" | sed 's|https://github.com/||' | sed 's|/pull/.*||')"
   REPO_NAME="$(basename "$REPO_ROOT")"
   WORKTREE_ABS="${WORKTREES_BASE}/${REPO_NAME}--${WORKTREE_NAME}"
 
@@ -286,9 +286,11 @@ if is_pr_arg "$ARG"; then
 
   mkdir -p "$WORKTREES_BASE"
 
-  # Fetch the PR's latest commit for comparison
-  git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head" 2>/dev/null
-  PR_REMOTE_HEAD="$(git rev-parse FETCH_HEAD)"
+  # Fetch the PR's latest commit into a named ref (avoids FETCH_HEAD race when
+  # multiple worktree processes run in parallel via mprocs).
+  PR_FETCH_REF="refs/pr-review/${PR_NUMBER}"
+  git fetch "https://github.com/${BASE_REPO}.git" "+refs/pull/${PR_NUMBER}/head:${PR_FETCH_REF}" 2>/dev/null
+  PR_REMOTE_HEAD="$(git rev-parse "$PR_FETCH_REF")"
 
   # Find all worktrees related to this PR (by branch name or review/pr-* branch)
   RELATED_WTS=()
@@ -388,25 +390,26 @@ if is_pr_arg "$ARG"; then
       echo "  Remote: ${PR_REMOTE_HEAD:0:12}"
       CHOICE="$(prompt_choice "What would you like to do?" "Reset to PR's latest commit" "Keep as-is")"
       if [ "$CHOICE" = "Reset to PR's latest commit" ]; then
+        git -C "$WT_PATH" reset --hard "$PR_REMOTE_HEAD"
+        echo "Reset to PR's latest commit."
+        # Best-effort backup of the old commit
         BACKUP_BRANCH="${SELECTED_BRANCH}-${LOCAL_HEAD:0:7}"
         if git rev-parse --verify "$BACKUP_BRANCH" &>/dev/null; then
           if [ "$(git rev-parse "$BACKUP_BRANCH")" = "$LOCAL_HEAD" ]; then
-            echo "Backup branch '${BACKUP_BRANCH}' already exists at the same commit."
+            echo "Previous state already saved in branch '${BACKUP_BRANCH}'."
           else
             n=2
             while git rev-parse --verify "${BACKUP_BRANCH}-${n}" &>/dev/null; do
               n=$((n + 1))
             done
             BACKUP_BRANCH="${BACKUP_BRANCH}-${n}"
-            git branch "$BACKUP_BRANCH" "$LOCAL_HEAD"
-            echo "Backed up current state to branch '${BACKUP_BRANCH}'"
+            git branch "$BACKUP_BRANCH" "$LOCAL_HEAD" 2>/dev/null && \
+              echo "Backed up previous state to branch '${BACKUP_BRANCH}'" || true
           fi
         else
-          git branch "$BACKUP_BRANCH" "$LOCAL_HEAD"
-          echo "Backed up current state to branch '${BACKUP_BRANCH}'"
+          git branch "$BACKUP_BRANCH" "$LOCAL_HEAD" 2>/dev/null && \
+            echo "Backed up previous state to branch '${BACKUP_BRANCH}'" || true
         fi
-        git -C "$WT_PATH" reset --hard "$PR_REMOTE_HEAD"
-        echo "Reset to PR's latest commit."
       fi
     fi
 

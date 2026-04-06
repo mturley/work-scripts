@@ -103,8 +103,9 @@ case "$MODE" in
 
     if [ -n "$EXISTING" ]; then
       # Fetch latest PR ref and compare
-      git fetch "https://github.com/${BASE_REPO}.git" "refs/pull/${PR_NUMBER}/head" 2>/dev/null
-      REMOTE_HEAD="$(git rev-parse FETCH_HEAD)"
+      PR_FETCH_REF="refs/pr-review/${PR_NUMBER}"
+      git fetch "https://github.com/${BASE_REPO}.git" "+refs/pull/${PR_NUMBER}/head:${PR_FETCH_REF}" 2>/dev/null
+      REMOTE_HEAD="$(git rev-parse "$PR_FETCH_REF")"
       LOCAL_HEAD="$(git -C "$EXISTING" rev-parse HEAD)"
 
       if [ "$REMOTE_HEAD" = "$LOCAL_HEAD" ]; then
