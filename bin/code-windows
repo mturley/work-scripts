@@ -27,16 +27,7 @@ result=$(osascript -e 'tell application "System Events" to get name of every win
 }
 windows="$result"
 
-# Build display lines with workspace first: "workspace — tab title"
-# Keep original names for matching back after selection.
-originals=$(echo "$windows" | tr ',' '\n' | sed 's/^ //')
-display=$(echo "$originals" | sed 's/^\(.*\) — \(.*\)$/\2 — \1/')
-
-selected_display=$(echo "$display" | fzf --prompt="VS Code window> ") || exit 0
-
-# Map back to original window name
-line_num=$(echo "$display" | grep -nxF "$selected_display" | head -1 | cut -d: -f1)
-selected=$(echo "$originals" | sed -n "${line_num}p")
+selected=$(echo "$windows" | tr ',' '\n' | sed 's/^ //' | fzf --prompt="VS Code window> ") || exit 0
 
 osascript -e "tell application \"System Events\"
   set frontmost of (first process whose name is \"Code\") to true
