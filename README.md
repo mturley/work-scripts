@@ -5,6 +5,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`worktree`](docs/worktree.md) — Create and manage git worktrees for PRs and branches
 - [`gh-safe`](docs/gh-safe.md) — AI agent guardrail for the GitHub CLI
 - [`worklog`](docs/worklog.md) (or `wlog`) — Append timestamped activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes)
+- [`code-windows`](docs/code-windows.md) (or `cw`) — Fuzzy-find and focus an open VS Code window
 - [`iterm-new`](docs/iterm-new.md) — Open a new iTerm2 tab or split pane and run a command
 
 ## Setup
@@ -61,6 +62,18 @@ worklog jira seen RHOAIENG-12345         # log viewing a Jira issue
 ```
 
 Requires the [Obsidian CLI](https://obsidian.md/) and a `.env` file for Jira integration (see [docs](docs/worklog.md#setup)).
+
+## Commands for VS Code
+
+### [`code-windows`](docs/code-windows.md) — Window Switcher
+
+Fuzzy-find and focus an open [VS Code](https://code.visualstudio.com/) window. Also available as `cw`.
+
+```bash
+cw    # pick a VS Code window to focus
+```
+
+Requires macOS, [fzf](https://github.com/junegunn/fzf), and accessibility permissions for your terminal app.
 
 ## Commands for iTerm2
 
