@@ -54,7 +54,7 @@ After creating a new worktree, the command prompts you to choose how much to sha
 
 For each category you choose, you can select which specific files to include. Selections are cached separately per repo (in `/tmp`) and offered for reuse next time.
 
-**Copy strategy** — on macOS (APFS), all targets are cloned using `cp -Rc` for copy-on-write clones. These are nearly instant and produce fully independent copies (writes don't affect the original). On other platforms, all targets are copied via `rsync -a` (full independent copies, but slower).
+**Copy strategy** — on macOS (APFS), all targets are cloned using `cp -Rc` for copy-on-write clones (writes don't affect the original). On other platforms, all targets are copied via `rsync -a`.
 
 ### Opening Editors
 

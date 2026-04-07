@@ -12,8 +12,7 @@
 # --clone: clones the specified relative paths from source to dest.
 #
 # Copy strategy (detected once at runtime):
-#   macOS (APFS) — uses `cp -Rc` for copy-on-write clones. Nearly instant,
-#     and each clone is fully independent (writes don't affect the original).
+#   macOS (APFS) — uses `cp -Rc` for copy-on-write clones.
 #   Other platforms — uses `rsync -a` for full copies. Slower, but each copy
 #     is fully independent.
 #
@@ -102,9 +101,19 @@ case "$MODE" in
       fi
 
       if $IS_MAC; then
-        # macOS APFS: copy-on-write clone — nearly instant, fully independent
+        # macOS APFS: copy-on-write clone
         printf "  Cloning ${rel}... "
-        if cp -Rc "$src" "$dest" 2>/dev/null; then
+        cp -Rc "$src" "$dest" 2>/dev/null &
+        BG_PID=$!
+        SPIN_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+        SPIN_I=0
+        while kill -0 "$BG_PID" 2>/dev/null; do
+          printf "\b${SPIN_CHARS:$SPIN_I:1}"
+          SPIN_I=$(( (SPIN_I + 1) % ${#SPIN_CHARS} ))
+          sleep 0.1
+        done
+        printf "\b"
+        if wait "$BG_PID"; then
           echo "done"
           DONE=$((DONE + 1))
         else

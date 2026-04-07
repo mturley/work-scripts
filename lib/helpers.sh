@@ -116,35 +116,18 @@ spin_wait() {
   return $?
 }
 
-# force_rm <path> - Remove a directory, prompting to fix permissions if needed
+# force_rm <path> - Remove a directory, fixing permissions first to avoid errors
 force_rm() {
   local target="$1"
   echo "Removing $(basename "$target")..."
+  chmod -R u+rwx "$target" 2>/dev/null || true
   local exit_code=0
   rm -rf "$target" &
   spin_wait $! "deleting files..." || exit_code=$?
   if [ $exit_code -eq 0 ] && [ ! -d "$target" ]; then
     return 0
   fi
-  # Check if the failure was permission-related
-  local err
-  err="$(rm -rf "$target" 2>&1)" || true
-  if echo "$err" | grep -qi "Permission denied\|Operation not permitted"; then
-    echo "" >&2
-    echo "Permission error removing: $target" >&2
-    echo "This can happen with downloaded binaries (e.g. k8s test fixtures)." >&2
-    if prompt_yn "Run chmod -R u+rwx and retry?"; then
-      echo "Fixing permissions..."
-      chmod -R u+rwx "$target"
-      echo "Retrying removal..."
-      force_rm "$target"
-      return $?
-    else
-      echo "Skipping removal." >&2
-      return 1
-    fi
-  fi
-  # Non-permission error
+  # Removal failed
   echo "ERROR: Failed to remove $target" >&2
   echo "  $err" >&2
   return 1
@@ -200,7 +183,7 @@ clone_worktree_files() {
   if $is_mac; then
     echo "Do you want to clone some gitignored files from the root repo"
     echo "to simplify running the dev environment in the worktree?"
-    echo "${COLOR_DIM}(Uses APFS copy-on-write clones — nearly instant, fully independent copies.)${COLOR_RESET}"
+    echo "${COLOR_DIM}(Uses APFS copy-on-write clones.)${COLOR_RESET}"
     echo ""
     echo "  ${COLOR_BLUE}1)${COLOR_RESET} Clone configuration (top-level dotfiles), dependencies and build artifacts"
     echo "  ${COLOR_BLUE}2)${COLOR_RESET} Clone top-level configuration (dotfiles) only (you'll need to install/build yourself)"
@@ -262,7 +245,7 @@ clone_worktree_files() {
       while IFS= read -r line; do dir_options+=("$line"); done <<< "$dir_targets"
 
       local dir_selected=()
-      dir_selected=("$(clone_worktree_select_cached "$cache_dirs" "$repo_name" "dependencies/assets" "Which dependencies and build artifacts to clone?" "${dir_options[@]}")")
+      dir_selected=("$(clone_worktree_select_cached "$cache_dirs" "$repo_name" "dependencies/artifacts" "Which dependencies and build artifacts to clone?" "${dir_options[@]}")")
       local dir_final=()
       if [ -n "${dir_selected[0]}" ]; then
         while IFS= read -r line; do [ -n "$line" ] && dir_final+=("$line"); done <<< "${dir_selected[0]}"
