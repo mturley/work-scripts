@@ -83,6 +83,10 @@ Examples:
 ${PR_EXAMPLES}
 ${JIRA_EXAMPLES}
 
+Options:
+
+  --detail "text"      Add a detail note non-interactively (skips prompt)
+
 Other commands:
 
   worklog              free-form log entry (prompts for text)
@@ -390,10 +394,11 @@ with open(filepath, 'r') as f:
 
 lines = content.split('\n')
 
-# Find the table header
+# Find the table header (tolerate Obsidian padding, e.g. '| Time     |')
+import re
 table_start = -1
 for i, line in enumerate(lines):
-    if line.startswith('| Time |'):
+    if re.match(r'\|\s*Time\s*\|', line):
         table_start = i
         break
 
@@ -980,6 +985,11 @@ handle_test() {
 # ---------------------------------------------------------------------------
 
 prompt_and_append() {
+  # Pre-populate detail if provided via --detail
+  if [ -n "$DETAIL" ]; then
+    ROW_SUB_DETAILS+=("Notes: ${DETAIL}")
+  fi
+
   # Compose and display the entry
   local row
   row="$(compose_row)"
@@ -988,15 +998,17 @@ prompt_and_append() {
   echo "$row"
   echo ""
 
-  # Prompt for additional notes
-  printf "${COLOR_BLUE}Add any additional notes? (press Enter to skip):${COLOR_RESET} "
-  read -r notes || true
-  if [ -n "$notes" ]; then
-    ROW_SUB_DETAILS+=("Notes: ${notes}")
-    row="$(compose_row)"
-    echo ""
-    echo "${COLOR_CYAN}Updated entry:${COLOR_RESET}"
-    echo "$row"
+  # Prompt for additional notes (skip if --detail was provided)
+  if [ -z "$DETAIL" ]; then
+    printf "${COLOR_BLUE}Add any additional notes? (press Enter to skip):${COLOR_RESET} "
+    read -r notes || true
+    if [ -n "$notes" ]; then
+      ROW_SUB_DETAILS+=("Notes: ${notes}")
+      row="$(compose_row)"
+      echo ""
+      echo "${COLOR_CYAN}Updated entry:${COLOR_RESET}"
+      echo "$row"
+    fi
   fi
 
   # Insert into daily note and open it
@@ -1011,6 +1023,31 @@ prompt_and_append() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Parse --detail flag (can appear anywhere in args)
+# ---------------------------------------------------------------------------
+
+DETAIL=""
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --detail)
+      if [ -n "${2:-}" ]; then
+        DETAIL="$2"
+        shift 2
+      else
+        echo "ERROR: --detail requires a value" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 # Handle help
 case "${1:-}" in
