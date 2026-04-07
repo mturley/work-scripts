@@ -93,8 +93,14 @@ set_iterm_title "pr-ci #${PR_DISPLAY}"
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 get_checks() {
-  # gh pr checks exits non-zero when any check has failed; ignore that
-  gh pr checks "$PR" 2>&1 || true
+  # Use JSON output to deduplicate: when a check has multiple runs, keep
+  # only the latest (by startedAt).  The "bucket" field gives the same
+  # pass/fail/pending/skipping values as the plain-text output.
+  gh pr checks "$PR" --json name,bucket,startedAt,link \
+    --jq '
+      group_by(.name) | map(sort_by(.startedAt) | last) |
+      map(.name + "\t" + .bucket + "\t\t" + (.link // "")) | .[]
+    ' 2>&1 || true
 }
 
 count_status() {
