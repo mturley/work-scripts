@@ -78,6 +78,7 @@ case "$PR" in
 esac
 
 PR_TITLE=$(gh pr view "$PR" --json title --jq '.title' 2>/dev/null || echo "")
+PR_URL=$(gh pr view "$PR" --json url --jq '.url' 2>/dev/null || echo "")
 
 set_iterm_title "pr-ci #${PR_DISPLAY}"
 
@@ -155,6 +156,10 @@ echo ""
 echo "CI Status"
 echo "─────────────────────────────────"
 summarize "$output"
+if [[ -n "$PR_URL" ]]; then
+  echo ""
+  echo "$PR_URL"
+fi
 
 if ! $WATCH; then
   exit 0
@@ -181,7 +186,15 @@ while true; do
   if is_done "$output"; then
     echo "[$timestamp] All checks complete!"
     echo ""
+    if [[ -n "$PR_TITLE" ]]; then
+      echo "PR #${PR_DISPLAY}: ${PR_TITLE}"
+      echo ""
+    fi
     summarize "$output"
+    if [[ -n "$PR_URL" ]]; then
+      echo ""
+      echo "$PR_URL"
+    fi
 
     # Build alert message
     passed=$(count_status "$output" "pass")
