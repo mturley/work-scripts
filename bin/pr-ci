@@ -3,9 +3,10 @@
 # pr-ci — check or watch CI status for a GitHub PR.
 #
 # Usage:
-#   pr-ci <pr> [SEC]     Watch CI, polling every SEC seconds (default 120),
-#                        and alert when all checks are done
-#   pr-ci <pr> --once    Show current CI status summary and exit
+#   pr-ci <pr> [SEC]              Watch CI, polling every SEC seconds (default
+#                                 120), alert on first failure or when done
+#   pr-ci <pr> --continue-on-fail  Wait for all checks even if some fail
+#   pr-ci <pr> --once              Show current CI status summary and exit
 #
 # <pr> can be a PR number, URL, or branch name — anything `gh pr` accepts.
 #
@@ -18,16 +19,18 @@ TAB=$'\t'
 
 usage() {
   cat <<'EOF'
-Usage: pr-ci <pr> [SECONDS] [--once]
+Usage: pr-ci <pr> [SECONDS] [--once] [--continue-on-fail]
 
-  <pr>              PR number, URL, or branch name
-  [SEC]             Poll interval in seconds (default 120)
-  --once            Show current status and exit (no watching)
+  <pr>                PR number, URL, or branch name
+  [SEC]               Poll interval in seconds (default 120)
+  --once              Show current status and exit (no watching)
+  --continue-on-fail  Wait for all checks even if some fail
 
 Examples:
-  pr-ci 6999                Watch CI, polling every 120s
-  pr-ci 6999 60             Watch CI, polling every 60s
-  pr-ci 6999 --once         Show status once and exit
+  pr-ci 6999                       Watch CI, polling every 120s
+  pr-ci 6999 60                    Watch CI, polling every 60s
+  pr-ci 6999 --once                Show status once and exit
+  pr-ci 6999 --continue-on-fail    Wait for all checks to finish
   pr-ci https://github.com/org/repo/pull/6999
 EOF
   exit 1
@@ -40,11 +43,16 @@ shift
 
 WATCH=true
 INTERVAL=120
+FAIL_FAST=true
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --once)
       WATCH=false
+      shift
+      ;;
+    --continue-on-fail)
+      FAIL_FAST=false
       shift
       ;;
     -h|--help)
@@ -138,6 +146,13 @@ is_done() {
   [[ "$pending" -eq 0 ]] || only_pending_is_tide "$output"
 }
 
+has_failures() {
+  local output="$1"
+  local failed
+  failed=$(count_status "$output" "fail")
+  [[ "$failed" -gt 0 ]]
+}
+
 alert() {
   local title="$1"
   local body="$2"
@@ -167,9 +182,48 @@ fi
 
 # ── Main: watch mode ────────────────────────────────────────────────────
 
-if is_done "$output"; then
+report_and_alert() {
+  local label="$1"
+  local output="$2"
+
   echo ""
-  echo "All checks already complete."
+  if [[ -n "$PR_TITLE" ]]; then
+    echo "PR #${PR_DISPLAY}: ${PR_TITLE}"
+    echo ""
+  fi
+  summarize "$output"
+  if [[ -n "$PR_URL" ]]; then
+    echo ""
+    echo "$PR_URL"
+  fi
+
+  # Build alert message
+  local passed failed skipping
+  passed=$(count_status "$output" "pass")
+  failed=$(count_status "$output" "fail")
+  skipping=$(count_status "$output" "skipping")
+  if [[ "$failed" -gt 0 ]]; then
+    failed_names=$(echo "$output" | grep "${TAB}fail${TAB}" | awk -F'\t' '{print $1}' | paste -sd', ' -)
+    alert "PR #${PR_DISPLAY} — ${label}" "${PR_TITLE:+${PR_TITLE} — }Passed: $passed, Failed: $failed, Skipped: $skipping -- Failed: $failed_names"
+  else
+    alert "PR #${PR_DISPLAY} — ${label}" "${PR_TITLE:+${PR_TITLE} — }All $passed checks passed! ($skipping skipped)"
+  fi
+}
+
+should_stop() {
+  local output="$1"
+  is_done "$output" && return 0
+  $FAIL_FAST && has_failures "$output" && return 0
+  return 1
+}
+
+if should_stop "$output"; then
+  echo ""
+  if is_done "$output"; then
+    echo "All checks already complete."
+  else
+    echo "Failure detected."
+  fi
   exit 0
 fi
 
@@ -183,29 +237,13 @@ while true; do
   output=$(get_checks)
   timestamp=$(date '+%H:%M:%S')
 
-  if is_done "$output"; then
-    echo "[$timestamp] All checks complete!"
-    echo ""
-    if [[ -n "$PR_TITLE" ]]; then
-      echo "PR #${PR_DISPLAY}: ${PR_TITLE}"
-      echo ""
-    fi
-    summarize "$output"
-    if [[ -n "$PR_URL" ]]; then
-      echo ""
-      echo "$PR_URL"
-    fi
-
-    # Build alert message
-    passed=$(count_status "$output" "pass")
-    failed=$(count_status "$output" "fail")
-    skipping=$(count_status "$output" "skipping")
-    if [[ "$failed" -gt 0 ]]; then
-      failed_names=$(echo "$output" | grep "${TAB}fail${TAB}" | awk -F'\t' '{print $1}' | paste -sd', ' -)
-      alert "PR #${PR_DISPLAY} — CI Complete" "${PR_TITLE:+${PR_TITLE} — }Passed: $passed, Failed: $failed, Skipped: $skipping -- Failed: $failed_names"
+  if should_stop "$output"; then
+    if is_done "$output"; then
+      echo "[$timestamp] All checks complete!"
     else
-      alert "PR #${PR_DISPLAY} — CI Complete" "${PR_TITLE:+${PR_TITLE} — }All $passed checks passed! ($skipping skipped)"
+      echo "[$timestamp] Failure detected — stopping early."
     fi
+    report_and_alert "CI Complete" "$output"
     exit 0
   fi
 

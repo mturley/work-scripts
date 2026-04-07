@@ -1,6 +1,6 @@
 # pr-ci
 
-Check or watch CI status for a GitHub pull request. Shows the PR title and a summary of passed, failed, and pending checks. By default, watches (polls) until all checks complete and sends a macOS alert. The `tide` check (which requires PR approval) is ignored when it's the only pending check.
+Check or watch CI status for a GitHub pull request. Shows the PR title and a summary of passed, failed, and pending checks. By default, watches (polls) and alerts on first failure or when all checks complete. Use `--continue-on-fail` to wait for all checks even if some fail. The `tide` check (which requires PR approval) is ignored when it's the only pending check.
 
 ## Prerequisites
 
@@ -9,16 +9,17 @@ Check or watch CI status for a GitHub pull request. Shows the PR title and a sum
 ## Usage
 
 ```bash
-pr-ci <pr>           # watch CI, polling every 120s, alert when done
-pr-ci <pr> 60        # watch CI, polling every 60s
-pr-ci <pr> --once    # show current status once and exit
+pr-ci <pr>                      # watch CI, alert on first failure or when done
+pr-ci <pr> 60                   # watch CI, polling every 60s
+pr-ci <pr> --continue-on-fail   # wait for all checks even if some fail
+pr-ci <pr> --once               # show current status once and exit
 ```
 
 `<pr>` can be a PR number, URL, or branch name — anything `gh pr checks` accepts.
 
 ### Watch mode (default)
 
-Polls at a regular interval and shows a macOS alert when all checks are done.
+Polls at a regular interval. Alerts on the first failure and stops (unless `--continue-on-fail` is used), or when all checks complete.
 
 ```bash
 pr-ci 6999           # poll every 2 minutes
@@ -81,6 +82,7 @@ When running inside [iTerm2](https://iterm2.com/), `pr-ci` sets the session (tab
 |------|-------------|
 | `[SECONDS]` | Poll interval in seconds (default 120) |
 | `--once` | Show status once and exit (no watching) |
+| `--continue-on-fail` | Wait for all checks even if some fail |
 | `--help`, `-h` | Show usage |
 
 ## Exit codes
