@@ -22,7 +22,8 @@ worktree 1234                        # create or reopen a worktree for PR #1234
 worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
 worktree ~/git/.worktrees/repo--name # open an existing worktree by path
-worktree 1234 5678 my-branch         # open multiple worktrees in parallel
+worktree 1234 5678 my-branch         # open multiple worktrees in split panes
+worktree --tabs 1234 5678            # open multiple worktrees in separate tabs
 ```
 
 Based on the arguments, the script detects what you're trying to do, finds or creates the relevant worktree, then drops you into an interactive REPL (see below) to manage it.
@@ -31,7 +32,7 @@ Based on the arguments, the script detects what you're trying to do, finds or cr
 
 When given multiple arguments, each worktree opens in its own pane:
 
-- **iTerm2** — opens each worktree in a new tab (named "worktree PR #1234", etc.)
+- **iTerm2** — opens each worktree in a vertical split pane by default (named "worktree PR #1234", etc.). Use `--tabs` to open in separate tabs instead.
 - **Fallback** — uses [mprocs](https://github.com/pvolok/mprocs) with a shell pane for running further commands and one pane per worktree. Running `worktree` from the shell pane dynamically adds new panes to the session.
 
 Install mprocs if not using iTerm: `brew install mprocs`

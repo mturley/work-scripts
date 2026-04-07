@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # worktree - Manage git worktrees for PRs and branches
 #
-# Usage: worktree [pr-number|pr-url|branch-name|worktree-path] ...
+# Usage: worktree [--tabs|--split] [pr-number|pr-url|branch-name|worktree-path] ...
 #
 # With no arguments, lists existing worktrees and prompts to select one.
 # With one argument, opens or creates a worktree for the given PR/branch.
 # With multiple arguments, opens each in a separate terminal pane (requires
-# iTerm2 or tmux).
+# iTerm2 or mprocs).
+#
+# Options:
+#   --split  Open multiple worktrees in vertical split panes (default)
+#   --tabs   Open multiple worktrees in separate tabs
 
 # Detect if the current directory has been deleted (e.g. after worktree cleanup)
 if ! pwd &>/dev/null; then
@@ -20,6 +24,16 @@ set -euo pipefail
 SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
 # shellcheck source=../lib/helpers.sh
 source "$SCRIPTS_DIR/helpers.sh"
+
+# --- Parse flags ---
+ITERM_MODE="split-v"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tabs) ITERM_MODE="tab"; shift ;;
+    --split) ITERM_MODE="split-v"; shift ;;
+    *) break ;;
+  esac
+done
 
 CYAN="$(tput setaf 6 2>/dev/null || true)"
 RESET="$(tput sgr0 2>/dev/null || true)"
@@ -58,7 +72,7 @@ if [ $# -gt 1 ]; then
     # iTerm: open each worktree in a new tab
     for arg in "$@"; do
       label="$(pane_label "$arg")"
-      iterm-new tab -n "$label" "$SELF" "$arg"
+      iterm-new "$ITERM_MODE" -n "$label" "$SELF" "$arg"
     done
     exit 0
   fi
