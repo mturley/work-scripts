@@ -59,6 +59,10 @@ Failed checks:
 
 When checks complete, a macOS alert pops up with the pass/fail summary.
 
+### iTerm session title
+
+When running inside [iTerm2](https://iterm2.com/), `pr-ci` sets the session (tab/window) title to `pr-ci #<number>` so you can identify which PR a tab is watching. The title is refreshed each poll cycle in watch mode.
+
 ## Options
 
 | Flag | Description |

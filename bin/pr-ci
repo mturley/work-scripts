@@ -61,6 +61,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# ── iTerm title ────────────────────────────────────────────────────────
+
+set_iterm_title() {
+  if [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
+    # Set session title (tab/window name) using iTerm escape sequence
+    printf '\033]1;%s\007' "$1"
+  fi
+}
+
+# Extract PR number for display (strip URL prefix if present)
+PR_DISPLAY="$PR"
+case "$PR" in
+  *://*)  PR_DISPLAY="${PR##*/}" ;;
+esac
+
+set_iterm_title "pr-ci #${PR_DISPLAY}"
+
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 get_checks() {
@@ -134,6 +151,7 @@ echo ""
 
 while true; do
   sleep "$INTERVAL"
+  set_iterm_title "pr-ci #${PR_DISPLAY}"
   output=$(get_checks)
   timestamp=$(date '+%H:%M:%S')
 
