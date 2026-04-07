@@ -94,12 +94,24 @@ case "$MODE" in
       # Copy node_modules instead of symlinking to preserve internal
       # relative symlinks (e.g. npm workspace links like @scope/pkg → ../../src).
       if [[ "$(basename "$rel")" == "node_modules" ]]; then
-        echo "  Copying ${rel}..."
-        if rsync -a "$src/" "$dest/" 2>/dev/null; then
+        printf "  Copying ${rel}... "
+        # Run rsync in background with a spinner
+        rsync -a "$src/" "$dest/" 2>/dev/null &
+        RSYNC_PID=$!
+        SPIN_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+        SPIN_I=0
+        while kill -0 "$RSYNC_PID" 2>/dev/null; do
+          printf "\b${SPIN_CHARS:$SPIN_I:1}"
+          SPIN_I=$(( (SPIN_I + 1) % ${#SPIN_CHARS} ))
+          sleep 0.1
+        done
+        printf "\b"
+        if wait "$RSYNC_PID"; then
+          echo "done"
           LINKED=$((LINKED + 1))
           LINKED_PATHS+=("$rel")
         else
-          echo "  ERROR: $rel" >&2
+          echo "ERROR" >&2
           ERRORS=$((ERRORS + 1))
         fi
         continue
@@ -148,35 +160,20 @@ case "$MODE" in
         done
 
         if [ ${#NEW_EXCLUDES[@]} -gt 0 ]; then
-          echo ""
-          echo "${COLOR_RED}To prevent linked/copied files from showing as untracked, these"
-          echo "entries need to be added to .git/info/exclude (shared with main clone):${COLOR_RESET}"
+          # Use section markers so cleanup can identify our entries
+          if ! grep -qxF '# begin worktree-link' "$EXCLUDE_FILE" 2>/dev/null; then
+            echo '# begin worktree-link' >> "$EXCLUDE_FILE"
+          fi
           for entry in "${NEW_EXCLUDES[@]}"; do
-            echo "  $entry"
+            echo "$entry" >> "$EXCLUDE_FILE"
           done
-          printf "Add these entries? [y/n]: "
-          read -r yn
-          case "$yn" in
-            [Yy]*)
-              # Use section markers so cleanup can identify our entries
-              if ! grep -qxF '# begin worktree-link' "$EXCLUDE_FILE" 2>/dev/null; then
-                echo '# begin worktree-link' >> "$EXCLUDE_FILE"
-              fi
-              for entry in "${NEW_EXCLUDES[@]}"; do
-                echo "$entry" >> "$EXCLUDE_FILE"
-              done
-              # Remove old end marker and re-add at the end
-              if grep -qxF '# end worktree-link' "$EXCLUDE_FILE" 2>/dev/null; then
-                grep -vxF '# end worktree-link' "$EXCLUDE_FILE" > "${EXCLUDE_FILE}.tmp"
-                mv "${EXCLUDE_FILE}.tmp" "$EXCLUDE_FILE"
-              fi
-              echo '# end worktree-link' >> "$EXCLUDE_FILE"
-              echo "Added ${#NEW_EXCLUDES[@]} entries to .git/info/exclude."
-              ;;
-            *)
-              echo "Skipped. Linked/copied files may show as untracked."
-              ;;
-          esac
+          # Remove old end marker and re-add at the end
+          if grep -qxF '# end worktree-link' "$EXCLUDE_FILE" 2>/dev/null; then
+            grep -vxF '# end worktree-link' "$EXCLUDE_FILE" > "${EXCLUDE_FILE}.tmp"
+            mv "${EXCLUDE_FILE}.tmp" "$EXCLUDE_FILE"
+          fi
+          echo '# end worktree-link' >> "$EXCLUDE_FILE"
+          echo "Added ${#NEW_EXCLUDES[@]} entries to .git/info/exclude."
         fi
       fi
     fi

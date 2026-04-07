@@ -10,6 +10,7 @@ COLOR_CYAN="$(tput setaf 6 2>/dev/null || true)"
 COLOR_GREEN="$(tput setaf 2 2>/dev/null || true)"
 COLOR_RED="$(tput setaf 1 2>/dev/null || true)"
 COLOR_YELLOW="$(tput setaf 3 2>/dev/null || true)"
+COLOR_DIM="$(tput dim 2>/dev/null || true)"
 COLOR_RESET="$(tput sgr0 2>/dev/null || true)"
 
 # short_path <path> - Replace $HOME prefix with ~
@@ -222,39 +223,96 @@ cleanup_worktree_excludes() {
 }
 
 # link_worktree_files <scripts-dir> <repo-root> <worktree-path>
-# Finds linkable files, prompts user to select (with caching), and links/copies.
-# node_modules directories are copied (rsync); everything else is symlinked.
+# Prompts the user to link/copy gitignored files from the main clone into a
+# new worktree. node_modules are copied (rsync); everything else is symlinked.
+# Dotfile and dir selections are cached separately in /tmp.
 # Returns 0 if files were linked/copied, 1 otherwise.
 link_worktree_files() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
   local repo_name
   repo_name="$(basename "$repo_root")"
-  local cache_file="/tmp/worktree-link-selection-${repo_name}"
+  local cache_dotfiles="/tmp/worktree-link-dotfiles-${repo_name}"
+  local cache_dirs="/tmp/worktree-link-dirs-${repo_name}"
 
-  echo "Checking for linkable files (node_modules, build outputs, config)..."
-  local dir_targets dotfile_targets
-  dir_targets="$("$scripts_dir/link-worktree-files.sh" --list-dirs "$repo_root")"
+  # --- Initial prompt: what level of linking? ---
+  echo ""
+  echo "Do you want to link/copy some gitignored files from the root repo"
+  echo "to simplify running the dev environment in the worktree?"
+  echo ""
+  echo "  ${COLOR_BLUE}1)${COLOR_RESET} Link/copy configuration (top-level dotfiles), dependencies and build artifacts"
+  echo "     (only do this if you don't need different dependency versions in the worktree branch)"
+  echo "     ${COLOR_DIM}Note: node_modules are copied instead of symlinked because they can contain relative references.${COLOR_RESET}"
+  echo "  ${COLOR_BLUE}2)${COLOR_RESET} Link top-level configuration (dotfiles) only (you'll need to install/build yourself)"
+  echo "  ${COLOR_BLUE}3)${COLOR_RESET} Don't link/copy anything"
+  echo ""
+  local mode=""
+  while true; do
+    printf "Select [${COLOR_BLUE}1${COLOR_RESET}/${COLOR_BLUE}2${COLOR_RESET}/${COLOR_BLUE}3${COLOR_RESET}]: "
+    read -r input
+    case "$input" in
+      1) mode="all"; break ;;
+      2) mode="config"; break ;;
+      3) return 1 ;;
+      *) printf "Please answer ${COLOR_BLUE}1${COLOR_RESET}, ${COLOR_BLUE}2${COLOR_RESET}, or ${COLOR_BLUE}3${COLOR_RESET}.\n" ;;
+    esac
+  done
+
+  echo ""
+  echo "Checking for linkable/copyable gitignored files..."
+
+  local link_paths=()
+
+  # --- Dotfiles (both modes) ---
+  local dotfile_targets
   dotfile_targets="$("$scripts_dir/link-worktree-files.sh" --list-dotfiles "$repo_root")"
-
-  local options=()
-  if [ -n "$dir_targets" ]; then
-    while IFS= read -r line; do options+=("$line"); done <<< "$dir_targets"
-  fi
   if [ -n "$dotfile_targets" ]; then
-    options+=("Top-level dotfiles")
+    local dotfile_options=()
+    while IFS= read -r line; do dotfile_options+=("$line"); done <<< "$dotfile_targets"
+
+    local dotfile_selected=()
+    dotfile_selected=("$(link_worktree_select_cached "$cache_dotfiles" "$repo_name" "dotfiles" "Which dotfiles to link?" "${dotfile_options[@]}")")
+    # Re-split output into array (prompt_multi_select outputs one per line)
+    local dotfile_final=()
+    if [ -n "${dotfile_selected[0]}" ]; then
+      while IFS= read -r line; do [ -n "$line" ] && dotfile_final+=("$line"); done <<< "${dotfile_selected[0]}"
+    fi
+    for df in "${dotfile_final[@]}"; do link_paths+=("$df"); done
   fi
 
-  if [ ${#options[@]} -eq 0 ]; then
+  # --- Dirs (only in "all" mode) ---
+  if [ "$mode" = "all" ]; then
+    local dir_targets
+    dir_targets="$("$scripts_dir/link-worktree-files.sh" --list-dirs "$repo_root")"
+    if [ -n "$dir_targets" ]; then
+      local dir_options=()
+      while IFS= read -r line; do dir_options+=("$line"); done <<< "$dir_targets"
+
+      local dir_selected=()
+      dir_selected=("$(link_worktree_select_cached "$cache_dirs" "$repo_name" "dependencies/assets" "Which dependencies and build artifacts to link/copy?" "${dir_options[@]}")")
+      local dir_final=()
+      if [ -n "${dir_selected[0]}" ]; then
+        while IFS= read -r line; do [ -n "$line" ] && dir_final+=("$line"); done <<< "${dir_selected[0]}"
+      fi
+      for d in "${dir_final[@]}"; do link_paths+=("$d"); done
+    fi
+  fi
+
+  if [ ${#link_paths[@]} -eq 0 ]; then
     return 1
   fi
 
-  local selected=()
+  "$scripts_dir/link-worktree-files.sh" --link "$repo_root" "$wt_path" "${link_paths[@]}"
+  return 0
+}
 
-  echo "" >&2
-  echo "${COLOR_RED}NOTE: Most files are symlinked from the main clone; node_modules" >&2
-  echo "directories are copied. Changes to symlinked files (e.g. build outputs)" >&2
-  echo "will affect both. Select \"none\" and install separately if you need" >&2
-  echo "different versions.${COLOR_RESET}" >&2
+# link_worktree_select_cached <cache-file> <repo-name> <label> <prompt> <options...>
+# Checks for a cached selection, offers to reuse it, or prompts with
+# prompt_multi_select. Saves the new selection to the cache file.
+# Prints selected items to stdout (one per line).
+link_worktree_select_cached() {
+  local cache_file="$1" repo_name="$2" label="$3" prompt_msg="$4"
+  shift 4
+  local options=("$@")
 
   # Check for cached selection
   if [ -f "$cache_file" ]; then
@@ -271,43 +329,23 @@ link_worktree_files() {
     done <<< "$cached"
 
     if $all_valid && [ -n "$cached" ]; then
-      echo ""
-      echo "Previous selection for ${repo_name}:"
-      while IFS= read -r item; do echo "  - $item"; done <<< "$cached"
+      echo "" >&2
+      echo "Previous ${label} selection for ${repo_name}:" >&2
+      while IFS= read -r item; do echo "  - $item" >&2; done <<< "$cached"
       if prompt_yn "Use this selection?"; then
-        while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done <<< "$cached"
+        echo "$cached"
+        return
       fi
     fi
   fi
 
-  # If no cached selection was used, prompt
-  if [ ${#selected[@]} -eq 0 ]; then
-    while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done < <(prompt_multi_select "Which files to link/copy into the new worktree?" "${options[@]}")
-    # Save selection
-    if [ ${#selected[@]} -gt 0 ]; then
-      printf '%s\n' "${selected[@]}" > "$cache_file"
-    fi
+  # Prompt for new selection
+  local selected
+  selected="$(prompt_multi_select "$prompt_msg" "${options[@]}")"
+  if [ -n "$selected" ]; then
+    echo "$selected" > "$cache_file"
+    echo "$selected"
   fi
-
-  if [ ${#selected[@]} -eq 0 ]; then
-    return 1
-  fi
-
-  # Expand "Top-level dotfiles" into individual paths
-  local link_paths=()
-  for item in "${selected[@]}"; do
-    if [ "$item" = "Top-level dotfiles" ]; then
-      while IFS= read -r df; do link_paths+=("$df"); done <<< "$dotfile_targets"
-    else
-      link_paths+=("$item")
-    fi
-  done
-
-  if [ ${#link_paths[@]} -gt 0 ]; then
-    "$scripts_dir/link-worktree-files.sh" --link "$repo_root" "$wt_path" "${link_paths[@]}"
-    return 0
-  fi
-  return 1
 }
 
 # warn_unmerged_commits <branch-name>
