@@ -1,6 +1,6 @@
 # pr-ci
 
-Check or watch CI status for a GitHub pull request. Shows a summary of passed, failed, and pending checks. In watch mode, polls until all checks complete and sends a macOS alert.
+Check or watch CI status for a GitHub pull request. Shows the PR title and a summary of passed, failed, and pending checks. By default, watches (polls) until all checks complete and sends a macOS alert. The `tide` check (which requires PR approval) is ignored when it's the only pending check.
 
 ## Prerequisites
 
@@ -9,17 +9,56 @@ Check or watch CI status for a GitHub pull request. Shows a summary of passed, f
 ## Usage
 
 ```bash
-pr-ci <pr>                 # one-shot status summary
-pr-ci <pr> --watch [SEC]   # poll every SEC seconds (default 120), alert when done
+pr-ci <pr>           # watch CI, polling every 120s, alert when done
+pr-ci <pr> 60        # watch CI, polling every 60s
+pr-ci <pr> --once    # show current status once and exit
 ```
 
 `<pr>` can be a PR number, URL, or branch name — anything `gh pr checks` accepts.
 
+### Watch mode (default)
+
+Polls at a regular interval and shows a macOS alert when all checks are done.
+
+```bash
+pr-ci 6999           # poll every 2 minutes
+pr-ci 6999 60        # poll every 60 seconds
+```
+
+Output while watching:
+
+```
+PR #6999: Fix the widget layout
+
+CI Status
+─────────────────────────────────
+Passed: 36  Failed: 0  Pending: 3  Skipped: 0
+
+Pending checks:
+  ⏳ Cypress-Mock-Tests (projects/tabs, ...)
+  ⏳ Red Hat Konflux
+  ⏳ tide
+
+Watching every 120s… (Ctrl-C to stop)
+
+[14:32:15] Pending: 3  Passed: 36  Failed: 0
+[14:34:16] Pending: 1  Passed: 38  Failed: 0
+[14:36:17] All checks complete!
+
+Passed: 39  Failed: 0  Pending: 1  Skipped: 2
+
+Pending: tide (requires approval — ignored)
+```
+
+When checks complete, a macOS alert pops up with the pass/fail summary.
+
 ### One-shot mode
 
 ```bash
-$ pr-ci 6999
-PR 6999 — CI Status
+$ pr-ci 6999 --once
+PR #6999: Fix the widget layout
+
+CI Status
 ─────────────────────────────────
 Passed: 36  Failed: 1  Pending: 3  Skipped: 0
 
@@ -32,33 +71,6 @@ Pending checks:
   ⏳ tide
 ```
 
-### Watch mode
-
-Polls at a regular interval and shows a macOS alert when all checks are done.
-
-```bash
-pr-ci 6999 --watch         # poll every 2 minutes
-pr-ci 6999 --watch 60      # poll every 60 seconds
-pr-ci 6999 -w 30           # short flag
-```
-
-Output while watching:
-
-```
-Watching every 120s… (Ctrl-C to stop)
-
-[14:32:15] Pending: 3  Passed: 36  Failed: 0
-[14:34:16] Pending: 1  Passed: 38  Failed: 0
-[14:36:17] All checks complete!
-
-Passed: 39  Failed: 1  Pending: 0  Skipped: 2
-
-Failed checks:
-  ✗ Cypress-Mock-Tests (distributedWorkloads, ...)
-```
-
-When checks complete, a macOS alert pops up with the pass/fail summary.
-
 ### iTerm session title
 
 When running inside [iTerm2](https://iterm2.com/), `pr-ci` sets the session (tab/window) title to `pr-ci #<number>` so you can identify which PR a tab is watching. The title is refreshed each poll cycle in watch mode.
@@ -67,8 +79,8 @@ When running inside [iTerm2](https://iterm2.com/), `pr-ci` sets the session (tab
 
 | Flag | Description |
 |------|-------------|
-| `--watch`, `-w` | Enable watch mode (poll until done) |
-| `[SECONDS]` | Poll interval in seconds (default 120, follows `--watch`) |
+| `[SECONDS]` | Poll interval in seconds (default 120) |
+| `--once` | Show status once and exit (no watching) |
 | `--help`, `-h` | Show usage |
 
 ## Exit codes

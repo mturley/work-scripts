@@ -44,9 +44,9 @@ worktree [my-branch...origin/my-branch]>
 Check or watch CI status for a GitHub PR. Shows a summary of passed/failed/pending checks; watch mode polls and sends a macOS alert when done.
 
 ```bash
-pr-ci 6999                 # one-shot status summary
-pr-ci 6999 --watch         # poll every 2 minutes, alert when done
-pr-ci 6999 --watch 60      # poll every 60 seconds
+pr-ci 6999                 # watch CI, poll every 2 minutes, alert when done
+pr-ci 6999 60              # watch CI, poll every 60 seconds
+pr-ci 6999 --once          # one-shot status summary
 ```
 
 ### [`gh-safe`](docs/gh-safe.md) — AI Agent Guardrail for GitHub CLI

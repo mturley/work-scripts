@@ -3,9 +3,9 @@
 # pr-ci — check or watch CI status for a GitHub PR.
 #
 # Usage:
-#   pr-ci <pr>                 Show current CI status summary
-#   pr-ci <pr> --watch [SEC]   Poll every SEC seconds (default 120) and
-#                              alert when all checks are done
+#   pr-ci <pr> [SEC]     Watch CI, polling every SEC seconds (default 120),
+#                        and alert when all checks are done
+#   pr-ci <pr> --once    Show current CI status summary and exit
 #
 # <pr> can be a PR number, URL, or branch name — anything `gh pr` accepts.
 #
@@ -18,16 +18,16 @@ TAB=$'\t'
 
 usage() {
   cat <<'EOF'
-Usage: pr-ci <pr> [--watch [SECONDS]]
+Usage: pr-ci <pr> [SECONDS] [--once]
 
   <pr>              PR number, URL, or branch name
-  --watch [SEC]     Poll every SEC seconds (default 120) until all checks
-                    complete, then show a macOS alert with the summary.
+  [SEC]             Poll interval in seconds (default 120)
+  --once            Show current status and exit (no watching)
 
 Examples:
-  pr-ci 6999
-  pr-ci 6999 --watch
-  pr-ci 6999 --watch 60
+  pr-ci 6999                Watch CI, polling every 120s
+  pr-ci 6999 60             Watch CI, polling every 60s
+  pr-ci 6999 --once         Show status once and exit
   pr-ci https://github.com/org/repo/pull/6999
 EOF
   exit 1
@@ -38,25 +38,26 @@ EOF
 PR="$1"
 shift
 
-WATCH=false
+WATCH=true
 INTERVAL=120
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --watch|-w)
-      WATCH=true
-      if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
-        INTERVAL="$2"
-        shift
-      fi
+    --once)
+      WATCH=false
       shift
       ;;
     -h|--help)
       usage
       ;;
     *)
-      echo "pr-ci: unknown option: $1" >&2
-      usage
+      if [[ "$1" =~ ^[0-9]+$ ]]; then
+        INTERVAL="$1"
+        shift
+      else
+        echo "pr-ci: unknown option: $1" >&2
+        usage
+      fi
       ;;
   esac
 done
@@ -92,6 +93,15 @@ count_status() {
   echo "$output" | grep -c "${TAB}${status}${TAB}" || true
 }
 
+only_pending_is_tide() {
+  local output="$1"
+  local pending_lines
+  pending_lines=$(echo "$output" | grep "${TAB}pending${TAB}" || true)
+  [[ -n "$pending_lines" ]] && \
+    [[ $(echo "$pending_lines" | wc -l) -eq 1 ]] && \
+    echo "$pending_lines" | grep -q "^tide${TAB}"
+}
+
 summarize() {
   local output="$1"
   local passed failed pending skipping
@@ -109,9 +119,14 @@ summarize() {
   fi
 
   if [[ "$pending" -gt 0 ]]; then
-    echo ""
-    echo "Pending checks:"
-    echo "$output" | grep "${TAB}pending${TAB}" | awk -F'\t' '{print "  ⏳ " $1}' || true
+    if only_pending_is_tide "$output"; then
+      echo ""
+      echo "Pending: tide (requires approval — ignored)"
+    else
+      echo ""
+      echo "Pending checks:"
+      echo "$output" | grep "${TAB}pending${TAB}" | awk -F'\t' '{print "  ⏳ " $1}' || true
+    fi
   fi
 }
 
@@ -119,7 +134,7 @@ is_done() {
   local output="$1"
   local pending
   pending=$(count_status "$output" "pending")
-  [[ "$pending" -eq 0 ]]
+  [[ "$pending" -eq 0 ]] || only_pending_is_tide "$output"
 }
 
 alert() {
