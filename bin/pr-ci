@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+#
+# pr-ci — check or watch CI status for a GitHub PR.
+#
+# Usage:
+#   pr-ci <pr>                 Show current CI status summary
+#   pr-ci <pr> --watch [SEC]   Poll every SEC seconds (default 120) and
+#                              alert when all checks are done
+#
+# <pr> can be a PR number, URL, or branch name — anything `gh pr` accepts.
+#
+
+set -euo pipefail
+
+TAB=$'\t'
+
+# ── Usage ───────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<'EOF'
+Usage: pr-ci <pr> [--watch [SECONDS]]
+
+  <pr>              PR number, URL, or branch name
+  --watch [SEC]     Poll every SEC seconds (default 120) until all checks
+                    complete, then show a macOS alert with the summary.
+
+Examples:
+  pr-ci 6999
+  pr-ci 6999 --watch
+  pr-ci 6999 --watch 60
+  pr-ci https://github.com/org/repo/pull/6999
+EOF
+  exit 1
+}
+
+[[ $# -eq 0 ]] && usage
+
+PR="$1"
+shift
+
+WATCH=false
+INTERVAL=120
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --watch|-w)
+      WATCH=true
+      if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+        INTERVAL="$2"
+        shift
+      fi
+      shift
+      ;;
+    -h|--help)
+      usage
+      ;;
+    *)
+      echo "pr-ci: unknown option: $1" >&2
+      usage
+      ;;
+  esac
+done
+
+# ── Helpers ─────────────────────────────────────────────────────────────
+
+get_checks() {
+  # gh pr checks exits non-zero when any check has failed; ignore that
+  gh pr checks "$PR" 2>&1 || true
+}
+
+count_status() {
+  local output="$1" status="$2"
+  echo "$output" | grep -c "${TAB}${status}${TAB}" || true
+}
+
+summarize() {
+  local output="$1"
+  local passed failed pending skipping
+  passed=$(count_status "$output" "pass")
+  failed=$(count_status "$output" "fail")
+  pending=$(count_status "$output" "pending")
+  skipping=$(count_status "$output" "skipping")
+
+  echo "Passed: $passed  Failed: $failed  Pending: $pending  Skipped: $skipping"
+
+  if [[ "$failed" -gt 0 ]]; then
+    echo ""
+    echo "Failed checks:"
+    echo "$output" | grep "${TAB}fail${TAB}" | awk -F'\t' '{print "  ✗ " $1}' || true
+  fi
+
+  if [[ "$pending" -gt 0 ]]; then
+    echo ""
+    echo "Pending checks:"
+    echo "$output" | grep "${TAB}pending${TAB}" | awk -F'\t' '{print "  ⏳ " $1}' || true
+  fi
+}
+
+is_done() {
+  local output="$1"
+  local pending
+  pending=$(count_status "$output" "pending")
+  [[ "$pending" -eq 0 ]]
+}
+
+alert() {
+  local title="$1"
+  local body="$2"
+  osascript -e "display alert \"$title\" message \"$body\" buttons {\"OK\"} default button \"OK\"" 2>/dev/null || true
+}
+
+# ── Main: one-shot ──────────────────────────────────────────────────────
+
+output=$(get_checks)
+echo "PR $PR — CI Status"
+echo "─────────────────────────────────"
+summarize "$output"
+
+if ! $WATCH; then
+  exit 0
+fi
+
+# ── Main: watch mode ────────────────────────────────────────────────────
+
+if is_done "$output"; then
+  echo ""
+  echo "All checks already complete."
+  exit 0
+fi
+
+echo ""
+echo "Watching every ${INTERVAL}s… (Ctrl-C to stop)"
+echo ""
+
+while true; do
+  sleep "$INTERVAL"
+  output=$(get_checks)
+  timestamp=$(date '+%H:%M:%S')
+
+  if is_done "$output"; then
+    echo "[$timestamp] All checks complete!"
+    echo ""
+    summarize "$output"
+
+    # Build alert message
+    passed=$(count_status "$output" "pass")
+    failed=$(count_status "$output" "fail")
+    skipping=$(count_status "$output" "skipping")
+    if [[ "$failed" -gt 0 ]]; then
+      failed_names=$(echo "$output" | grep "${TAB}fail${TAB}" | awk -F'\t' '{print $1}' | paste -sd', ' -)
+      alert "PR $PR — CI Complete" "Passed: $passed, Failed: $failed, Skipped: $skipping -- Failed: $failed_names"
+    else
+      alert "PR $PR — CI Complete" "All $passed checks passed! ($skipping skipped)"
+    fi
+    exit 0
+  fi
+
+  pending=$(count_status "$output" "pending")
+  passed=$(count_status "$output" "pass")
+  failed=$(count_status "$output" "fail")
+  echo "[$timestamp] Pending: $pending  Passed: $passed  Failed: $failed"
+done
