@@ -3,6 +3,7 @@
 Personal CLI tools for git, GitHub, and daily workflow automation.
 
 - [`worktree`](docs/worktree.md) — Create and manage git worktrees for PRs and branches
+- [`pr-ci`](docs/pr-ci.md) — Check or watch CI status for a GitHub PR
 - [`gh-safe`](docs/gh-safe.md) — AI agent guardrail for the GitHub CLI
 - [`worklog`](docs/worklog.md) (or `wlog`) — Append timestamped activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes)
 - [`iterm-new`](docs/iterm-new.md) — Open a new iTerm2 tab or split pane and run a command
@@ -36,6 +37,16 @@ worktree 1234 5678 my-branch         # open multiple worktrees in parallel
 Commands: [i]nfo, [l]og, [o]pen, [p]r, [s]hell, [c]leanup, [e]xit, [h]elp
 
 worktree [my-branch...origin/my-branch]>
+```
+
+### [`pr-ci`](docs/pr-ci.md) — PR CI Status Checker
+
+Check or watch CI status for a GitHub PR. Shows a summary of passed/failed/pending checks; watch mode polls and sends a macOS alert when done.
+
+```bash
+pr-ci 6999                 # one-shot status summary
+pr-ci 6999 --watch         # poll every 2 minutes, alert when done
+pr-ci 6999 --watch 60      # poll every 60 seconds
 ```
 
 ### [`gh-safe`](docs/gh-safe.md) — AI Agent Guardrail for GitHub CLI
