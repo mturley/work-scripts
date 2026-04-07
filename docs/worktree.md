@@ -1,13 +1,13 @@
 # worktree
 
-Unified command for creating and managing git worktrees that optionally share installed dependencies with the main working tree (via symlinks or copies). Accepts a PR number, PR URL, branch name, or worktree path. Provides a REPL with convenient commands for using and cleaning up worktrees.
+Unified command for creating and managing git worktrees that optionally clone installed dependencies from the main working tree. Accepts a PR number, PR URL, branch name, or worktree path. Provides a REPL with convenient commands for using and cleaning up worktrees.
 
 ## Prerequisites
 
 - [GitHub CLI](https://cli.github.com/) (`gh`, must be authenticated)
 - Python 3
 - For multi-worktree support: [iTerm2](https://iterm2.com/) or [mprocs](https://github.com/pvolok/mprocs) (`brew install mprocs`)
-- Optionally, set `WORKTREES_BASE` to control where worktrees are created (default: `~/git/.worktrees`). This should be outside your project git clones.
+- Optionally, set `WORKTREES_BASE` to control where worktrees are created (default: `~/git/.worktrees`). This should be outside your project git repos.
   ```bash
   export WORKTREES_BASE=$HOME/git/.worktrees
   ```
@@ -38,25 +38,23 @@ Install mprocs if not using iTerm: `brew install mprocs`
 
 * **No arguments** — if run from within a worktree directory under `$WORKTREES_BASE`, drops directly into the REPL for that worktree. Otherwise, lists all worktrees, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up. Supports comma-separated selections (e.g. `1,3,5`) or `all` to open multiple worktrees in parallel.
 
-* **PR number or GitHub URL** — fetches the PR and searches for any existing worktrees on related branches (the PR's head ref or a `review/pr-*` branch). If one is found, reuses it with a sync check (offering to back up and reset to the PR's latest commit if behind). If multiple are found, shows a selection with commit info and ahead/behind status. If none are found, creates a new review worktree and sets up branch tracking against the PR author's remote. Automatically locates the matching local clone if run from a different directory.
+* **PR number or GitHub URL** — fetches the PR and searches for any existing worktrees on related branches (the PR's head ref or a `review/pr-*` branch). If one is found, reuses it with a sync check (offering to back up and reset to the PR's latest commit if behind). If multiple are found, shows a selection with commit info and ahead/behind status. If none are found, creates a new review worktree and sets up branch tracking against the PR author's remote. Automatically locates the matching local repo if run from a different directory.
 
 * **Branch name** — creates a new branch from `upstream/main` (or `origin/main`) in a worktree. If the branch is already checked out elsewhere, offers to reuse or move it. Must be run from within a git repo.
 
 * **Worktree path** — if it matches an existing worktree, drops directly into the REPL for that worktree.
 
-### Cross-Worktree Dependency Linking
+### Cross-Worktree Dependency Cloning
 
-After creating a new worktree, the command prompts you to choose how much to share from the main clone:
+After creating a new worktree, the command prompts you to choose how much to share from the main working tree:
 
-- **`1` — Dotfiles, dependencies and build artifacts** — links dotfiles plus `node_modules`, `dist/`, `bin/`, etc. Only choose this if you don't need different dependency versions in the worktree branch.
-- **`2` — Config only** — links top-level dotfiles (`.env.local`, `.husky`, etc.). You'll need to install dependencies and build yourself.
-- **`3` — Nothing** — no linking or copying at all.
+- **`1` — Dotfiles, dependencies and build artifacts** — clones dotfiles plus `node_modules`, `dist/`, `bin/`, etc.
+- **`2` — Config only** — clones top-level dotfiles (`.env.local`, `.husky`, etc.). You'll need to install dependencies and build yourself.
+- **`3` — Nothing** — skip cloning entirely.
 
 For each category you choose, you can select which specific files to include. Selections are cached separately per repo (in `/tmp`) and offered for reuse next time.
 
-**Symlinks vs copies** — most targets (build outputs like `dist/` and `bin/`, dotfile config) are **symlinked** for efficiency. However, `node_modules` directories are **copied** (via `rsync`) instead. This is because npm workspaces place relative symlinks inside `node_modules` (e.g. `@scope/pkg → ../../src`) that resolve incorrectly when the top-level `node_modules` is itself a symlink pointing at a different worktree, breaking TypeScript type-checking and other tooling.
-
-**Git exclude management** — linked and copied files would normally show as untracked in the worktree's `git status`. To prevent this, the script automatically adds exclude patterns to the repo's `.git/info/exclude` file. Only paths that are already gitignored in the main clone are added, so the entries are redundant for the main clone and won't hide anything new there. Entries are wrapped in `# begin worktree-link` / `# end worktree-link` section markers so the script can identify and clean them up later. When the last worktree for a repo is removed via the REPL's `cleanup` command, the script detects this and offers to remove the marked entries from `.git/info/exclude`.
+**Copy strategy** — on macOS (APFS), all targets are cloned using `cp -Rc` for copy-on-write clones. These are nearly instant and produce fully independent copies (writes don't affect the original). On other platforms, all targets are copied via `rsync -a` (full independent copies, but slower).
 
 ### Opening Editors
 

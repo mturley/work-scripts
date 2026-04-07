@@ -178,72 +178,42 @@ remove_worktree() {
   fi
 }
 
-# cleanup_worktree_excludes <repo-root>
-# If no linked worktrees remain for the repo, removes entries tagged with
-# "# begin/end worktree-link" from .git/info/exclude.
-cleanup_worktree_excludes() {
-  local repo_root="$1"
-  local common_git_dir
-  common_git_dir="$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null)" || true
-  if [ -z "$common_git_dir" ]; then
-    return 0
-  fi
-  case "$common_git_dir" in
-    /*) ;;
-    *) common_git_dir="$repo_root/$common_git_dir" ;;
-  esac
 
-  local exclude_file="$common_git_dir/info/exclude"
-  # Check if there are any tagged entries to clean up
-  if ! grep -qxF '# begin worktree-link' "$exclude_file" 2>/dev/null; then
-    return 0
-  fi
-
-  # Count remaining linked worktrees (excluding the main one)
-  local wt_count=0
-  while IFS= read -r line; do
-    wt_count=$((wt_count + 1))
-  done < <(git -C "$repo_root" worktree list --porcelain 2>/dev/null | grep '^worktree ' | tail -n +2)
-
-  if [ "$wt_count" -gt 0 ]; then
-    return 0
-  fi
-
-  echo ""
-  echo "This was the last worktree for this repo. Cleaning up entries"
-  echo "added to .git/info/exclude by worktree linking/copying:"
-  sed -n '/^# begin worktree-link$/,/^# end worktree-link$/p' "$exclude_file" | grep -v '^#' | while IFS= read -r line; do
-    echo "  $line"
-  done
-  if prompt_yn "Remove these entries?"; then
-    sed '/^# begin worktree-link$/,/^# end worktree-link$/d' "$exclude_file" > "${exclude_file}.tmp"
-    mv "${exclude_file}.tmp" "$exclude_file"
-    echo "Cleaned up .git/info/exclude."
-  fi
-}
-
-# link_worktree_files <scripts-dir> <repo-root> <worktree-path>
-# Prompts the user to link/copy gitignored files from the main clone into a
-# new worktree. node_modules are copied (rsync); everything else is symlinked.
+# clone_worktree_files <scripts-dir> <repo-root> <worktree-path>
+# Prompts the user to clone gitignored files from the main clone into a new
+# worktree. On macOS, uses APFS copy-on-write clones (cp -Rc). On other
+# platforms, symlinks most files but copies node_modules via rsync.
 # Dotfile and dir selections are cached separately in /tmp.
-# Returns 0 if files were linked/copied, 1 otherwise.
-link_worktree_files() {
+# Returns 0 if files were cloned, 1 otherwise.
+clone_worktree_files() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
   local repo_name
   repo_name="$(basename "$repo_root")"
-  local cache_dotfiles="/tmp/worktree-link-dotfiles-${repo_name}"
-  local cache_dirs="/tmp/worktree-link-dirs-${repo_name}"
+  local cache_dotfiles="/tmp/worktree-clone-dotfiles-${repo_name}"
+  local cache_dirs="/tmp/worktree-clone-dirs-${repo_name}"
 
-  # --- Initial prompt: what level of linking? ---
+  # --- Initial prompt: what level of cloning/linking? ---
+  local is_mac=false
+  [ "$(uname -s)" = "Darwin" ] && is_mac=true
+
   echo ""
-  echo "Do you want to link/copy some gitignored files from the root repo"
-  echo "to simplify running the dev environment in the worktree?"
-  echo ""
-  echo "  ${COLOR_BLUE}1)${COLOR_RESET} Link/copy configuration (top-level dotfiles), dependencies and build artifacts"
-  echo "     (only do this if you don't need different dependency versions in the worktree branch)"
-  echo "     ${COLOR_DIM}Note: node_modules are copied instead of symlinked because they can contain relative references.${COLOR_RESET}"
-  echo "  ${COLOR_BLUE}2)${COLOR_RESET} Link top-level configuration (dotfiles) only (you'll need to install/build yourself)"
-  echo "  ${COLOR_BLUE}3)${COLOR_RESET} Don't link/copy anything"
+  if $is_mac; then
+    echo "Do you want to clone some gitignored files from the root repo"
+    echo "to simplify running the dev environment in the worktree?"
+    echo "${COLOR_DIM}(Uses APFS copy-on-write clones — nearly instant, fully independent copies.)${COLOR_RESET}"
+    echo ""
+    echo "  ${COLOR_BLUE}1)${COLOR_RESET} Clone configuration (top-level dotfiles), dependencies and build artifacts"
+    echo "  ${COLOR_BLUE}2)${COLOR_RESET} Clone top-level configuration (dotfiles) only (you'll need to install/build yourself)"
+    echo "  ${COLOR_BLUE}3)${COLOR_RESET} Don't clone anything"
+  else
+    echo "Do you want to copy some gitignored files from the root repo"
+    echo "to simplify running the dev environment in the worktree?"
+    echo "${COLOR_DIM}(Uses rsync — full independent copies.)${COLOR_RESET}"
+    echo ""
+    echo "  ${COLOR_BLUE}1)${COLOR_RESET} Copy configuration (top-level dotfiles), dependencies and build artifacts"
+    echo "  ${COLOR_BLUE}2)${COLOR_RESET} Copy top-level configuration (dotfiles) only (you'll need to install/build yourself)"
+    echo "  ${COLOR_BLUE}3)${COLOR_RESET} Don't copy anything"
+  fi
   echo ""
   local mode=""
   while true; do
@@ -258,58 +228,62 @@ link_worktree_files() {
   done
 
   echo ""
-  echo "Checking for linkable/copyable gitignored files..."
+  if $is_mac; then
+    echo "Checking for cloneable gitignored files..."
+  else
+    echo "Checking for copyable gitignored files..."
+  fi
 
-  local link_paths=()
+  local clone_paths=()
 
   # --- Dotfiles (both modes) ---
   local dotfile_targets
-  dotfile_targets="$("$scripts_dir/link-worktree-files.sh" --list-dotfiles "$repo_root")"
+  dotfile_targets="$("$scripts_dir/clone-worktree-files.sh" --list-dotfiles "$repo_root")"
   if [ -n "$dotfile_targets" ]; then
     local dotfile_options=()
     while IFS= read -r line; do dotfile_options+=("$line"); done <<< "$dotfile_targets"
 
     local dotfile_selected=()
-    dotfile_selected=("$(link_worktree_select_cached "$cache_dotfiles" "$repo_name" "dotfiles" "Which dotfiles to link?" "${dotfile_options[@]}")")
+    dotfile_selected=("$(clone_worktree_select_cached "$cache_dotfiles" "$repo_name" "dotfiles" "Which dotfiles to clone?" "${dotfile_options[@]}")")
     # Re-split output into array (prompt_multi_select outputs one per line)
     local dotfile_final=()
     if [ -n "${dotfile_selected[0]}" ]; then
       while IFS= read -r line; do [ -n "$line" ] && dotfile_final+=("$line"); done <<< "${dotfile_selected[0]}"
     fi
-    for df in "${dotfile_final[@]}"; do link_paths+=("$df"); done
+    for df in "${dotfile_final[@]}"; do clone_paths+=("$df"); done
   fi
 
   # --- Dirs (only in "all" mode) ---
   if [ "$mode" = "all" ]; then
     local dir_targets
-    dir_targets="$("$scripts_dir/link-worktree-files.sh" --list-dirs "$repo_root")"
+    dir_targets="$("$scripts_dir/clone-worktree-files.sh" --list-dirs "$repo_root")"
     if [ -n "$dir_targets" ]; then
       local dir_options=()
       while IFS= read -r line; do dir_options+=("$line"); done <<< "$dir_targets"
 
       local dir_selected=()
-      dir_selected=("$(link_worktree_select_cached "$cache_dirs" "$repo_name" "dependencies/assets" "Which dependencies and build artifacts to link/copy?" "${dir_options[@]}")")
+      dir_selected=("$(clone_worktree_select_cached "$cache_dirs" "$repo_name" "dependencies/assets" "Which dependencies and build artifacts to clone?" "${dir_options[@]}")")
       local dir_final=()
       if [ -n "${dir_selected[0]}" ]; then
         while IFS= read -r line; do [ -n "$line" ] && dir_final+=("$line"); done <<< "${dir_selected[0]}"
       fi
-      for d in "${dir_final[@]}"; do link_paths+=("$d"); done
+      for d in "${dir_final[@]}"; do clone_paths+=("$d"); done
     fi
   fi
 
-  if [ ${#link_paths[@]} -eq 0 ]; then
+  if [ ${#clone_paths[@]} -eq 0 ]; then
     return 1
   fi
 
-  "$scripts_dir/link-worktree-files.sh" --link "$repo_root" "$wt_path" "${link_paths[@]}"
+  "$scripts_dir/clone-worktree-files.sh" --clone "$repo_root" "$wt_path" "${clone_paths[@]}"
   return 0
 }
 
-# link_worktree_select_cached <cache-file> <repo-name> <label> <prompt> <options...>
+# clone_worktree_select_cached <cache-file> <repo-name> <label> <prompt> <options...>
 # Checks for a cached selection, offers to reuse it, or prompts with
 # prompt_multi_select. Saves the new selection to the cache file.
 # Prints selected items to stdout (one per line).
-link_worktree_select_cached() {
+clone_worktree_select_cached() {
   local cache_file="$1" repo_name="$2" label="$3" prompt_msg="$4"
   shift 4
   local options=("$@")
@@ -608,7 +582,6 @@ worktree_repl() {
           remove_worktree "$wt_path"
           echo "Worktree removed."
           git worktree prune 2>/dev/null
-          cleanup_worktree_excludes "$repo_root"
           if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
             echo ""
             echo "To close this pane: Ctrl+A → d → y"
@@ -640,12 +613,12 @@ parse_json() {
 }
 
 # worktree_post_setup <scripts-dir> <repo-root> <worktree-path>
-# Handles linking/copying gitignored files, opening editor, and starting the REPL.
+# Handles cloning gitignored files, opening editor, and starting the REPL.
 worktree_post_setup() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
 
-  # --- Link/Copy Gitignored Files ---
-  link_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
+  # --- Clone Gitignored Files ---
+  clone_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
 
   # --- Detect Editor and Open ---
   echo ""
