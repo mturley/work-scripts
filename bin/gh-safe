@@ -6,7 +6,7 @@
 # Write operations print a warning and exit 2 unless APPROVE=true is set.
 #
 # Usage:  gh-safe <gh args...>
-#         APPROVE=true gh-safe <gh args...>
+#         gh-safe --approve <gh args...>
 #
 
 set -euo pipefail
@@ -211,6 +211,12 @@ if [[ $# -eq 0 ]]; then
   exit 1
 fi
 
+# Handle --approve flag
+if [[ "$1" == "--approve" ]]; then
+  APPROVE=true
+  shift
+fi
+
 if is_read_only "$@"; then
   exec gh "$@"
 fi
@@ -221,6 +227,6 @@ if [[ "${APPROVE:-}" == "true" ]]; then
 fi
 
 echo "gh-safe: command not read-only. approval required." >&2
-echo "gh-safe: run with APPROVE=true to proceed." >&2
+echo "gh-safe: run with gh-safe --approve to proceed." >&2
 echo "gh-safe: command was: gh $*" >&2
 exit 2
