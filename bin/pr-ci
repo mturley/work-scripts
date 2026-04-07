@@ -76,6 +76,8 @@ case "$PR" in
   *://*)  PR_DISPLAY="${PR##*/}" ;;
 esac
 
+PR_TITLE=$(gh pr view "$PR" --json title --jq '.title' 2>/dev/null || echo "")
+
 set_iterm_title "pr-ci #${PR_DISPLAY}"
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -129,7 +131,13 @@ alert() {
 # ── Main: one-shot ──────────────────────────────────────────────────────
 
 output=$(get_checks)
-echo "PR $PR — CI Status"
+if [[ -n "$PR_TITLE" ]]; then
+  echo "PR #${PR_DISPLAY}: ${PR_TITLE}"
+else
+  echo "PR $PR"
+fi
+echo ""
+echo "CI Status"
 echo "─────────────────────────────────"
 summarize "$output"
 
@@ -166,9 +174,9 @@ while true; do
     skipping=$(count_status "$output" "skipping")
     if [[ "$failed" -gt 0 ]]; then
       failed_names=$(echo "$output" | grep "${TAB}fail${TAB}" | awk -F'\t' '{print $1}' | paste -sd', ' -)
-      alert "PR $PR — CI Complete" "Passed: $passed, Failed: $failed, Skipped: $skipping -- Failed: $failed_names"
+      alert "PR #${PR_DISPLAY} — CI Complete" "${PR_TITLE:+${PR_TITLE} — }Passed: $passed, Failed: $failed, Skipped: $skipping -- Failed: $failed_names"
     else
-      alert "PR $PR — CI Complete" "All $passed checks passed! ($skipping skipped)"
+      alert "PR #${PR_DISPLAY} — CI Complete" "${PR_TITLE:+${PR_TITLE} — }All $passed checks passed! ($skipping skipped)"
     fi
     exit 0
   fi
