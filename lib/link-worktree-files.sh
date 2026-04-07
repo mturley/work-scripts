@@ -33,10 +33,10 @@ case "$MODE" in
       echo "${p#"$SOURCE_ROOT"/}"
     done
 
-    # dist/ and bin/ build output dirs (shallow, skip node_modules and .git)
+    # dist/ and bin/ build output dirs (skip node_modules and .git)
     # Skip directories that contain tracked files (linking over them would
     # cause git to report tracked files as deleted).
-    find "$SOURCE_ROOT" -maxdepth 3 \
+    find "$SOURCE_ROOT" \
       -path "*/.git" -prune -o \
       -path "*/node_modules" -prune -o \
       \( -name dist -o -name bin \) -type d -print \
