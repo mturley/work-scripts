@@ -71,6 +71,7 @@ Append timestamped, metadata-enriched activity entries to your [Obsidian daily n
 worklog                                  # free-form log entry
 worklog pr reviewed org/repo#123         # log a PR review with metadata
 worklog jira seen RHOAIENG-12345         # log viewing a Jira issue
+worklog undo                             # remove the last activity table row
 ```
 
 Requires the [Obsidian CLI](https://obsidian.md/) and a `.env` file for Jira integration (see [docs](docs/worklog.md#setup)).

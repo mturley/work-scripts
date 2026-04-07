@@ -91,6 +91,7 @@ Other commands:
 
   worklog              free-form log entry (prompts for text)
   worklog open         open today's daily note in Obsidian
+  worklog undo         remove the last row from the activity table
   worklog test         generate all format permutations with fake data
   worklog help         show this help
 
@@ -261,6 +262,11 @@ truncate_text() {
   else
     echo "$text"
   fi
+}
+
+# Replace bare Slack URLs with markdown links
+linkify_slack_urls() {
+  echo "$1" | sed 's|\(https\{0,1\}://[^ ]*slack\.com[^ ]*\)|[See slack thread](\1)|g'
 }
 
 urlencode() {
@@ -443,6 +449,61 @@ else:
 with open(filepath, 'w') as f:
     f.write('\n'.join(lines))
 " "$daily_note" "$row"
+}
+
+# Remove the last data row from the activity table in today's daily note.
+# Prints the removed row to stdout.  Exits with an error if no data rows exist.
+remove_last_table_row() {
+  local daily_note
+  daily_note="$(get_daily_note_path)"
+
+  if [ ! -f "$daily_note" ]; then
+    echo "ERROR: Daily note not found." >&2
+    exit 1
+  fi
+
+  python3 -c "
+import sys, re
+
+filepath = sys.argv[1]
+
+with open(filepath, 'r') as f:
+    content = f.read()
+
+lines = content.split('\n')
+
+# Find the table header
+table_start = -1
+for i, line in enumerate(lines):
+    if re.match(r'\|\s*Time\s*\|', line):
+        table_start = i
+        break
+
+if table_start == -1:
+    print('ERROR: No activity table found in daily note.', file=sys.stderr)
+    sys.exit(1)
+
+# Find end of table (last line starting with |)
+table_end = table_start + 1  # separator
+for i in range(table_start + 1, len(lines)):
+    if lines[i].startswith('|'):
+        table_end = i
+    else:
+        break
+
+# Data rows start after header + separator (table_start + 2)
+if table_end < table_start + 2:
+    print('ERROR: Activity table has no data rows to remove.', file=sys.stderr)
+    sys.exit(1)
+
+removed = lines[table_end]
+del lines[table_end]
+
+with open(filepath, 'w') as f:
+    f.write('\n'.join(lines))
+
+print(removed)
+" "$daily_note"
 }
 
 # ---------------------------------------------------------------------------
@@ -987,6 +1048,7 @@ handle_test() {
 prompt_and_append() {
   # Pre-populate detail if provided via --detail
   if [ -n "$DETAIL" ]; then
+    DETAIL="$(linkify_slack_urls "$DETAIL")"
     ROW_SUB_DETAILS+=("Notes: ${DETAIL}")
   fi
 
@@ -1003,6 +1065,7 @@ prompt_and_append() {
     printf "${COLOR_BLUE}Add any additional notes? (press Enter to skip):${COLOR_RESET} "
     read -r notes || true
     if [ -n "$notes" ]; then
+      notes="$(linkify_slack_urls "$notes")"
       ROW_SUB_DETAILS+=("Notes: ${notes}")
       row="$(compose_row)"
       echo ""
@@ -1067,6 +1130,17 @@ if [ "${1:-}" = "open" ]; then
   exit 0
 fi
 
+# Undo: remove the last row from the activity table
+if [ "${1:-}" = "undo" ]; then
+  removed_row="$(remove_last_table_row)"
+  echo ""
+  echo "${COLOR_CYAN}Removed entry:${COLOR_RESET}"
+  echo "$removed_row"
+  echo ""
+  echo "${COLOR_GREEN}Done!${COLOR_RESET}"
+  exit 0
+fi
+
 # Test mode: generate all permutations with fake data
 if [ "${1:-}" = "test" ]; then
   handle_test
@@ -1096,6 +1170,7 @@ if [ $# -eq 0 ]; then
     echo "Nothing to log." >&2
     exit 0
   fi
+  freeform="$(linkify_slack_urls "$freeform")"
   ROW_TIME="$(get_timestamp)"
   ROW_EMOJI="📌"
   ROW_ACTION="Note"

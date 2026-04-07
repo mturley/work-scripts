@@ -41,8 +41,13 @@ Reference formats: issue key (`RHOAIENG-12345`) or full URL (`https://issues.red
 ## Other commands
 
 - `worklog open` — open today's daily note in Obsidian
+- `worklog undo` — remove the last row from the activity table
 - `worklog test` — insert sample entries into today's daily note to preview formatting
 - `worklog help` — show full usage
+
+## Slack URL linkification
+
+Bare Slack URLs in free-text inputs (freeform entries, `--detail` values, and interactive notes) are automatically converted to `[See slack thread](url)` markdown links.
 
 ## Log entry format
 
