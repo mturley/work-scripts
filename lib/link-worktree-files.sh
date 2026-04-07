@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# link-worktree-files.sh - Link useful files from one worktree to another
+# link-worktree-files.sh - Link/copy useful files from one worktree to another
 #
 # Usage:
 #   link-worktree-files.sh --list <source-root>
@@ -9,7 +9,12 @@
 # and top-level dotfiles/dotdirs (config like .env.local, .husky, etc.).
 #
 # --list: prints relative paths of linkable targets, one per line.
-# --link: links the specified relative paths from source to dest.
+# --link: links or copies the specified relative paths from source to dest.
+#         node_modules directories are copied (via rsync) instead of symlinked
+#         because npm workspaces place relative symlinks inside node_modules
+#         (e.g. @scope/pkg → ../../src) that break when resolved through a
+#         top-level symlink pointing at a different worktree.
+#         All other targets (dist/, bin/, dotfiles) are symlinked as before.
 
 set -euo pipefail
 
@@ -86,6 +91,20 @@ case "$MODE" in
         rm -rf "$dest"
       fi
 
+      # Copy node_modules instead of symlinking to preserve internal
+      # relative symlinks (e.g. npm workspace links like @scope/pkg → ../../src).
+      if [[ "$(basename "$rel")" == "node_modules" ]]; then
+        echo "  Copying ${rel}..."
+        if rsync -a "$src/" "$dest/" 2>/dev/null; then
+          LINKED=$((LINKED + 1))
+          LINKED_PATHS+=("$rel")
+        else
+          echo "  ERROR: $rel" >&2
+          ERRORS=$((ERRORS + 1))
+        fi
+        continue
+      fi
+
       echo "  Linking ${rel}..."
       if ln -s "$src" "$dest" 2>/dev/null; then
         LINKED=$((LINKED + 1))
@@ -96,13 +115,13 @@ case "$MODE" in
       fi
     done
 
-    echo "Linked ${LINKED} entries."
+    echo "Linked/copied ${LINKED} entries."
     if [ "$ERRORS" -gt 0 ]; then
       echo "Errors: ${ERRORS}." >&2
     fi
 
-    # Add linked paths to the shared git exclude file so they don't show
-    # up as untracked in worktrees. Only add paths that are already
+    # Add linked/copied paths to the shared git exclude file so they don't
+    # show up as untracked in worktrees. Only add paths that are already
     # gitignored in the source repo, so the entries are redundant for the
     # main clone and won't hide anything new there.
     if [ ${#LINKED_PATHS[@]} -gt 0 ] && [ -e "$DEST_ROOT/.git" ]; then
@@ -130,8 +149,8 @@ case "$MODE" in
 
         if [ ${#NEW_EXCLUDES[@]} -gt 0 ]; then
           echo ""
-          echo "${COLOR_RED}To prevent linked files from showing as untracked, these entries"
-          echo "need to be added to .git/info/exclude (shared with main clone):${COLOR_RESET}"
+          echo "${COLOR_RED}To prevent linked/copied files from showing as untracked, these"
+          echo "entries need to be added to .git/info/exclude (shared with main clone):${COLOR_RESET}"
           for entry in "${NEW_EXCLUDES[@]}"; do
             echo "  $entry"
           done
@@ -155,7 +174,7 @@ case "$MODE" in
               echo "Added ${#NEW_EXCLUDES[@]} entries to .git/info/exclude."
               ;;
             *)
-              echo "Skipped. Linked files may show as untracked."
+              echo "Skipped. Linked/copied files may show as untracked."
               ;;
           esac
         fi

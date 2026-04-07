@@ -22,7 +22,7 @@ Further prerequisites and setup for each command are documented in its [docs fil
 
 ### [`worktree`](docs/worktree.md) — Git Worktree Manager
 
-Create and manage git worktrees for PRs and branches, with optional symlinked dependencies and an interactive REPL.
+Create and manage git worktrees for PRs and branches, with optional shared dependencies (symlinked or copied) and an interactive REPL.
 
 ```bash
 worktree                             # list worktrees; select one, many (1,3,5), or all

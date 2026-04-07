@@ -1,6 +1,6 @@
 # worktree
 
-Unified command for creating and managing git worktrees that optionally share installed dependencies with the main working tree via symlinks. Accepts a PR number, PR URL, branch name, or worktree path. Provides a REPL with convenient commands for using and cleaning up worktrees.
+Unified command for creating and managing git worktrees that optionally share installed dependencies with the main working tree (via symlinks or copies). Accepts a PR number, PR URL, branch name, or worktree path. Provides a REPL with convenient commands for using and cleaning up worktrees.
 
 ## Prerequisites
 
@@ -46,9 +46,11 @@ Install mprocs if not using iTerm: `brew install mprocs`
 
 ### Cross-Worktree Dependency Linking
 
-After creating a new worktree, the command offers to **symlink** gitignored files from the repo's main working directory (node_modules, build outputs, dotfile config) so you can run your dev environment in the worktree without setting things up again if you don't need different dependency versions in the worktree. If you do, you can decline this and install things yourself. It lets you choose which files you want to link and offers to reuse your choice from the last usage in that repo (cached in `/tmp`).
+After creating a new worktree, the command offers to share gitignored files from the repo's main working directory (node_modules, build outputs, dotfile config) so you can run your dev environment in the worktree without setting things up again if you don't need different dependency versions in the worktree. If you do, you can decline this and install things yourself. It lets you choose which files you want to link and offers to reuse your choice from the last usage in that repo (cached in `/tmp`).
 
-**Git exclude management** — symlinked files would normally show as untracked in the worktree's `git status`. To prevent this, the script offers to add exclude patterns to the repo's `.git/info/exclude` file after linking. Only paths that are already gitignored in the main clone are added, so the entries are redundant for the main clone and won't hide anything new there. Entries are wrapped in `# begin worktree-link` / `# end worktree-link` section markers so the script can identify and clean them up later. When the last worktree for a repo is removed via the REPL's `cleanup` command, the script detects this and offers to remove the marked entries from `.git/info/exclude`.
+**Symlinks vs copies** — most targets (build outputs like `dist/` and `bin/`, dotfile config) are **symlinked** for efficiency. However, `node_modules` directories are **copied** (via `rsync`) instead. This is because npm workspaces place relative symlinks inside `node_modules` (e.g. `@scope/pkg → ../../src`) that resolve incorrectly when the top-level `node_modules` is itself a symlink pointing at a different worktree, breaking TypeScript type-checking and other tooling.
+
+**Git exclude management** — linked and copied files would normally show as untracked in the worktree's `git status`. To prevent this, the script offers to add exclude patterns to the repo's `.git/info/exclude` file after linking. Only paths that are already gitignored in the main clone are added, so the entries are redundant for the main clone and won't hide anything new there. Entries are wrapped in `# begin worktree-link` / `# end worktree-link` section markers so the script can identify and clean them up later. When the last worktree for a repo is removed via the REPL's `cleanup` command, the script detects this and offers to remove the marked entries from `.git/info/exclude`.
 
 ### Opening Editors
 

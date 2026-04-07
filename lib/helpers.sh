@@ -179,7 +179,7 @@ remove_worktree() {
 
 # cleanup_worktree_excludes <repo-root>
 # If no linked worktrees remain for the repo, removes entries tagged with
-# "# added by worktree-link" from .git/info/exclude.
+# "# begin/end worktree-link" from .git/info/exclude.
 cleanup_worktree_excludes() {
   local repo_root="$1"
   local common_git_dir
@@ -210,7 +210,7 @@ cleanup_worktree_excludes() {
 
   echo ""
   echo "This was the last worktree for this repo. Cleaning up entries"
-  echo "added to .git/info/exclude by worktree linking:"
+  echo "added to .git/info/exclude by worktree linking/copying:"
   sed -n '/^# begin worktree-link$/,/^# end worktree-link$/p' "$exclude_file" | grep -v '^#' | while IFS= read -r line; do
     echo "  $line"
   done
@@ -222,8 +222,9 @@ cleanup_worktree_excludes() {
 }
 
 # link_worktree_files <scripts-dir> <repo-root> <worktree-path>
-# Finds linkable files, prompts user to select (with caching), and links.
-# Returns 0 if files were linked, 1 otherwise.
+# Finds linkable files, prompts user to select (with caching), and links/copies.
+# node_modules directories are copied (rsync); everything else is symlinked.
+# Returns 0 if files were linked/copied, 1 otherwise.
 link_worktree_files() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
   local repo_name
@@ -250,9 +251,10 @@ link_worktree_files() {
   local selected=()
 
   echo "" >&2
-  echo "${COLOR_RED}NOTE: Linked files are shared with the main clone. Changes like" >&2
-  echo "installing or removing dependencies will affect both. Select \"none\"" >&2
-  echo "and install separately if you need different versions.${COLOR_RESET}" >&2
+  echo "${COLOR_RED}NOTE: Most files are symlinked from the main clone; node_modules" >&2
+  echo "directories are copied. Changes to symlinked files (e.g. build outputs)" >&2
+  echo "will affect both. Select \"none\" and install separately if you need" >&2
+  echo "different versions.${COLOR_RESET}" >&2
 
   # Check for cached selection
   if [ -f "$cache_file" ]; then
@@ -280,7 +282,7 @@ link_worktree_files() {
 
   # If no cached selection was used, prompt
   if [ ${#selected[@]} -eq 0 ]; then
-    while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done < <(prompt_multi_select "Which files to link into the new worktree?" "${options[@]}")
+    while IFS= read -r line; do [ -n "$line" ] && selected+=("$line"); done < <(prompt_multi_select "Which files to link/copy into the new worktree?" "${options[@]}")
     # Save selection
     if [ ${#selected[@]} -gt 0 ]; then
       printf '%s\n' "${selected[@]}" > "$cache_file"
@@ -600,11 +602,11 @@ parse_json() {
 }
 
 # worktree_post_setup <scripts-dir> <repo-root> <worktree-path>
-# Handles linking gitignored files, opening editor, and starting the REPL.
+# Handles linking/copying gitignored files, opening editor, and starting the REPL.
 worktree_post_setup() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
 
-  # --- Link Gitignored Files ---
+  # --- Link/Copy Gitignored Files ---
   link_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
 
   # --- Detect Editor and Open ---
