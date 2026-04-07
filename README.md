@@ -6,6 +6,8 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`pr-ci`](docs/pr-ci.md) — Check or watch CI status for a GitHub PR
 - [`gh-safe`](docs/gh-safe.md) — AI agent guardrail for the GitHub CLI
 - [`worklog`](docs/worklog.md) (or `wlog`) — Append timestamped activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes)
+- [`prep`](docs/prep.md) — Copy focus and deferred items from the previous daily note to today's
+- [`eod`](docs/eod.md) — Set up tomorrow's focus by carrying over unchecked items
 - [`iterm-new`](docs/iterm-new.md) — Open a new iTerm2 tab or split pane and run a command
 
 ## Setup
@@ -72,6 +74,25 @@ worklog jira seen RHOAIENG-12345         # log viewing a Jira issue
 ```
 
 Requires the [Obsidian CLI](https://obsidian.md/) and a `.env` file for Jira integration (see [docs](docs/worklog.md#setup)).
+
+### [`prep`](docs/prep.md) — Morning Prep
+
+Copy focus and deferred items from the most recent previous daily note to today's note. Handles gaps and weekends automatically.
+
+```bash
+prep         # copy items from the previous note to today
+```
+
+### [`eod`](docs/eod.md) — End of Day
+
+Set up tomorrow's focus by carrying over unchecked items from today's focus section.
+
+```bash
+eod                # process today's note
+eod yesterday      # process the most recent previous note
+eod friday         # process the most recent Friday note (handy on Monday)
+eod "Apr 3"        # process a specific date
+```
 
 ## Commands for iTerm2
 

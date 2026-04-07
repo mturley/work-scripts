@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+# eod - Set up tomorrow's focus by carrying over unchecked items from today.
+# Usage: eod [yesterday|<date>]
+
+set -euo pipefail
+
+SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
+WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+
+# shellcheck source=../lib/helpers.sh
+source "$SCRIPTS_DIR/helpers.sh"
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+
+usage() {
+  cat <<EOF
+Usage: eod [yesterday|<date>]
+
+Set up tomorrow's focus by moving unchecked items from today's focus.
+
+Arguments:
+  (none)       Process today's daily note
+  yesterday    Process the most recent previous daily note
+  <date>       Process a specific date (e.g. "Apr 3", "2026.093", "Friday")
+
+Steps:
+  1. Extract unchecked items from the target note's "today's focus" section
+     (excluding "prep for the day" and "and if there's time" subsections)
+  2. Append them to the "tomorrow's focus" (or "monday's focus") section
+  3. If the target note is a Friday, rename "tomorrow's focus" to "monday's focus"
+  4. Check off the "Set up tomorrow's focus" checkbox
+
+Environment:
+  Requires the Obsidian CLI on PATH.
+    Enable in Obsidian: Settings -> General -> Advanced.
+  Requires OBSIDIAN_VAULT in .env.
+EOF
+  exit 0
+}
+
+case "${1:-}" in
+  -h|--help|help) usage ;;
+esac
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
+if ! command -v obsidian >/dev/null 2>&1; then
+  echo "ERROR: Obsidian CLI not found on PATH." >&2
+  echo "Enable it in Obsidian: Settings -> General -> Advanced." >&2
+  exit 1
+fi
+
+# Load .env for OBSIDIAN_VAULT
+OBSIDIAN_VAULT=""
+env_file="$WORK_SCRIPTS_DIR/.env"
+if [ -f "$env_file" ]; then
+  while IFS='=' read -r key value; do
+    case "$key" in \#*|"") continue ;; esac
+    key="$(echo "$key" | tr -d '[:space:]')"
+    value="$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    case "$key" in
+      OBSIDIAN_VAULT) OBSIDIAN_VAULT="$value" ;;
+    esac
+  done < "$env_file"
+fi
+
+if [ -z "$OBSIDIAN_VAULT" ]; then
+  echo "ERROR: OBSIDIAN_VAULT not set in .env" >&2
+  exit 1
+fi
+
+# Get today's path to infer the notes directory
+today_relative="$(obsidian daily:path 2>/dev/null | tail -1)"
+if [ -z "$today_relative" ]; then
+  echo "ERROR: Could not get daily note path from Obsidian CLI" >&2
+  exit 1
+fi
+today_note="$OBSIDIAN_VAULT/$today_relative"
+NOTES_DIR="$(dirname "$today_note")"
+
+# ---------------------------------------------------------------------------
+# Step 1: Determine which note to process
+# ---------------------------------------------------------------------------
+
+target_note=""
+date_arg="${1:-}"
+
+if [ -z "$date_arg" ]; then
+  # Today's note
+  target_note="$today_note"
+elif [ "$date_arg" = "yesterday" ]; then
+  # Most recent note before today
+  today_basename="$(basename "$today_note")"
+  while IFS= read -r f; do
+    fname="$(basename "$f")"
+    if [[ "$fname" < "$today_basename" ]]; then
+      target_note="$f"
+      break
+    fi
+  done < <(ls -1r "$NOTES_DIR"/*.md 2>/dev/null)
+else
+  # Search for a note matching the date argument
+  # Try case-insensitive grep on filenames
+  target_note="$(ls -1r "$NOTES_DIR"/*.md 2>/dev/null | while IFS= read -r f; do
+    fname="$(basename "$f")"
+    if echo "$fname" | grep -qi "$date_arg"; then
+      echo "$f"
+      break
+    fi
+  done)"
+fi
+
+if [ -z "$target_note" ] || [ ! -f "$target_note" ]; then
+  echo "ERROR: Could not find daily note for: ${date_arg:-today}" >&2
+  exit 1
+fi
+
+echo "${COLOR_CYAN}Processing:${COLOR_RESET} $(basename "$target_note")"
+
+# ---------------------------------------------------------------------------
+# Step 2-6: Process the note with Python
+# ---------------------------------------------------------------------------
+
+python3 -c "
+import sys, re
+
+target_path = sys.argv[1]
+
+with open(target_path, 'r') as f:
+    content = f.read()
+
+lines = content.split('\n')
+
+def find_section_range(lines, pattern):
+    \"\"\"Find section content range. Returns (header_idx, content_start, content_end).\"\"\"
+    for i, line in enumerate(lines):
+        if re.search(pattern, line):
+            start = i + 1
+            end = start
+            for j in range(start, len(lines)):
+                if re.match(r'^#{1,4}\s', lines[j]) or re.match(r'^-{3,}$', lines[j]):
+                    break
+                end = j + 1
+            return (i, start, end)
+    return None
+
+# Find today's focus section
+focus = find_section_range(lines, r\"Today's focus\")
+if not focus:
+    print('ERROR: Could not find today\\'s focus section')
+    sys.exit(1)
+
+focus_header, focus_start, focus_end = focus
+
+# Find the 'and if there\\'s time' subsection within today's focus
+if_time_start = focus_end
+for i in range(focus_start, focus_end):
+    if re.search(r'and if there.s time', lines[i]):
+        if_time_start = i
+        break
+
+# Find 'prep for the day' section to exclude
+prep_end = focus_start
+prep = find_section_range(lines, r'Prep for the day')
+if prep:
+    _, _, prep_end_idx = prep
+    if prep_end_idx <= focus_start:
+        prep_end = focus_start  # prep is before focus, no overlap
+
+# Extract unchecked items from today's focus (excluding prep and if-there's-time)
+unchecked = []
+i = focus_start
+while i < if_time_start:
+    line = lines[i]
+    # Match unchecked checkbox at any indentation
+    if re.match(r'^(\s*[-*]\s*\[ \])', line):
+        # Collect this item and any sub-items
+        item_lines = [line]
+        indent = len(line) - len(line.lstrip())
+        j = i + 1
+        while j < if_time_start:
+            next_line = lines[j]
+            if next_line.strip() == '':
+                j += 1
+                continue
+            next_indent = len(next_line) - len(next_line.lstrip())
+            if next_indent > indent:
+                item_lines.append(next_line)
+                j += 1
+            else:
+                break
+        unchecked.extend(item_lines)
+        i = j
+    else:
+        i += 1
+
+if not unchecked:
+    print('No unchecked items to carry over.')
+
+# Find tomorrow's/monday's focus section
+tomorrow = find_section_range(lines, r\"Tomorrow's focus|Monday's focus\")
+if not tomorrow:
+    print('ERROR: Could not find tomorrow\\'s/monday\\'s focus section')
+    sys.exit(1)
+
+tomorrow_header, tomorrow_start, tomorrow_end = tomorrow
+
+# Insert unchecked items
+if unchecked:
+    # Find last real item in tomorrow's section
+    insert_at = tomorrow_start
+    for i in range(tomorrow_start, tomorrow_end):
+        line = lines[i]
+        if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
+            insert_at = i + 1
+
+    for item in reversed(unchecked):
+        lines.insert(insert_at, item)
+    print(f'Moved {len(unchecked)} line(s) to tomorrow\\'s/monday\\'s focus')
+
+# Remove blank checkboxes from tomorrow's section (re-find after insertions)
+tomorrow2 = find_section_range(lines, r\"Tomorrow's focus|Monday's focus\")
+if tomorrow2:
+    _, t_start, t_end = tomorrow2
+    to_remove = []
+    for i in range(t_start, t_end):
+        if re.match(r'^\s*[-*]\s*\[\s?\]\s*$', lines[i]):
+            to_remove.append(i)
+    real_items = [i for i in range(t_start, t_end) if i not in to_remove and lines[i].strip()]
+    if not real_items and to_remove:
+        to_remove = to_remove[1:]
+    for i in reversed(to_remove):
+        del lines[i]
+
+# Check if target note is a Friday — rename section if needed
+basename = target_path.rsplit('/', 1)[-1] if '/' in target_path else target_path
+is_friday = 'Friday' in basename or 'Fri' in basename
+
+if is_friday:
+    for i, line in enumerate(lines):
+        if re.search(r\"Tomorrow's focus\", line):
+            lines[i] = line.replace(\"Tomorrow's focus\", \"Monday's focus\")
+            print('Renamed to monday\\'s focus (Friday note)')
+            break
+
+# Check off the eod checkbox
+for i, line in enumerate(lines):
+    if re.search(r'\[ \].*Set up tomorrow.s focus.*eod', line):
+        lines[i] = line.replace('[ ]', '[x]', 1)
+        break
+
+with open(target_path, 'w') as f:
+    f.write('\n'.join(lines))
+
+print('Done!')
+" "$target_note"
+
+# Open the daily note
+obsidian daily >/dev/null 2>&1

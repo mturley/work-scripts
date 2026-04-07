@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+# prep - Copy focus and deferred items from previous daily note to today's note.
+# Usage: prep
+
+set -euo pipefail
+
+SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
+WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+
+# shellcheck source=../lib/helpers.sh
+source "$SCRIPTS_DIR/helpers.sh"
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+
+usage() {
+  cat <<EOF
+Usage: prep
+
+Copy focus and deferred items from the most recent daily note to today's note.
+
+Steps:
+  1. Ensure today's daily note exists
+  2. Find the most recent previous daily note
+  3. Verify eod was run on the previous note
+  4. Copy "tomorrow's focus" (or "monday's focus") items to today's "today's focus"
+  5. Copy "deferring for later" items to today's "deferring for later"
+  6. Check off the prep checkbox in today's note
+
+Environment:
+  Requires the Obsidian CLI on PATH.
+    Enable in Obsidian: Settings -> General -> Advanced.
+  Requires OBSIDIAN_VAULT in .env.
+EOF
+  exit 0
+}
+
+case "${1:-}" in
+  -h|--help|help) usage ;;
+esac
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
+if ! command -v obsidian >/dev/null 2>&1; then
+  echo "ERROR: Obsidian CLI not found on PATH." >&2
+  echo "Enable it in Obsidian: Settings -> General -> Advanced." >&2
+  exit 1
+fi
+
+# Load .env for OBSIDIAN_VAULT
+OBSIDIAN_VAULT=""
+env_file="$WORK_SCRIPTS_DIR/.env"
+if [ -f "$env_file" ]; then
+  while IFS='=' read -r key value; do
+    case "$key" in \#*|"") continue ;; esac
+    key="$(echo "$key" | tr -d '[:space:]')"
+    value="$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    case "$key" in
+      OBSIDIAN_VAULT) OBSIDIAN_VAULT="$value" ;;
+    esac
+  done < "$env_file"
+fi
+
+if [ -z "$OBSIDIAN_VAULT" ]; then
+  echo "ERROR: OBSIDIAN_VAULT not set in .env" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Step 1: Ensure today's daily note exists
+# ---------------------------------------------------------------------------
+
+today_relative="$(obsidian daily:path 2>/dev/null | tail -1)"
+if [ -z "$today_relative" ]; then
+  echo "ERROR: Could not get daily note path from Obsidian CLI" >&2
+  exit 1
+fi
+today_note="$OBSIDIAN_VAULT/$today_relative"
+NOTES_DIR="$(dirname "$today_note")"
+
+if [ ! -f "$today_note" ]; then
+  echo "Creating today's daily note..."
+  obsidian daily >/dev/null 2>&1
+  sleep 1
+fi
+
+if [ ! -f "$today_note" ]; then
+  echo "ERROR: Today's daily note not found at: $today_note" >&2
+  exit 1
+fi
+
+echo "${COLOR_CYAN}Today's note:${COLOR_RESET} $(basename "$today_note")"
+
+# ---------------------------------------------------------------------------
+# Step 2: Find the most recent previous daily note
+# ---------------------------------------------------------------------------
+
+today_basename="$(basename "$today_note")"
+prev_note=""
+
+# List notes sorted by name (descending), find the first one before today
+while IFS= read -r f; do
+  fname="$(basename "$f")"
+  if [[ "$fname" < "$today_basename" ]]; then
+    prev_note="$f"
+    break
+  fi
+done < <(ls -1r "$NOTES_DIR"/*.md 2>/dev/null)
+
+if [ -z "$prev_note" ] || [ ! -f "$prev_note" ]; then
+  echo "ERROR: Could not find a previous daily note." >&2
+  exit 1
+fi
+
+echo "${COLOR_CYAN}Previous note:${COLOR_RESET} $(basename "$prev_note")"
+
+# ---------------------------------------------------------------------------
+# Step 3: Check if eod was run on the previous note
+# ---------------------------------------------------------------------------
+
+if ! grep -q '\- \[x\] Set up tomorrow'"'"'s focus (run `eod`)' "$prev_note" 2>/dev/null && \
+   ! grep -q '\- \[x\] Set up monday'"'"'s focus (run `eod`)' "$prev_note" 2>/dev/null; then
+  echo ""
+  echo "${COLOR_YELLOW}WARNING:${COLOR_RESET} eod was not run on $(basename "$prev_note")."
+  echo "Run 'eod yesterday' first, or continue anyway."
+  printf "${COLOR_BLUE}Continue without eod? [y/n]:${COLOR_RESET} "
+  read -r yn
+  case "$yn" in
+    [Yy]*) ;;
+    *) echo "Aborting."; exit 1 ;;
+  esac
+fi
+
+# ---------------------------------------------------------------------------
+# Step 4 & 5: Copy items using Python
+# ---------------------------------------------------------------------------
+
+python3 -c "
+import sys, re
+
+prev_path = sys.argv[1]
+today_path = sys.argv[2]
+
+with open(prev_path, 'r') as f:
+    prev_content = f.read()
+with open(today_path, 'r') as f:
+    today_content = f.read()
+
+prev_lines = prev_content.split('\n')
+today_lines = today_content.split('\n')
+
+def find_section(lines, patterns):
+    \"\"\"Find a section by header pattern. Returns (start_idx, end_idx) of content lines.\"\"\"
+    for pattern in patterns:
+        for i, line in enumerate(lines):
+            if re.search(pattern, line):
+                # Content starts on the next line
+                start = i + 1
+                # Find end: next heading or section separator
+                end = start
+                for j in range(start, len(lines)):
+                    if re.match(r'^#{1,4}\s', lines[j]) or re.match(r'^-{3,}$', lines[j]):
+                        break
+                    end = j + 1
+                return (start, end)
+    return None
+
+def extract_items(lines, start, end):
+    \"\"\"Extract non-blank checkbox items and their sub-items from a range.\"\"\"
+    items = []
+    i = start
+    while i < end:
+        line = lines[i]
+        # Check if this is a checkbox item (possibly indented)
+        if re.match(r'^(\s*[-*]\s*\[.\])', line):
+            # Skip blank checkboxes
+            if re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
+                i += 1
+                continue
+            # Collect this item and any sub-items (indented lines following it)
+            item_lines = [line]
+            indent = len(line) - len(line.lstrip())
+            j = i + 1
+            while j < end:
+                next_line = lines[j]
+                if next_line.strip() == '':
+                    j += 1
+                    continue
+                next_indent = len(next_line) - len(next_line.lstrip())
+                if next_indent > indent:
+                    item_lines.append(next_line)
+                    j += 1
+                else:
+                    break
+            items.extend(item_lines)
+            i = j
+        else:
+            i += 1
+    return items
+
+def find_section_insert_point(lines, patterns):
+    \"\"\"Find where to insert items in a section (after existing items, before blank checkboxes at end).\"\"\"
+    section = find_section(lines, patterns)
+    if section is None:
+        return None
+    start, end = section
+    # Find last non-blank-checkbox, non-empty line
+    insert = start
+    for i in range(start, end):
+        line = lines[i]
+        if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
+            insert = i + 1
+    return insert
+
+# --- Extract items from previous note ---
+
+# Tomorrow's/Monday's focus
+tomorrow_section = find_section(prev_lines, [
+    r\"Monday's focus\",
+    r\"Tomorrow's focus\"
+])
+tomorrow_items = []
+if tomorrow_section:
+    tomorrow_items = extract_items(prev_lines, *tomorrow_section)
+
+# Deferring for later
+defer_section = find_section(prev_lines, [r'Deferring for later'])
+defer_items = []
+if defer_section:
+    defer_items = extract_items(prev_lines, *defer_section)
+
+# --- Insert into today's note ---
+
+changes_made = False
+
+# Insert tomorrow's items into today's focus
+if tomorrow_items:
+    focus_section = find_section(today_lines, [r\"Today's focus\"])
+    if focus_section:
+        start, end = focus_section
+        # Find the 'and if there's time' subsection to avoid inserting after it
+        insert_before_subsection = end
+        for i in range(start, end):
+            if re.search(r'and if there.s time', today_lines[i]):
+                insert_before_subsection = i
+                break
+        # Find last real item before the subsection
+        insert_at = start
+        for i in range(start, insert_before_subsection):
+            line = today_lines[i]
+            if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
+                insert_at = i + 1
+        for item in reversed(tomorrow_items):
+            today_lines.insert(insert_at, item)
+        changes_made = True
+        print(f'Copied {len(tomorrow_items)} line(s) to today\\'s focus')
+
+# Re-find deferred section after potential insertions
+if defer_items:
+    defer_today = find_section(today_lines, [r'Deferring for later'])
+    if defer_today:
+        start, end = defer_today
+        # Find last real item
+        insert_at = start
+        for i in range(start, end):
+            line = today_lines[i]
+            if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
+                insert_at = i + 1
+        for item in reversed(defer_items):
+            today_lines.insert(insert_at, item)
+        changes_made = True
+        print(f'Copied {len(defer_items)} line(s) to deferring for later')
+
+# Remove blank checkboxes from today's focus and deferred sections
+def remove_blank_checkboxes(lines, patterns):
+    section = find_section(lines, patterns)
+    if not section:
+        return lines
+    start, end = section
+    to_remove = []
+    for i in range(start, end):
+        if re.match(r'^\s*[-*]\s*\[\s?\]\s*$', lines[i]):
+            to_remove.append(i)
+    # Keep at least one if all items would be removed
+    real_items = [i for i in range(start, end) if i not in to_remove and lines[i].strip()]
+    if not real_items and to_remove:
+        to_remove = to_remove[1:]  # Keep one blank checkbox
+    for i in reversed(to_remove):
+        del lines[i]
+    return lines
+
+today_lines = remove_blank_checkboxes(today_lines, [r\"Today's focus\"])
+today_lines = remove_blank_checkboxes(today_lines, [r'Deferring for later'])
+
+# Check off the prep checkbox
+for i, line in enumerate(today_lines):
+    if re.search(r'\[ \].*[Cc]opy focus items and deferred items', line):
+        today_lines[i] = line.replace('[ ]', '[x]', 1)
+        changes_made = True
+        break
+
+if changes_made:
+    with open(today_path, 'w') as f:
+        f.write('\n'.join(today_lines))
+    print('Done!')
+else:
+    print('No items to copy.')
+" "$prev_note" "$today_note"
+
+# Open the daily note
+obsidian daily >/dev/null 2>&1
