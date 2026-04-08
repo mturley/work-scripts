@@ -10,6 +10,7 @@ worklog help                               # show full usage
 worklog pr opened https://github.com/org/repo/pull/123
 worklog pr reviewed org/repo#123
 worklog pr approved #123                   # infers repo from current directory
+worklog jira started RHOAIENG-12345
 worklog jira seen RHOAIENG-12345
 worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345
 ```
@@ -30,7 +31,7 @@ Reference formats: full GitHub URL, `owner/repo#123`, `repo#123`, `#123`, or bar
 
 `worklog jira <action> <ref>`
 
-Actions: `opened`, `seen`, `updated`, `commented`
+Actions: `opened`, `started`, `closed`, `seen`, `updated`, `commented`
 
 - Fetches issue type, summary, assignee, priority, and epic parent
 - For `commented`, includes a truncated excerpt of the latest comment

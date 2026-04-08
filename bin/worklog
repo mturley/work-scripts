@@ -23,11 +23,12 @@ PR_EXAMPLES="  worklog pr opened https://github.com/opendatahub-io/odh-dashboard
   worklog pr reviewed odh-dashboard#6300
   worklog pr approved #123"
 
-JIRA_ACTIONS="opened | seen | updated | commented"
+JIRA_ACTIONS="opened | started | closed | seen | updated | commented"
 JIRA_REFS="  RHOAIENG-12345
   https://issues.redhat.com/browse/RHOAIENG-12345
   https://redhat.atlassian.net/browse/RHOAIENG-12345"
-JIRA_EXAMPLES="  worklog jira seen RHOAIENG-12345
+JIRA_EXAMPLES="  worklog jira started RHOAIENG-12345
+  worklog jira seen RHOAIENG-12345
   worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345"
 
 usage_pr() {
@@ -204,6 +205,7 @@ get_emoji() {
     reviewed)  action_emoji="📝" ;;
     commented) action_emoji="💬" ;;
     approved)  action_emoji="✅" ;;
+    started)   action_emoji="🚀" ;;
     updated)   action_emoji="✏️" ;;
     *)         action_emoji="📌" ;;
   esac
@@ -218,6 +220,7 @@ title_case() {
     reviewed)  echo "Reviewed" ;;
     commented) echo "Commented on" ;;
     approved)  echo "Approved" ;;
+    started)   echo "Started" ;;
     updated)   echo "Updated" ;;
     *)         echo "$1" ;;
   esac
@@ -1008,7 +1011,7 @@ handle_test() {
 
   # --- Jira: all actions ---
   local jira_action
-  for jira_action in opened seen updated commented; do
+  for jira_action in opened started closed seen updated commented; do
     ROW_TIME="$timestamp"
     ROW_EMOJI="$(get_emoji jira "$jira_action")"
     ROW_ACTION="$(title_case "$jira_action") Jira ${jira_type}"
@@ -1017,7 +1020,7 @@ handle_test() {
     ROW_REF="[${jira_key}](${jira_url}) (${jira_priority}, mine)"
 
     # Add epic on some entries
-    if [ "$jira_action" = "opened" ] || [ "$jira_action" = "seen" ] || [ "$jira_action" = "commented" ]; then
+    if [ "$jira_action" = "opened" ] || [ "$jira_action" = "started" ] || [ "$jira_action" = "seen" ] || [ "$jira_action" = "commented" ]; then
       ROW_SUB_DETAILS+=("Epic: [${epic_key}](${epic_url}) — *${epic_summary}*")
     fi
 
@@ -1214,7 +1217,7 @@ case "$CATEGORY" in
       exit 0
     fi
     case "$ACTION" in
-      opened|seen|updated|commented) ;;
+      opened|started|closed|seen|updated|commented) ;;
       *)
         echo "ERROR: Invalid Jira action: $ACTION" >&2
         echo "" >&2
