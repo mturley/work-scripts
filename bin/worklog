@@ -92,7 +92,7 @@ Other commands:
 
   worklog              free-form log entry (prompts for text)
   worklog open         open today's daily note in Obsidian
-  worklog undo         remove the last row from the activity table
+  worklog undo         remove the last entry from the activity log
   worklog test         generate all format permutations with fake data
   worklog help         show this help
 
@@ -315,24 +315,16 @@ jira_search() {
 }
 
 # ---------------------------------------------------------------------------
-# Table formatting
+# Entry formatting
 # ---------------------------------------------------------------------------
 
-TABLE_HEADER="| Time | |"
-TABLE_SEPARATOR="|---|---|"
-
-# Row components (set by handlers, composed into a row by compose_row)
+# Row components (set by handlers, composed into an entry by compose_entry)
 ROW_TIME=""
 ROW_EMOJI=""
 ROW_ACTION=""
 ROW_REF=""
 ROW_TITLE=""
 ROW_SUB_DETAILS=()
-
-# Escape pipe characters in table cell content
-escape_cell() {
-  echo "$1" | sed 's/|/\\|/g'
-}
 
 # Get full filesystem path to today's daily note
 get_daily_note_path() {
@@ -350,34 +342,26 @@ get_daily_note_path() {
   echo "${OBSIDIAN_VAULT}/${relative_path}"
 }
 
-# Compose a table row from ROW_* globals and ROW_SUB_DETAILS array
-compose_row() {
-  local ref_escaped title_escaped
-  ref_escaped="$(escape_cell "$ROW_REF")"
-  title_escaped="$(escape_cell "$ROW_TITLE")"
-
-  local content="${ROW_EMOJI} ${ROW_ACTION}"
+# Compose a markdown entry from ROW_* globals and ROW_SUB_DETAILS array
+compose_entry() {
+  local entry="${ROW_TIME} — ${ROW_EMOJI} ${ROW_ACTION}"$'\n'$'\n'
   if [ -n "$ROW_REF" ]; then
-    content="${content}<br><br>${ref_escaped}"
+    entry+="${ROW_REF}"$'\n'
   fi
-  content="${content}<br>*${title_escaped}*"
+  entry+="*${ROW_TITLE}*"
   if [ ${#ROW_SUB_DETAILS[@]} -gt 0 ]; then
-    content="${content}<ul>"
+    entry+=$'\n'
     local detail
     for detail in "${ROW_SUB_DETAILS[@]}"; do
-      local detail_escaped
-      detail_escaped="$(escape_cell "$detail")"
-      content="${content}<li>${detail_escaped}</li>"
+      entry+=$'\n'"- ${detail}"
     done
-    content="${content}</ul>"
   fi
-
-  echo "| ${ROW_TIME} | ${content} |"
+  printf '%s' "$entry"
 }
 
-# Insert a table row into today's daily note
-insert_table_row() {
-  local row="$1"
+# Append an entry to today's daily note
+insert_entry() {
+  local entry="$1"
   local daily_note
   daily_note="$(get_daily_note_path)"
 
@@ -396,67 +380,21 @@ insert_table_row() {
 import sys
 
 filepath = sys.argv[1]
-new_row = sys.argv[2]
+entry = sys.argv[2]
 
 with open(filepath, 'r') as f:
     content = f.read()
 
-lines = content.split('\n')
-
-# Find the table header (tolerate Obsidian padding, e.g. '| Time     |')
-import re
-table_start = -1
-for i, line in enumerate(lines):
-    if re.match(r'\|\s*Time\s*\|', line):
-        table_start = i
-        break
-
-if table_start == -1:
-    # No table found — append one
-    if lines and lines[-1].strip():
-        lines.append('')
-    lines.append('$TABLE_HEADER')
-    lines.append('$TABLE_SEPARATOR')
-    lines.append(new_row)
-else:
-    # Find end of table (last line starting with |)
-    table_end = table_start + 1  # at least the separator
-    for i in range(table_start + 1, len(lines)):
-        if lines[i].startswith('|'):
-            table_end = i
-        else:
-            break
-
-    # Fix extra empty columns (e.g. from accidental clicks in Obsidian)
-    import re
-    # Split on unescaped pipes (not preceded by backslash)
-    def split_row(line):
-        return re.split(r'(?<!\\\\)\|', line)
-    # Header and separator: replace with canonical versions
-    header_cols = len(split_row('$TABLE_HEADER')) - 2  # subtract leading/trailing empties
-    actual_cols = len(split_row(lines[table_start])) - 2
-    if actual_cols > header_cols:
-        lines[table_start] = '$TABLE_HEADER'
-        lines[table_start + 1] = '$TABLE_SEPARATOR'
-        # For data rows, strip trailing empty cells
-        for i in range(table_start + 2, table_end + 1):
-            parts = split_row(lines[i])
-            # parts: ['', col1, col2, ..., '']
-            inner = parts[1:-1]
-            while len(inner) > header_cols and inner[-1].strip() == '':
-                inner.pop()
-            lines[i] = '|' + '|'.join(inner) + '|'
-
-    lines.insert(table_end + 1, new_row)
+content = content.rstrip('\n') + '\n\n\n' + entry + '\n'
 
 with open(filepath, 'w') as f:
-    f.write('\n'.join(lines))
-" "$daily_note" "$row"
+    f.write(content)
+" "$daily_note" "$entry"
 }
 
-# Remove the last data row from the activity table in today's daily note.
-# Prints the removed row to stdout.  Exits with an error if no data rows exist.
-remove_last_table_row() {
+# Remove the last worklog entry from today's daily note.
+# Prints the removed entry to stdout.  Exits with an error if no entries exist.
+remove_last_entry() {
   local daily_note
   daily_note="$(get_daily_note_path)"
 
@@ -473,37 +411,21 @@ filepath = sys.argv[1]
 with open(filepath, 'r') as f:
     content = f.read()
 
-lines = content.split('\n')
+# Find all worklog entries by timestamp line pattern: H:MM AM/PM — <emoji>
+pattern = re.compile(r'\n(\d{1,2}:\d{2}\s*[AP]M\s*\u2014\s*)')
+matches = list(pattern.finditer(content))
 
-# Find the table header
-table_start = -1
-for i, line in enumerate(lines):
-    if re.match(r'\|\s*Time\s*\|', line):
-        table_start = i
-        break
-
-if table_start == -1:
-    print('ERROR: No activity table found in daily note.', file=sys.stderr)
+if not matches:
+    print('ERROR: No activity entries found in daily note.', file=sys.stderr)
     sys.exit(1)
 
-# Find end of table (last line starting with |)
-table_end = table_start + 1  # separator
-for i in range(table_start + 1, len(lines)):
-    if lines[i].startswith('|'):
-        table_end = i
-    else:
-        break
-
-# Data rows start after header + separator (table_start + 2)
-if table_end < table_start + 2:
-    print('ERROR: Activity table has no data rows to remove.', file=sys.stderr)
-    sys.exit(1)
-
-removed = lines[table_end]
-del lines[table_end]
+last_match = matches[-1]
+entry_start = last_match.start()
+removed = content[entry_start:].strip()
+content = content[:entry_start].rstrip('\n') + '\n'
 
 with open(filepath, 'w') as f:
-    f.write('\n'.join(lines))
+    f.write(content)
 
 print(removed)
 " "$daily_note"
@@ -968,7 +890,7 @@ handle_test() {
   ROW_TIME="$timestamp"; ROW_EMOJI="📌"; ROW_ACTION="Note"; ROW_REF=""
   ROW_TITLE="Caught up on Slack messages and replied to a thread about the release timeline"
   ROW_SUB_DETAILS=()
-  TEST_ROWS+=("$(compose_row)")
+  TEST_ROWS+=("$(compose_entry)")
 
   # --- PR: all actions ---
   local pr_action
@@ -1006,7 +928,7 @@ handle_test() {
       ROW_SUB_DETAILS+=("Notes: Requested a small change, otherwise LGTM")
     fi
 
-    TEST_ROWS+=("$(compose_row)")
+    TEST_ROWS+=("$(compose_entry)")
   done
 
   # --- Jira: all actions ---
@@ -1040,7 +962,7 @@ handle_test() {
       ROW_SUB_DETAILS+=("Notes: Moved to In Progress and updated the description with the latest requirements")
     fi
 
-    TEST_ROWS+=("$(compose_row)")
+    TEST_ROWS+=("$(compose_entry)")
   done
 }
 
@@ -1057,7 +979,7 @@ prompt_and_append() {
 
   # Compose and display the entry
   local row
-  row="$(compose_row)"
+  row="$(compose_entry)"
   echo ""
   echo "${COLOR_CYAN}Log entry:${COLOR_RESET}"
   echo "$row"
@@ -1070,7 +992,7 @@ prompt_and_append() {
     if [ -n "$notes" ]; then
       notes="$(linkify_slack_urls "$notes")"
       ROW_SUB_DETAILS+=("Notes: ${notes}")
-      row="$(compose_row)"
+      row="$(compose_entry)"
       echo ""
       echo "${COLOR_CYAN}Updated entry:${COLOR_RESET}"
       echo "$row"
@@ -1080,7 +1002,7 @@ prompt_and_append() {
   # Insert into daily note and open it
   echo ""
   echo "${COLOR_GREEN}Appending to daily note...${COLOR_RESET}"
-  insert_table_row "$row"
+  insert_entry "$row"
   obsidian daily >/dev/null 2>&1
 
   echo "${COLOR_GREEN}Done!${COLOR_RESET}"
@@ -1133,9 +1055,9 @@ if [ "${1:-}" = "open" ]; then
   exit 0
 fi
 
-# Undo: remove the last row from the activity table
+# Undo: remove the last entry from the activity log
 if [ "${1:-}" = "undo" ]; then
-  removed_row="$(remove_last_table_row)"
+  removed_row="$(remove_last_entry)"
   echo ""
   echo "${COLOR_CYAN}Removed entry:${COLOR_RESET}"
   echo "$removed_row"
@@ -1149,16 +1071,15 @@ if [ "${1:-}" = "test" ]; then
   handle_test
   echo ""
   echo "${COLOR_CYAN}Test entries:${COLOR_RESET}"
-  echo "$TABLE_HEADER"
-  echo "$TABLE_SEPARATOR"
   for row in "${TEST_ROWS[@]}"; do
     echo "$row"
+    echo ""
   done
   echo ""
 
   echo "${COLOR_GREEN}Inserting test entries into daily note...${COLOR_RESET}"
   for row in "${TEST_ROWS[@]}"; do
-    insert_table_row "$row"
+    insert_entry "$row"
   done
   obsidian daily >/dev/null 2>&1
   echo "${COLOR_GREEN}Done! Check your daily note in Obsidian.${COLOR_RESET}"

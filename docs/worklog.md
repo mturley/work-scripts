@@ -42,7 +42,7 @@ Reference formats: issue key (`RHOAIENG-12345`) or full URL (`https://issues.red
 ## Other commands
 
 - `worklog open` — open today's daily note in Obsidian
-- `worklog undo` — remove the last row from the activity table
+- `worklog undo` — remove the last entry from the activity log
 - `worklog test` — insert sample entries into today's daily note to preview formatting
 - `worklog help` — show full usage
 
@@ -52,13 +52,25 @@ Bare Slack URLs in free-text inputs (freeform entries, `--detail` values, and in
 
 ## Log entry format
 
-Each entry is a row in a 2-column markdown table appended to the daily note (or created if missing). The table auto-repairs extra empty columns that Obsidian's editor may add accidentally.
+Each entry is a block of plain markdown appended to the daily note, separated by blank lines. Entries are identified by the timestamp line pattern (`H:MM AM/PM — <emoji>`).
 
 ```markdown
-| Time | |
-|---|---|
-| 3:15 PM | 🔀 📝 Reviewed PR<br><br>[odh-dashboard#6300](url) (by @author)<br>*Fix pagination*<ul><li>Review: "Looks good overall..."</li><li>Jira: [RHOAIENG-12345](url) — *Fix pagination* (Major, mine)</li></ul> |
-| 4:00 PM | 📋 👀 Seen Jira Bug<br><br>[RHOAIENG-12345](url) (Major, mine)<br>*Fix pagination*<ul><li>Epic: [RHOAIENG-12000](url) — *Model Registry improvements*</li><li>PR: [odh-dashboard#6300](url) (by @author): *Fix pagination*</li></ul> |
+3:15 PM — 🔀 📝 Reviewed PR
+
+[odh-dashboard#6300](url) (by @author)
+*Fix pagination*
+
+- Review: "Looks good overall..."
+- Jira: [RHOAIENG-12345](url) — *Fix pagination* (Major, mine)
+
+
+4:00 PM — 📋 👀 Seen Jira Bug
+
+[RHOAIENG-12345](url) (Major, mine)
+*Fix pagination*
+
+- Epic: [RHOAIENG-12000](url) — *Model Registry improvements*
+- PR: [odh-dashboard#6300](url) (by @author): *Fix pagination*
 ```
 
 ## Setup
