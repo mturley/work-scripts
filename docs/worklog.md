@@ -19,7 +19,7 @@ worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345
 
 `worklog pr <action> <ref>`
 
-Actions: `opened`, `closed`, `seen`, `reviewed`, `commented`, `approved`
+Actions: `opened`, `closed`, `seen`, `reviewed`, `commented`, `approved`, `updated`
 
 - Fetches PR title, author, and URL via `gh`
 - For `reviewed`/`commented`, includes a truncated excerpt of your latest review or comment

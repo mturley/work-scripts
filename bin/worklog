@@ -14,7 +14,7 @@ source "$SCRIPTS_DIR/helpers.sh"
 # Help / usage
 # ---------------------------------------------------------------------------
 
-PR_ACTIONS="opened | closed | seen | reviewed | commented | approved"
+PR_ACTIONS="opened | closed | seen | reviewed | commented | approved | updated"
 PR_REFS="  https://github.com/owner/repo/pull/123
   owner/repo#123
   #123  (infers repo from current directory)
@@ -972,7 +972,7 @@ handle_test() {
 
   # --- PR: all actions ---
   local pr_action
-  for pr_action in opened closed seen reviewed commented approved; do
+  for pr_action in opened closed seen reviewed commented approved updated; do
     ROW_TIME="$timestamp"
     ROW_EMOJI="$(get_emoji pr "$pr_action")"
     ROW_ACTION="$(title_case "$pr_action") PR"
@@ -1196,7 +1196,7 @@ case "$CATEGORY" in
       exit 0
     fi
     case "$ACTION" in
-      opened|closed|seen|reviewed|commented|approved) ;;
+      opened|closed|seen|reviewed|commented|approved|updated) ;;
       *)
         echo "ERROR: Invalid PR action: $ACTION" >&2
         echo "" >&2
