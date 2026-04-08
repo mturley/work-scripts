@@ -29,6 +29,39 @@ source "$SCRIPTS_DIR/helpers.sh"
 ITERM_MODE="split-v"
 while [ $# -gt 0 ]; do
   case "$1" in
+    --help|-h)
+      cat <<'HELPEOF'
+Usage: worktree [--tabs|--split] [pr-number|pr-url|branch-name|worktree-path] ...
+
+Manage git worktrees for PRs and branches.
+
+Arguments:
+  (none)              List existing worktrees and select one to manage.
+                      If run from inside a worktree, opens its REPL directly.
+  <pr-number>         Create or reopen a worktree for the given PR (e.g. 1234).
+  <pr-url>            Same, but with a full GitHub PR URL.
+  <branch-name>       Create or reopen a worktree for the given branch.
+  <worktree-path>     Open an existing worktree by its filesystem path.
+  <arg> <arg> ...     Open multiple worktrees in parallel split panes.
+
+Options:
+  --split             Open multiple worktrees in vertical split panes (default).
+  --tabs              Open multiple worktrees in separate iTerm tabs.
+  -h, --help          Show this help message and exit.
+
+Environment:
+  WORKTREES_BASE      Directory where worktrees are created (default: ~/git/.worktrees).
+
+Examples:
+  worktree                                          # list and select
+  worktree 1234                                     # PR worktree
+  worktree https://github.com/org/repo/pull/1234    # PR worktree from URL
+  worktree my-feature-branch                        # branch worktree
+  worktree 1234 5678 my-branch                      # multiple in split panes
+  worktree --tabs 1234 5678                         # multiple in tabs
+HELPEOF
+      exit 0
+      ;;
     --tabs) ITERM_MODE="tab"; shift ;;
     --split) ITERM_MODE="split-v"; shift ;;
     *) break ;;

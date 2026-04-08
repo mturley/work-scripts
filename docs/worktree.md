@@ -14,7 +14,7 @@ Unified command for creating and managing git worktrees that optionally clone in
 
 ## Usage
 
-Run `worktree` in multiple terminals to open editors in multiple branches at the same time. This is my preferred way to review multiple PRs in parallel: I use the `/review` skill from my [claude-skills](https://github.com/mturley/claude-skills) repo in each worktree's editor. It is also useful for using agents to work on multiple features/bugs in parallel, especially with the optional depenency linking.
+Run `worktree` in multiple shells (or run it once with multiple arguments to spawn it in multiple shells) to set up worktrees and open editors in multiple branches at the same time. This is my preferred way to review multiple PRs in parallel: I use the `/review` skill from my [claude-skills](https://github.com/mturley/claude-skills) repo in each worktree's editor. It is also useful for using agents to work on multiple features/bugs in parallel, especially with the optional depenency linking.
 
 ```bash
 worktree                             # list existing worktrees and select one
@@ -24,6 +24,7 @@ worktree my-feature-branch           # create or reopen a branch worktree
 worktree ~/git/.worktrees/repo--name # open an existing worktree by path
 worktree 1234 5678 my-branch         # open multiple worktrees in split panes
 worktree --tabs 1234 5678            # open multiple worktrees in separate tabs
+worktree --help                      # show usage help
 ```
 
 Based on the arguments, the script detects what you're trying to do, finds or creates the relevant worktree, then drops you into an interactive REPL (see below) to manage it.
@@ -32,7 +33,7 @@ Based on the arguments, the script detects what you're trying to do, finds or cr
 
 When given multiple arguments, each worktree opens in its own pane:
 
-- **iTerm2** — opens each worktree in a vertical split pane by default (named "worktree PR #1234", etc.). Use `--tabs` to open in separate tabs instead.
+- **iTerm2** — opens each worktree in a vertical split pane by default (named "worktree PR #1234", etc.). Use `--tabs` to open in separate tabs instead, or `--split` to explicitly request split panes.
 - **Fallback** — uses [mprocs](https://github.com/pvolok/mprocs) with a shell pane for running further commands and one pane per worktree. Running `worktree` from the shell pane dynamically adds new panes to the session.
 
 Install mprocs if not using iTerm: `brew install mprocs`

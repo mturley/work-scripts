@@ -34,6 +34,7 @@ worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
 worktree 1234 5678 my-branch         # open multiple worktrees in split panes
 worktree --tabs 1234 5678            # open multiple worktrees in separate tabs
+worktree --help                      # show usage help
 ```
 
 ```
