@@ -179,13 +179,14 @@ if prep:
         prep_end = focus_start  # prep is before focus, no overlap
 
 # Extract unchecked items from today's focus (excluding prep and if-there's-time)
+# Each item is a group: [top-level checkbox line, ...indented sub-content]
 unchecked = []
 i = focus_start
 while i < if_time_start:
     line = lines[i]
     # Match unchecked checkbox at any indentation
     if re.match(r'^(\s*[-*]\s*\[ \])', line):
-        # Collect this item and any sub-items
+        # Collect this item and any sub-content
         item_lines = [line]
         indent = len(line) - len(line.lstrip())
         j = i + 1
@@ -200,7 +201,7 @@ while i < if_time_start:
                 j += 1
             else:
                 break
-        unchecked.extend(item_lines)
+        unchecked.append(item_lines)
         i = j
     else:
         i += 1
@@ -223,17 +224,20 @@ tomorrow_header, tomorrow_start, tomorrow_end = tomorrow
 # Filter out items already present in tomorrow's section
 if unchecked:
     existing_texts = set()
-    for i in range(tomorrow_start, tomorrow_end):
-        if re.match(r'^\s*[-*]\s*\[.\]', lines[i]):
-            existing_texts.add(item_text(lines[i]))
+    # Parse existing items in tomorrow's section as groups
+    ti = tomorrow_start
+    while ti < tomorrow_end:
+        tline = lines[ti]
+        if re.match(r'^\s*[-*]\s*\[.\]', tline) and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', tline):
+            existing_texts.add(item_text(tline))
+        ti += 1
     filtered = []
     skipped = 0
-    for line in unchecked:
-        if re.match(r'^\s*[-*]\s*\[.\]', line):
-            if item_text(line) in existing_texts:
-                skipped += 1
-                continue
-        filtered.append(line)
+    for group in unchecked:
+        if item_text(group[0]) in existing_texts:
+            skipped += 1
+            continue
+        filtered.append(group)
     unchecked = filtered
     if skipped:
         print(f'Skipped {skipped} duplicate(s) already in tomorrow\\'s/monday\\'s focus')
@@ -247,9 +251,13 @@ if unchecked:
         if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
             insert_at = i + 1
 
-    for item in reversed(unchecked):
+    # Flatten groups and insert
+    flat = []
+    for group in unchecked:
+        flat.extend(group)
+    for item in reversed(flat):
         lines.insert(insert_at, item)
-    print(f'Moved {len(unchecked)} line(s) to tomorrow\\'s/monday\\'s focus')
+    print(f'Moved {len(unchecked)} item(s) to tomorrow\\'s/monday\\'s focus')
 
 # Remove blank checkboxes from tomorrow's section (re-find after insertions)
 tomorrow2 = find_section_range(lines, r\"Tomorrow's focus|Monday's focus\")

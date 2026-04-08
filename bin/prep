@@ -175,7 +175,9 @@ def find_section(lines, patterns):
     return None
 
 def extract_items(lines, start, end):
-    \"\"\"Extract non-blank checkbox items and their sub-items from a range.\"\"\"
+    \"\"\"Extract non-blank checkbox items and their sub-content as grouped items.
+    Returns a list of groups, where each group is a list of lines
+    (the top-level checkbox line followed by any indented sub-content).\"\"\"
     items = []
     i = start
     while i < end:
@@ -186,7 +188,7 @@ def extract_items(lines, start, end):
             if re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
                 i += 1
                 continue
-            # Collect this item and any sub-items (indented lines following it)
+            # Collect this item and any sub-content (indented lines following it)
             item_lines = [line]
             indent = len(line) - len(line.lstrip())
             j = i + 1
@@ -201,7 +203,7 @@ def extract_items(lines, start, end):
                     j += 1
                 else:
                     break
-            items.extend(item_lines)
+            items.append(item_lines)
             i = j
         else:
             i += 1
@@ -226,24 +228,29 @@ def item_text(line):
     return re.sub(r'^\s*[-*]\s*\[.\]\s*', '', line).strip()
 
 def get_existing_texts(lines, start, end):
-    \"\"\"Collect the text content of all checkbox items in a section.\"\"\"
+    \"\"\"Collect the text of top-level checkbox items in a section.\"\"\"
     texts = set()
-    for i in range(start, end):
-        if re.match(r'^\s*[-*]\s*\[.\]', lines[i]):
-            texts.add(item_text(lines[i]))
+    for group in extract_items(lines, start, end):
+        texts.add(item_text(group[0]))
     return texts
 
-def filter_duplicates(items, existing_texts):
-    \"\"\"Filter out items whose text already exists in the target section.\"\"\"
+def filter_duplicates(item_groups, existing_texts):
+    \"\"\"Filter out item groups whose top-level text already exists in the target.\"\"\"
     filtered = []
     skipped = 0
-    for line in items:
-        if re.match(r'^\s*[-*]\s*\[.\]', line):
-            if item_text(line) in existing_texts:
-                skipped += 1
-                continue
-        filtered.append(line)
+    for group in item_groups:
+        if item_text(group[0]) in existing_texts:
+            skipped += 1
+            continue
+        filtered.append(group)
     return filtered, skipped
+
+def flatten_groups(item_groups):
+    \"\"\"Flatten a list of item groups into a flat list of lines.\"\"\"
+    result = []
+    for group in item_groups:
+        result.extend(group)
+    return result
 
 # --- Extract items from previous note ---
 
@@ -288,10 +295,11 @@ if tomorrow_items:
                 line = today_lines[i]
                 if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
                     insert_at = i + 1
-            for item in reversed(tomorrow_items):
+            flat = flatten_groups(tomorrow_items)
+            for item in reversed(flat):
                 today_lines.insert(insert_at, item)
             changes_made = True
-            print(f'Copied {len(tomorrow_items)} line(s) to today\\'s focus')
+            print(f'Copied {len(tomorrow_items)} item(s) to today\\'s focus')
 
 # Re-find deferred section after potential insertions
 if defer_items:
@@ -309,10 +317,11 @@ if defer_items:
                 line = today_lines[i]
                 if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
                     insert_at = i + 1
-            for item in reversed(defer_items):
+            flat = flatten_groups(defer_items)
+            for item in reversed(flat):
                 today_lines.insert(insert_at, item)
             changes_made = True
-            print(f'Copied {len(defer_items)} line(s) to deferring for later')
+            print(f'Copied {len(defer_items)} item(s) to deferring for later')
 
 # Remove blank checkboxes from today's focus and deferred sections
 def remove_blank_checkboxes(lines, patterns):
