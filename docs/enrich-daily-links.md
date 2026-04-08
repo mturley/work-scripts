@@ -1,6 +1,6 @@
 # enrich-daily-links
 
-Enrich GitHub PR and Jira URLs in today's [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes) with short, descriptive markdown links. Jira links are enriched with the issue type and title via the Jira API.
+Enrich GitHub PR, Jira, and Slack URLs in today's [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes) with short, descriptive markdown links. Jira links are enriched with the issue type and title via the Jira API.
 
 ```bash
 enrich-daily-links            # enrich links in today's note
@@ -10,7 +10,7 @@ enrich-daily-links --help     # show usage
 
 ## What it does
 
-Scans today's daily note for GitHub PR URLs and Jira issue URLs and formats them as descriptive markdown links. Jira links include the issue type and title fetched from the Jira API.
+Scans today's daily note for GitHub PR URLs, Jira issue URLs, and Slack thread links, and formats them as descriptive markdown links. Jira links include the issue type and title fetched from the Jira API. Slack links are labeled "Slack thread".
 
 ### Bare URLs
 
@@ -20,6 +20,9 @@ https://github.com/opendatahub-io/odh-dashboard/pull/6300
 
 https://your-org.atlassian.net/browse/PROJ-12345
   -> [PROJ-12345 (Bug): Fix the pagination issue](https://your-org.atlassian.net/browse/PROJ-12345)
+
+https://myteam.slack.com/archives/C012345/p1234567890
+  -> [Slack thread](https://myteam.slack.com/archives/C012345/p1234567890)
 ```
 
 ### Markdown links with URL as link text
@@ -56,12 +59,14 @@ Links that already have descriptive (non-URL, non-bare-key) link text are left u
 [KEY-123 (Bug): Fix the thing](url)                       ->  no change
 [odh-dashboard#6300](https://github.com/.../pull/6300)     ->  no change
 [My custom text](https://example.com)                      ->  no change
+[Slack thread](https://myteam.slack.com/archives/...)      ->  no change
 ```
 
 ## Recognized URL patterns
 
 - **GitHub PRs:** `https://github.com/<owner>/<repo>/pull/<number>` -> `<repo>#<number>`
 - **Jira issues:** `https://<any-host>/browse/<KEY-123>` -> `<KEY-123> (<Type>): <Title>`
+- **Slack threads:** `https://<any>.slack.com/...` -> `Slack thread`
 
 ## Setup
 

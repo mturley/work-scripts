@@ -11,7 +11,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`worklog`](docs/worklog.md) — Append timestamped activity entries to your Obsidian daily note
 - [`prep`](docs/prep.md) — Copy focus and deferred items from the previous daily note to today's
 - [`eod`](docs/eod.md) — Set up tomorrow's focus by carrying over unchecked items
-- [`enrich-daily-links`](docs/enrich-daily-links.md) — Enrich GitHub/Jira URLs in today's daily note with descriptive markdown links
+- [`enrich-daily-links`](docs/enrich-daily-links.md) — Enrich GitHub/Jira/Slack URLs in today's daily note with descriptive markdown links
 
 **Commands for iTerm2**
 - [`iterm-new`](docs/iterm-new.md) — Open a new iTerm2 tab or split pane and run a command
@@ -105,7 +105,7 @@ eod "Apr 3"        # process a specific date
 
 ### [`enrich-daily-links`](docs/enrich-daily-links.md) — Daily Note Link Enricher
 
-Enrich GitHub PR and Jira URLs in today's daily note with descriptive markdown links. Jira links include the issue type and title fetched from the Jira API. Handles bare URLs, markdown links with URL as text, HTML links, and existing Jira links with just the key as text.
+Enrich GitHub PR, Jira, and Slack URLs in today's daily note with descriptive markdown links. Jira links include the issue type and title fetched from the Jira API. Slack links are labeled "Slack thread". Handles bare URLs, markdown links with URL as text, HTML links, and existing Jira links with just the key as text.
 
 ```bash
 enrich-daily-links            # enrich links in today's note

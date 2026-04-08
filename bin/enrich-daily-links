@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # enrich-daily-links - Enrich links in today's Obsidian daily note.
-# Replaces bare GitHub PR and Jira URLs (and links using the URL as link text)
-# with short formatted markdown links. Jira links are enriched with issue type
-# and title via the Jira API.
+# Replaces bare GitHub PR, Jira, and Slack URLs (and links using the URL as
+# link text) with short formatted markdown links. Jira links are enriched with
+# issue type and title via the Jira API. Slack links are labeled "Slack thread".
 # Usage: enrich-daily-links [--dry-run]
 
 set -euo pipefail
@@ -24,6 +24,7 @@ Transformations:
   Bare URLs:
     https://github.com/org/repo/pull/123      ->  [repo#123](url)
     https://your-org.atlassian.net/browse/KEY  ->  [KEY (Type): Title](url)
+    https://team.slack.com/archives/...        ->  [Slack thread](url)
 
   Links with URL as link text:
     [https://...](https://...)                 ->  [short](url)
@@ -35,6 +36,7 @@ Transformations:
   Already-formatted links are left unchanged:
     [repo#123](url)                            ->  no change
     [KEY-123 (Bug): Title](url)                ->  no change
+    [Slack thread](url)                        ->  no change
 
 Jira enrichment requires JIRA_HOST, JIRA_EMAIL, and JIRA_API_TOKEN in .env.
 Without credentials, Jira links are formatted with just the issue key.
@@ -246,9 +248,15 @@ def shorten_jira(url, skip_enrich=False):
         return format_jira_label(key, *info)
     return key
 
+def shorten_slack(url):
+    \"\"\"Return 'Slack thread' for any Slack URL.\"\"\"
+    if re.match(r'https?://[^/]*slack\.com/', url):
+        return 'Slack thread'
+    return None
+
 def shorten_url(url, skip_enrich=False):
     \"\"\"Return a short label for a URL, or None if not a recognized type.\"\"\"
-    return shorten_github_pr(url) or shorten_jira(url, skip_enrich=skip_enrich)
+    return shorten_github_pr(url) or shorten_jira(url, skip_enrich=skip_enrich) or shorten_slack(url)
 
 def is_bare_url(text):
     \"\"\"Check if text is just a URL (possibly with trailing whitespace/punctuation stripped).\"\"\"
@@ -315,7 +323,8 @@ for m in list(html_link_re.finditer(content)):
 
 github_pr_pattern = r'https?://github\.com/[^\s\)>\]]+/pull/\d+'
 jira_pattern = r'https?://[^\s\)>\]]*?/browse/[A-Z]+-\d+'
-url_pattern = '(' + github_pr_pattern + '|' + jira_pattern + ')'
+slack_pattern = r'https?://[^\s\)>\]]*?slack\.com/[^\s\)>\]]+'
+url_pattern = '(' + github_pr_pattern + '|' + jira_pattern + '|' + slack_pattern + ')'
 
 def fix_bare_urls(content):
     result = []
