@@ -221,6 +221,30 @@ def find_section_insert_point(lines, patterns):
             insert = i + 1
     return insert
 
+def item_text(line):
+    \"\"\"Strip checkbox prefix to get just the item text for comparison.\"\"\"
+    return re.sub(r'^\s*[-*]\s*\[.\]\s*', '', line).strip()
+
+def get_existing_texts(lines, start, end):
+    \"\"\"Collect the text content of all checkbox items in a section.\"\"\"
+    texts = set()
+    for i in range(start, end):
+        if re.match(r'^\s*[-*]\s*\[.\]', lines[i]):
+            texts.add(item_text(lines[i]))
+    return texts
+
+def filter_duplicates(items, existing_texts):
+    \"\"\"Filter out items whose text already exists in the target section.\"\"\"
+    filtered = []
+    skipped = 0
+    for line in items:
+        if re.match(r'^\s*[-*]\s*\[.\]', line):
+            if item_text(line) in existing_texts:
+                skipped += 1
+                continue
+        filtered.append(line)
+    return filtered, skipped
+
 # --- Extract items from previous note ---
 
 # Tomorrow's/Monday's focus
@@ -247,38 +271,48 @@ if tomorrow_items:
     focus_section = find_section(today_lines, [r\"Today's focus\"])
     if focus_section:
         start, end = focus_section
-        # Find the 'and if there's time' subsection to avoid inserting after it
-        insert_before_subsection = end
-        for i in range(start, end):
-            if re.search(r'and if there.s time', today_lines[i]):
-                insert_before_subsection = i
-                break
-        # Find last real item before the subsection
-        insert_at = start
-        for i in range(start, insert_before_subsection):
-            line = today_lines[i]
-            if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
-                insert_at = i + 1
-        for item in reversed(tomorrow_items):
-            today_lines.insert(insert_at, item)
-        changes_made = True
-        print(f'Copied {len(tomorrow_items)} line(s) to today\\'s focus')
+        existing = get_existing_texts(today_lines, start, end)
+        tomorrow_items, skipped = filter_duplicates(tomorrow_items, existing)
+        if skipped:
+            print(f'Skipped {skipped} duplicate(s) already in today\\'s focus')
+        if tomorrow_items:
+            # Find the 'and if there's time' subsection to avoid inserting after it
+            insert_before_subsection = end
+            for i in range(start, end):
+                if re.search(r'and if there.s time', today_lines[i]):
+                    insert_before_subsection = i
+                    break
+            # Find last real item before the subsection
+            insert_at = start
+            for i in range(start, insert_before_subsection):
+                line = today_lines[i]
+                if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
+                    insert_at = i + 1
+            for item in reversed(tomorrow_items):
+                today_lines.insert(insert_at, item)
+            changes_made = True
+            print(f'Copied {len(tomorrow_items)} line(s) to today\\'s focus')
 
 # Re-find deferred section after potential insertions
 if defer_items:
     defer_today = find_section(today_lines, [r'Deferring for later'])
     if defer_today:
         start, end = defer_today
-        # Find last real item
-        insert_at = start
-        for i in range(start, end):
-            line = today_lines[i]
-            if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
-                insert_at = i + 1
-        for item in reversed(defer_items):
-            today_lines.insert(insert_at, item)
-        changes_made = True
-        print(f'Copied {len(defer_items)} line(s) to deferring for later')
+        existing = get_existing_texts(today_lines, start, end)
+        defer_items, skipped = filter_duplicates(defer_items, existing)
+        if skipped:
+            print(f'Skipped {skipped} duplicate(s) already in deferring for later')
+        if defer_items:
+            # Find last real item
+            insert_at = start
+            for i in range(start, end):
+                line = today_lines[i]
+                if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
+                    insert_at = i + 1
+            for item in reversed(defer_items):
+                today_lines.insert(insert_at, item)
+            changes_made = True
+            print(f'Copied {len(defer_items)} line(s) to deferring for later')
 
 # Remove blank checkboxes from today's focus and deferred sections
 def remove_blank_checkboxes(lines, patterns):
