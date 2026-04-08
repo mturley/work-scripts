@@ -209,9 +209,15 @@ def should_skip_enrichment(text, pos):
     # Title + details start after the 3rd <br>
     return br_count < 3
 
+def escape_md_link_text(text):
+    \"\"\"Escape characters that break markdown link syntax in link text.\"\"\"
+    for ch in ['[', ']', '(', ')']:
+        text = text.replace(ch, '\\\\' + ch)
+    return text
+
 def format_jira_label(key, issue_type, summary):
     \"\"\"Build enriched link text for a Jira issue.\"\"\"
-    title_part = truncate(summary) if summary else ''
+    title_part = escape_md_link_text(truncate(summary)) if summary else ''
     if title_part and issue_type:
         return f'{key} ({issue_type}): {title_part}'
     elif title_part:
