@@ -2,12 +2,18 @@
 
 Personal CLI tools for git, GitHub, and daily workflow automation.
 
+**Commands for Git and GitHub**
 - [`worktree`](docs/worktree.md) — Create and manage git worktrees for PRs and branches
 - [`pr-ci`](docs/pr-ci.md) — Check or watch CI status for a GitHub PR
 - [`gh-safe`](docs/gh-safe.md) — AI agent guardrail for the GitHub CLI
-- [`worklog`](docs/worklog.md) (or `wlog`) — Append timestamped activity entries to your [Obsidian daily note](https://obsidian.md/help/plugins/daily-notes)
+
+**Commands for Obsidian Notes**
+- [`worklog`](docs/worklog.md) — Append timestamped activity entries to your Obsidian daily note
 - [`prep`](docs/prep.md) — Copy focus and deferred items from the previous daily note to today's
 - [`eod`](docs/eod.md) — Set up tomorrow's focus by carrying over unchecked items
+- [`enrich-daily-links`](docs/enrich-daily-links.md) — Enrich GitHub/Jira URLs in today's daily note with descriptive markdown links
+
+**Commands for iTerm2**
 - [`iterm-new`](docs/iterm-new.md) — Open a new iTerm2 tab or split pane and run a command
 
 ## Setup
@@ -95,6 +101,15 @@ eod                # process today's note
 eod yesterday      # process the most recent previous note
 eod friday         # process the most recent Friday note (handy on Monday)
 eod "Apr 3"        # process a specific date
+```
+
+### [`enrich-daily-links`](docs/enrich-daily-links.md) — Daily Note Link Enricher
+
+Enrich GitHub PR and Jira URLs in today's daily note with descriptive markdown links. Jira links include the issue type and title fetched from the Jira API. Handles bare URLs, markdown links with URL as text, HTML links, and existing Jira links with just the key as text.
+
+```bash
+enrich-daily-links            # enrich links in today's note
+enrich-daily-links --dry-run  # preview changes without modifying
 ```
 
 ## Commands for iTerm2
