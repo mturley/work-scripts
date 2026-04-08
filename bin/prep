@@ -94,6 +94,12 @@ fi
 
 echo "${COLOR_CYAN}Today's note:${COLOR_RESET} $(basename "$today_note")"
 
+# Check if prep was already run (checkbox is checked)
+if grep -q '\- \[x\].*[Cc]opy focus items and deferred items' "$today_note" 2>/dev/null; then
+  echo "${COLOR_YELLOW}prep has already been run on today's note. Skipping.${COLOR_RESET}"
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # Step 2: Find the most recent previous daily note
 # ---------------------------------------------------------------------------

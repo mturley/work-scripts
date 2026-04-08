@@ -121,6 +121,13 @@ fi
 
 echo "${COLOR_CYAN}Processing:${COLOR_RESET} $(basename "$target_note")"
 
+# Check if eod was already run (checkbox is checked)
+if grep -q '\- \[x\].*Set up tomorrow.s focus.*(run `eod`)' "$target_note" 2>/dev/null || \
+   grep -q '\- \[x\].*Set up monday.s focus.*(run `eod`)' "$target_note" 2>/dev/null; then
+  echo "${COLOR_YELLOW}eod has already been run on this note. Skipping.${COLOR_RESET}"
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # Step 2-6: Process the note with Python
 # ---------------------------------------------------------------------------
