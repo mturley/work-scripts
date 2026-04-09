@@ -24,6 +24,8 @@ worktree my-feature-branch           # create or reopen a branch worktree
 worktree ~/git/.worktrees/repo--name # open an existing worktree by path
 worktree 1234 5678 my-branch         # open multiple worktrees in split panes
 worktree --tabs 1234 5678            # open multiple worktrees in separate tabs
+worktree --mprocs 1234 5678          # open multiple worktrees in mprocs
+worktree --mprocs                    # list and select, then open in mprocs
 worktree --help                      # show usage help
 ```
 
@@ -33,8 +35,8 @@ Based on the arguments, the script detects what you're trying to do, finds or cr
 
 When given multiple arguments, each worktree opens in its own pane:
 
-- **iTerm2** — opens each worktree in a vertical split pane by default (named "worktree PR #1234", etc.). Use `--tabs` to open in separate tabs instead, or `--split` to explicitly request split panes.
-- **Fallback** — uses [mprocs](https://github.com/pvolok/mprocs) with a shell pane for running further commands and one pane per worktree. Running `worktree` from the shell pane dynamically adds new panes to the session.
+- **iTerm2** (default) — opens each worktree in a vertical split pane (named "worktree PR #1234", etc.). Use `--tabs` to open in separate tabs instead, or `--split` to explicitly request split panes.
+- **mprocs** — uses [mprocs](https://github.com/pvolok/mprocs) with a shell pane for running further commands and one pane per worktree. Running `worktree` from the shell pane dynamically adds new panes to the session. Use `--mprocs` to force this mode in iTerm, or it is used automatically as a fallback when iTerm is not detected.
 
 Install mprocs if not using iTerm: `brew install mprocs`
 
@@ -73,12 +75,13 @@ worktree> help
   log      (l)  Show git log
   open     (o)  Open worktree in your editor (focuses existing window if already open)
   pr       (p)  Open the pull request page on GitHub (shown when a PR exists for the branch)
+  clone    (c)  Clone gitignored files (dotfiles, dependencies) from the main repo
   shell    (s)  Start a nested shell in the worktree directory; exit to return to REPL
-  cleanup  (c)  Remove the worktree and its branch
+  remove   (r)  Remove the worktree and its branch
   exit     (e)  Exit the REPL
   help     (h)  Show this help
 
-Commands: [i]nfo, [l]og, [o]pen, [p]r, [s]hell, [c]leanup, [e]xit, [h]elp
+Commands: [i]nfo, [l]og, [o]pen, [p]r, [c]lone files, [s]hell, [r]emove, [e]xit, [h]elp
 
 worktree [my-branch...origin/my-branch]>
 ```

@@ -4,6 +4,54 @@
 # Base directory for all worktrees. Override with WORKTREES_BASE env var.
 WORKTREES_BASE="${WORKTREES_BASE:-$HOME/git/.worktrees}"
 
+# Port range configuration
+PORT_RANGE_FILE="${WORKTREES_BASE}/.port-ranges"
+PORT_RANGE_SIZE=10
+PORT_RANGE_BASE=4020  # First worktree starts here (4010-4019 is the default for main checkout)
+
+# assign_port_range <worktree-name>
+# Assigns a port range for the given worktree. Prints the range string (e.g. "4020-4029").
+# If the worktree already has an assignment, returns that.
+# Otherwise assigns the lowest available slot.
+assign_port_range() {
+  local wt_name="$1"
+  mkdir -p "$WORKTREES_BASE"
+  touch "$PORT_RANGE_FILE"
+
+  # Check if already assigned
+  local existing
+  existing=$(awk -v name="$wt_name" '$2 == name {print $1; exit}' "$PORT_RANGE_FILE")
+  if [ -n "$existing" ]; then
+    local start=$((PORT_RANGE_BASE + existing * PORT_RANGE_SIZE))
+    echo "${start}-$((start + PORT_RANGE_SIZE - 1))"
+    return
+  fi
+
+  # Find lowest available slot (0, 1, 2, ...)
+  local used_slots slot=0
+  used_slots=$(awk '{print $1}' "$PORT_RANGE_FILE" | sort -n)
+  for used in $used_slots; do
+    if [ "$slot" -eq "$used" ]; then
+      slot=$((slot + 1))
+    fi
+  done
+
+  echo "$slot $wt_name" >> "$PORT_RANGE_FILE"
+  local start=$((PORT_RANGE_BASE + slot * PORT_RANGE_SIZE))
+  echo "${start}-$((start + PORT_RANGE_SIZE - 1))"
+}
+
+# release_port_range <worktree-name>
+# Releases the port range for a worktree being cleaned up.
+release_port_range() {
+  local wt_name="$1"
+  if [ -f "$PORT_RANGE_FILE" ]; then
+    local tmp="${PORT_RANGE_FILE}.tmp"
+    grep -v " ${wt_name}$" "$PORT_RANGE_FILE" > "$tmp" 2>/dev/null || true
+    mv "$tmp" "$PORT_RANGE_FILE"
+  fi
+}
+
 # Terminal colors
 COLOR_BLUE="$(tput setaf 12 2>/dev/null || true)"
 COLOR_CYAN="$(tput setaf 6 2>/dev/null || true)"
@@ -233,7 +281,7 @@ clone_worktree_files() {
     if [ -n "${dotfile_selected[0]}" ]; then
       while IFS= read -r line; do [ -n "$line" ] && dotfile_final+=("$line"); done <<< "${dotfile_selected[0]}"
     fi
-    for df in "${dotfile_final[@]}"; do clone_paths+=("$df"); done
+    for df in "${dotfile_final[@]+${dotfile_final[@]}}"; do clone_paths+=("$df"); done
   fi
 
   # --- Dirs (only in "all" mode) ---
@@ -250,7 +298,7 @@ clone_worktree_files() {
       if [ -n "${dir_selected[0]}" ]; then
         while IFS= read -r line; do [ -n "$line" ] && dir_final+=("$line"); done <<< "${dir_selected[0]}"
       fi
-      for d in "${dir_final[@]}"; do clone_paths+=("$d"); done
+      for d in "${dir_final[@]+${dir_final[@]}}"; do clone_paths+=("$d"); done
     fi
   fi
 
@@ -399,18 +447,15 @@ open_editor() {
         return
         ;;
       "None")
-        echo "Skipping editor (remembered preference)."
-        return
         ;;
     esac
   fi
 
   local choice
   choice="$(prompt_choice "Which editor?" "VS Code" "Cursor" "None")"
-  echo "$choice" > "$cache_file"
   case "$choice" in
-    "VS Code") env -u CLAUDECODE code --new-window "$wt_path" ;;
-    "Cursor") env -u CLAUDECODE cursor --new-window "$wt_path" ;;
+    "VS Code") echo "$choice" > "$cache_file"; env -u CLAUDECODE code --new-window "$wt_path" ;;
+    "Cursor") echo "$choice" > "$cache_file"; env -u CLAUDECODE cursor --new-window "$wt_path" ;;
     "None") echo "Skipping editor." ;;
   esac
 }
@@ -418,7 +463,7 @@ open_editor() {
 # worktree_repl <repo-root> <worktree-path>
 # Interactive loop offering shell, open, cleanup, and exit commands.
 worktree_repl() {
-  local repo_root="$1" wt_path="$2"
+  local repo_root="$1" wt_path="$2" scripts_dir="${3:-}"
   local wt_name branch tracking pr_num pr_url
   wt_name="$(basename "$wt_path")"
   branch="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
@@ -477,6 +522,9 @@ worktree_repl() {
         echo "${cyan}Tracking:${reset} ${info_parts} ${tracking}"
       fi
     fi
+    if [ -n "${worktree_ports:-}" ]; then
+      echo "${cyan}Ports:${reset} ${worktree_ports} (dev servers can use ports in this range)"
+    fi
     if [ -z "$(git -C "$wt_path" status --short)" ]; then
       echo "${cyan}Git status:${reset} working tree clean"
     else
@@ -486,11 +534,14 @@ worktree_repl() {
   }
 
   _worktree_commands() {
-    local pr_cmd=""
+    local pr_cmd="" clone_cmd=""
     if [ -n "${pr_url:-}" ]; then
       pr_cmd="[p]r, "
     fi
-    echo "${blue}Commands: [i]nfo, [l]og, [o]pen, ${pr_cmd}[s]hell, [c]leanup, [e]xit, [h]elp${reset}"
+    if [ -n "$scripts_dir" ]; then
+      clone_cmd="[c]lone files, "
+    fi
+    echo "${blue}Commands: [i]nfo, [l]og, [o]pen, ${pr_cmd}${clone_cmd}[s]hell, [r]emove, [e]xit, [h]elp${reset}"
   }
 
   _worktree_help() {
@@ -501,20 +552,28 @@ worktree_repl() {
     if [ -n "${pr_url:-}" ]; then
       echo "  ${blue}pr${reset}       (p)  Open the pull request page on GitHub"
     fi
+    if [ -n "$scripts_dir" ]; then
+      echo "  ${blue}clone${reset}    (c)  Clone gitignored files (dotfiles, dependencies) from the main repo"
+    fi
     echo "  ${blue}shell${reset}    (s)  Start a nested shell in the worktree directory; exit to return to REPL"
-    echo "  ${blue}cleanup${reset}  (c)  Remove the worktree and its branch"
+    echo "  ${blue}remove${reset}   (r)  Remove the worktree and its branch"
     echo "  ${blue}exit${reset}     (e)  Exit the REPL"
     echo "  ${blue}help${reset}     (h)  Show this help"
   }
 
-  # Set iTerm2 tab title
-  local iterm_label=""
+  # Assign port range for this worktree
+  local worktree_ports
+  worktree_ports="$(assign_port_range "$wt_name")"
+
+  # Set iTerm2 tab title and WORKTREE_TITLE
+  local worktree_title iterm_label=""
+  if [ -n "${pr_num:-}" ]; then
+    worktree_title="worktree PR #${pr_num}"
+  else
+    worktree_title="worktree ${branch}"
+  fi
   if [ "$TERM_PROGRAM" = "iTerm.app" ]; then
-    if [ -n "${pr_num:-}" ]; then
-      iterm_label="worktree PR #${pr_num}"
-    else
-      iterm_label="worktree ${branch}"
-    fi
+    iterm_label="$worktree_title"
     printf '\033]1;%s\007' "$iterm_label"
   fi
 
@@ -550,7 +609,7 @@ worktree_repl() {
       shell|s)
         echo "Starting shell in $(short_path "$wt_path")"
         echo "Exit the shell to return to this REPL."
-        (cd "$wt_path" && "$SHELL")
+        (cd "$wt_path" && WORKTREE_PORTS="$worktree_ports" WORKTREE_TITLE="$worktree_title" "$SHELL")
         echo ""
         echo "Back in worktree REPL."
         if [ -n "$iterm_label" ]; then
@@ -558,10 +617,18 @@ worktree_repl() {
         fi
         _worktree_info
         ;;
-      cleanup|c)
+      clone|c)
+        if [ -n "$scripts_dir" ]; then
+          clone_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
+        else
+          echo "Clone files not available (missing scripts directory)."
+        fi
+        ;;
+      remove|r)
         echo "This will remove the worktree at:"
         echo "  $(short_path "$wt_path")"
         if prompt_yn "Proceed?"; then
+          release_port_range "$wt_name"
           remove_worktree "$wt_path"
           echo "Worktree removed."
           git worktree prune 2>/dev/null
@@ -608,7 +675,7 @@ worktree_post_setup() {
   detect_editor
   open_editor "$wt_path"
 
-  worktree_repl "$repo_root" "$wt_path"
+  worktree_repl "$repo_root" "$wt_path" "$scripts_dir"
 }
 
 # resolve_worktree <arg>

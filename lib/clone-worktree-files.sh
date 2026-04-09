@@ -30,18 +30,23 @@ SOURCE_ROOT="${2:?Missing source root}"
 case "$MODE" in
   --list-dirs)
     # node_modules dirs (prune to avoid recursing into them)
-    find "$SOURCE_ROOT" -path "*/.git" -prune -o \
+    find "$SOURCE_ROOT" \
+      -path "*/.git" -prune -o \
+      -path "*/.worktrees" -prune -o \
+      -path "*/.claude/worktrees" -prune -o \
       -name node_modules -type d -prune -print \
       2>/dev/null | while IFS= read -r p; do
       echo "${p#"$SOURCE_ROOT"/}"
     done
 
-    # dist/ and bin/ build output dirs (skip node_modules and .git)
+    # dist/ and bin/ build output dirs (skip node_modules, .git, and worktrees)
     # Skip directories that contain tracked files (cloning over them would
     # cause git to report tracked files as deleted).
     find "$SOURCE_ROOT" \
       -path "*/.git" -prune -o \
       -path "*/node_modules" -prune -o \
+      -path "*/.worktrees" -prune -o \
+      -path "*/.claude/worktrees" -prune -o \
       \( -name dist -o -name bin \) -type d -print \
       2>/dev/null | while IFS= read -r p; do
       rel="${p#"$SOURCE_ROOT"/}"

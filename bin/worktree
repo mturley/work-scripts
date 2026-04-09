@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # worktree - Manage git worktrees for PRs and branches
 #
-# Usage: worktree [--tabs|--split] [pr-number|pr-url|branch-name|worktree-path] ...
+# Usage: worktree [--tabs|--split|--mprocs] [pr-number|pr-url|branch-name|worktree-path] ...
 #
 # With no arguments, lists existing worktrees and prompts to select one.
 # With one argument, opens or creates a worktree for the given PR/branch.
@@ -27,11 +27,12 @@ source "$SCRIPTS_DIR/helpers.sh"
 
 # --- Parse flags ---
 ITERM_MODE="split-v"
+USE_MPROCS=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<'HELPEOF'
-Usage: worktree [--tabs|--split] [pr-number|pr-url|branch-name|worktree-path] ...
+Usage: worktree [--tabs|--split|--mprocs] [pr-number|pr-url|branch-name|worktree-path] ...
 
 Manage git worktrees for PRs and branches.
 
@@ -45,8 +46,9 @@ Arguments:
   <arg> <arg> ...     Open multiple worktrees in parallel split panes.
 
 Options:
-  --split             Open multiple worktrees in vertical split panes (default).
+  --split             Open multiple worktrees in vertical split panes (default in iTerm).
   --tabs              Open multiple worktrees in separate iTerm tabs.
+  --mprocs            Use mprocs instead of iTerm split panes/tabs.
   -h, --help          Show this help message and exit.
 
 Environment:
@@ -59,14 +61,20 @@ Examples:
   worktree my-feature-branch                        # branch worktree
   worktree 1234 5678 my-branch                      # multiple in split panes
   worktree --tabs 1234 5678                         # multiple in tabs
+  worktree --mprocs 1234 5678                       # multiple in mprocs
 HELPEOF
       exit 0
       ;;
     --tabs) ITERM_MODE="tab"; shift ;;
     --split) ITERM_MODE="split-v"; shift ;;
+    --mprocs) USE_MPROCS=true; shift ;;
     *) break ;;
   esac
 done
+
+# Build flags array for re-exec calls
+REEXEC_FLAGS=()
+$USE_MPROCS && REEXEC_FLAGS+=(--mprocs)
 
 CYAN="$(tput setaf 6 2>/dev/null || true)"
 RESET="$(tput sgr0 2>/dev/null || true)"
@@ -83,6 +91,12 @@ pane_label() {
     if [ -n "$pr_num" ]; then
       label="PR #$pr_num"
     fi
+  elif [[ "$(basename "$arg")" == *--pr-* ]]; then
+    local pr_num
+    pr_num="$(basename "$arg" | sed 's/.*--pr-\([0-9]*\)-.*/\1/')"
+    label="PR #$pr_num"
+  elif [ -d "$arg" ] || [[ "$arg" == "$WORKTREES_BASE"/* ]]; then
+    label="$(basename "$arg")"
   fi
   echo "worktree $label"
 }
@@ -101,7 +115,7 @@ fi
 if [ $# -gt 1 ]; then
   SELF="$(readlink -f "$0")"
 
-  if [ "$TERM_PROGRAM" = "iTerm.app" ]; then
+  if [ "$TERM_PROGRAM" = "iTerm.app" ] && ! $USE_MPROCS; then
     # iTerm: open each worktree in a new tab
     for arg in "$@"; do
       label="$(pane_label "$arg")"
@@ -147,7 +161,7 @@ if [ $# -eq 0 ]; then
     WT_PATH="${WORKTREES_BASE}/${WT_NAME}"
     if [ -e "$WT_PATH/.git" ]; then
       REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-      worktree_repl "$REPO_ROOT" "$WT_PATH"
+      worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
       exit 0
     fi
   fi
@@ -204,7 +218,7 @@ if [ $# -eq 0 ]; then
         echo "No non-orphaned worktrees to open."
         exit 0
       fi
-      exec "$0" "${selected_paths[@]}"
+      exec "$0" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "${selected_paths[@]}"
     fi
 
     # Parse comma-separated numbers
@@ -233,7 +247,7 @@ if [ $# -eq 0 ]; then
         name="${worktrees[$idx]% (orphaned)}"
         selected_paths+=("${WORKTREES_BASE}/${name}")
       done
-      exec "$0" "${selected_paths[@]}"
+      exec "$0" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "${selected_paths[@]}"
     fi
 
     # Single selection: handle inline
@@ -267,7 +281,7 @@ if [ $# -eq 0 ]; then
 
   echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
   REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-  worktree_repl "$REPO_ROOT" "$WT_PATH"
+  worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
   exit 0
 fi
 
@@ -322,7 +336,7 @@ if ! is_pr_arg "$ARG" && resolve_worktree "$ARG"; then
     else
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
     fi
-    worktree_repl "$REPO_ROOT" "$WT_PATH"
+    worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
     exit 0
   fi
 fi
