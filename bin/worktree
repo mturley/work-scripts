@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # worktree - Manage git worktrees for PRs and branches
 #
-# Usage: worktree [--tabs|--split|--mprocs] [pr-number|pr-url|branch-name|worktree-path] ...
+# Usage: worktree [--tabs|--split|--iterm] [pr-number|pr-url|branch-name|worktree-path] ...
 #
 # With no arguments, lists existing worktrees and prompts to select one.
-# With one argument, opens or creates a worktree for the given PR/branch.
-# With multiple arguments, opens each in a separate terminal pane (requires
-# iTerm2 or mprocs).
+# With one or more arguments, opens worktrees in mprocs with a shell pane
+# (requires mprocs, or use --iterm for iTerm2 split panes).
 #
 # Options:
-#   --split  Open multiple worktrees in vertical split panes (default)
-#   --tabs   Open multiple worktrees in separate tabs
+#   --iterm  Use iTerm2 split panes instead of mprocs (default: mprocs)
+#   --split  Open multiple worktrees in vertical split panes (iTerm, implies --iterm)
+#   --tabs   Open multiple worktrees in separate tabs (iTerm, implies --iterm)
 
 # Detect if the current directory has been deleted (e.g. after worktree cleanup)
 if ! pwd &>/dev/null; then
@@ -27,12 +27,12 @@ source "$SCRIPTS_DIR/helpers.sh"
 
 # --- Parse flags ---
 ITERM_MODE="split-v"
-USE_MPROCS=false
+USE_ITERM=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<'HELPEOF'
-Usage: worktree [--tabs|--split|--mprocs] [pr-number|pr-url|branch-name|worktree-path] ...
+Usage: worktree [--iterm|--tabs|--split] [pr-number|pr-url|branch-name|worktree-path] ...
 
 Manage git worktrees for PRs and branches.
 
@@ -43,12 +43,13 @@ Arguments:
   <pr-url>            Same, but with a full GitHub PR URL.
   <branch-name>       Create or reopen a worktree for the given branch.
   <worktree-path>     Open an existing worktree by its filesystem path.
-  <arg> <arg> ...     Open multiple worktrees in parallel split panes.
+  <arg> <arg> ...     Open multiple worktrees in parallel panes.
+                      All arguments open in mprocs with a shell pane (default).
 
 Options:
-  --split             Open multiple worktrees in vertical split panes (default in iTerm).
-  --tabs              Open multiple worktrees in separate iTerm tabs.
-  --mprocs            Use mprocs instead of iTerm split panes/tabs.
+  --iterm             Use iTerm2 split panes instead of mprocs.
+  --split             Open multiple worktrees in vertical split panes (iTerm, implies --iterm).
+  --tabs              Open multiple worktrees in separate iTerm tabs (implies --iterm).
   -h, --help          Show this help message and exit.
 
 Environment:
@@ -59,22 +60,22 @@ Examples:
   worktree 1234                                     # PR worktree
   worktree https://github.com/org/repo/pull/1234    # PR worktree from URL
   worktree my-feature-branch                        # branch worktree
-  worktree 1234 5678 my-branch                      # multiple in split panes
-  worktree --tabs 1234 5678                         # multiple in tabs
-  worktree --mprocs 1234 5678                       # multiple in mprocs
+  worktree 1234 5678 my-branch                      # multiple in mprocs (default)
+  worktree --iterm 1234 5678                        # multiple in iTerm split panes
+  worktree --tabs 1234 5678                         # multiple in iTerm tabs
 HELPEOF
       exit 0
       ;;
-    --tabs) ITERM_MODE="tab"; shift ;;
-    --split) ITERM_MODE="split-v"; shift ;;
-    --mprocs) USE_MPROCS=true; shift ;;
+    --tabs) ITERM_MODE="tab"; USE_ITERM=true; shift ;;
+    --split) ITERM_MODE="split-v"; USE_ITERM=true; shift ;;
+    --iterm) USE_ITERM=true; shift ;;
     *) break ;;
   esac
 done
 
 # Build flags array for re-exec calls
 REEXEC_FLAGS=()
-$USE_MPROCS && REEXEC_FLAGS+=(--mprocs)
+$USE_ITERM && REEXEC_FLAGS+=(--iterm)
 
 CYAN="$(tput setaf 6 2>/dev/null || true)"
 RESET="$(tput sgr0 2>/dev/null || true)"
@@ -115,8 +116,12 @@ fi
 if [ $# -gt 1 ]; then
   SELF="$(readlink -f "$0")"
 
-  if [ "$TERM_PROGRAM" = "iTerm.app" ] && ! $USE_MPROCS; then
-    # iTerm: open each worktree in a new tab
+  if $USE_ITERM; then
+    if [ "$TERM_PROGRAM" != "iTerm.app" ]; then
+      echo "ERROR: --iterm requires iTerm2, but TERM_PROGRAM is '${TERM_PROGRAM:-unset}'." >&2
+      exit 1
+    fi
+    # iTerm: open each worktree in a new tab/pane
     for arg in "$@"; do
       label="$(pane_label "$arg")"
       iterm-new "$ITERM_MODE" -n "$label" "$SELF" "$arg"
@@ -124,9 +129,9 @@ if [ $# -gt 1 ]; then
     exit 0
   fi
 
-  # Fallback: mprocs
+  # Default: mprocs
   if ! command -v mprocs &>/dev/null; then
-    echo "ERROR: Multiple worktrees require iTerm2 or mprocs." >&2
+    echo "ERROR: Multiple worktrees require mprocs (or use --iterm in iTerm2)." >&2
     echo "  Install mprocs: brew install mprocs" >&2
     exit 1
   fi
@@ -134,9 +139,11 @@ if [ $# -gt 1 ]; then
   MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
   rm -f "$MPROCS_CFG"
   trap "rm -f '$MPROCS_CFG'" EXIT
+  SHELL_LABEL="[$(basename "$SHELL")]"
   echo "procs:" > "$MPROCS_CFG"
-  echo "  shell:" >> "$MPROCS_CFG"
+  echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
   echo "    shell: \"$SHELL\"" >> "$MPROCS_CFG"
+  echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
   echo "    env:" >> "$MPROCS_CFG"
   echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
   for arg in "$@"; do
@@ -148,6 +155,33 @@ if [ $# -gt 1 ]; then
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
   done
   exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
+fi
+
+# --- Single argument: wrap in mprocs with shell + worktree pane ---
+if [ $# -eq 1 ] && ! $USE_ITERM && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
+  if ! command -v mprocs &>/dev/null; then
+    echo "mprocs not found, falling back to inline mode." >&2
+  else
+    SELF="$(readlink -f "$0")"
+    MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
+    MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
+    rm -f "$MPROCS_CFG"
+    trap "rm -f '$MPROCS_CFG'" EXIT
+    label="$(pane_label "$1")"
+    SHELL_LABEL="[$(basename "$SHELL")]"
+    echo "procs:" > "$MPROCS_CFG"
+    echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
+    echo "    shell: \"$SHELL\"" >> "$MPROCS_CFG"
+    echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
+    echo "    env:" >> "$MPROCS_CFG"
+    echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+    echo "  \"$label\":" >> "$MPROCS_CFG"
+    echo "    shell: \"$SELF $1\"" >> "$MPROCS_CFG"
+    echo "    env:" >> "$MPROCS_CFG"
+    echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
+    echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+    exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
+  fi
 fi
 
 # --- No arguments: list and select (or enter REPL if inside a worktree) ---
@@ -279,10 +313,7 @@ if [ $# -eq 0 ]; then
     exit 0
   fi
 
-  echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
-  REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-  worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
-  exit 0
+  exec "$0" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "$WT_PATH"
 fi
 
 ARG="$1"

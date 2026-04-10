@@ -6,7 +6,8 @@ Unified command for creating and managing git worktrees that optionally clone in
 
 - [GitHub CLI](https://cli.github.com/) (`gh`, must be authenticated)
 - Python 3
-- For multi-worktree support: [iTerm2](https://iterm2.com/) or [mprocs](https://github.com/pvolok/mprocs) (`brew install mprocs`)
+- [mprocs](https://github.com/pvolok/mprocs) (`brew install mprocs`) for the default multi-pane terminal (shell + worktree panes). Falls back to inline mode if not installed.
+- Optionally, [iTerm2](https://iterm2.com/) (with `--iterm`) for multi-worktree split panes/tabs instead of mprocs
 - Optionally, set `WORKTREES_BASE` to control where worktrees are created (default: `~/git/.worktrees`). This should be outside your project git repos.
   ```bash
   export WORKTREES_BASE=$HOME/git/.worktrees
@@ -22,23 +23,19 @@ worktree 1234                        # create or reopen a worktree for PR #1234
 worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
 worktree ~/git/.worktrees/repo--name # open an existing worktree by path
-worktree 1234 5678 my-branch         # open multiple worktrees in split panes
-worktree --tabs 1234 5678            # open multiple worktrees in separate tabs
-worktree --mprocs 1234 5678          # open multiple worktrees in mprocs
-worktree --mprocs                    # list and select, then open in mprocs
+worktree 1234 5678 my-branch         # open multiple worktrees in mprocs (default)
+worktree --iterm 1234 5678           # open multiple worktrees in iTerm split panes
+worktree --tabs 1234 5678            # open multiple worktrees in iTerm tabs
 worktree --help                      # show usage help
 ```
 
 Based on the arguments, the script detects what you're trying to do, finds or creates the relevant worktree, then drops you into an interactive REPL (see below) to manage it.
 
-### Multiple Worktrees
+### mprocs Multi-Pane Terminal
 
-When given multiple arguments, each worktree opens in its own pane:
+By default, every worktree session launches in [mprocs](https://github.com/pvolok/mprocs) with a **shell pane** (for running further commands) and one **worktree pane** per argument. This applies whether you pass one argument or many. Running `worktree` from the shell pane dynamically adds new panes to the session. If mprocs is not installed, falls back to inline mode.
 
-- **iTerm2** (default) — opens each worktree in a vertical split pane (named "worktree PR #1234", etc.). Use `--tabs` to open in separate tabs instead, or `--split` to explicitly request split panes.
-- **mprocs** — uses [mprocs](https://github.com/pvolok/mprocs) with a shell pane for running further commands and one pane per worktree. Running `worktree` from the shell pane dynamically adds new panes to the session. Use `--mprocs` to force this mode in iTerm, or it is used automatically as a fallback when iTerm is not detected.
-
-Install mprocs if not using iTerm: `brew install mprocs`
+- **iTerm2** — with `--iterm` and multiple arguments, opens each worktree in a vertical split pane (named "worktree PR #1234", etc.). Use `--tabs` to open in separate tabs instead, or `--split` to explicitly request split panes.
 
 * **No arguments** — if run from within a worktree directory under `$WORKTREES_BASE`, drops directly into the REPL for that worktree. Otherwise, lists all worktrees, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up. Supports comma-separated selections (e.g. `1,3,5`) or `all` to open multiple worktrees in parallel.
 
