@@ -471,14 +471,10 @@ maybe_setup_vscode_tasks() {
     return 0
   fi
 
-  # Check cached preference
+  # Check cached preference (only "Yes" is persisted; "No" is asked each time)
   if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
-    local pref
-    pref="$(cat "$VSCODE_TASKS_PREF_FILE")"
-    if [ "$pref" = "No" ]; then
-      return 1
-    fi
     # pref is "Yes", fall through to create
+    true
   else
     # Ask user
     echo ""
@@ -487,7 +483,6 @@ maybe_setup_vscode_tasks() {
     if prompt_yn "Set up auto-REPL task?"; then
       echo "Yes" > "$VSCODE_TASKS_PREF_FILE"
     else
-      echo "No" > "$VSCODE_TASKS_PREF_FILE"
       return 1
     fi
   fi
