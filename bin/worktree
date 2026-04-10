@@ -80,6 +80,13 @@ HELPEOF
   esac
 done
 
+# Clean up stale mprocs config files from previous sessions
+STALE_MPROCS_COUNT="$(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$STALE_MPROCS_COUNT" -gt 0 ]; then
+  find /tmp -maxdepth 1 -name "worktree-mprocs-*" -exec rm -f {} + 2>/dev/null
+  echo "Cleaned up ${STALE_MPROCS_COUNT} stale mprocs config file(s)."
+fi
+
 # Build flags array for re-exec calls
 REEXEC_FLAGS=()
 $USE_ITERM && REEXEC_FLAGS+=(--iterm)
