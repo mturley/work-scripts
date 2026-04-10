@@ -523,7 +523,8 @@ worktree_repl() {
       fi
     fi
     if [ -n "${worktree_ports:-}" ]; then
-      echo "${cyan}Ports:${reset} ${worktree_ports} (dev servers can use ports in this range)"
+      echo "${cyan}Environment:${reset}"
+      echo "  WORKTREE_PORTS=${worktree_ports} (reserved for dev servers in this worktree's child shell)"
     fi
     if [ -z "$(git -C "$wt_path" status --short)" ]; then
       echo "${cyan}Git status:${reset} working tree clean"
@@ -549,9 +550,7 @@ worktree_repl() {
     echo "  ${blue}info${reset}     (i)  Show PR URL (if applicable), worktree path, and git status"
     echo "  ${blue}log${reset}      (l)  Show git log"
     echo "  ${blue}open${reset}     (o)  Open worktree in your editor (focuses existing window if already open)"
-    if [ -n "${pr_url:-}" ]; then
-      echo "  ${blue}pr${reset}       (p)  Open the pull request page on GitHub"
-    fi
+    echo "  ${blue}pr${reset}       (p)  Open the pull request page on GitHub (if applicable)"
     if [ -n "$scripts_dir" ]; then
       echo "  ${blue}clone${reset}    (c)  Clone gitignored files (dotfiles, dependencies) from the main repo"
     fi
@@ -568,9 +567,9 @@ worktree_repl() {
   # Set iTerm2 tab title and WORKTREE_TITLE
   local worktree_title iterm_label=""
   if [ -n "${pr_num:-}" ]; then
-    worktree_title="worktree PR #${pr_num}"
+    worktree_title="wt PR #${pr_num}"
   else
-    worktree_title="worktree ${branch}"
+    worktree_title="wt ${branch}"
   fi
   if [ "$TERM_PROGRAM" = "iTerm.app" ]; then
     iterm_label="$worktree_title"
@@ -631,7 +630,7 @@ worktree_repl() {
           release_port_range "$wt_name"
           remove_worktree "$wt_path"
           echo "Worktree removed."
-          git worktree prune 2>/dev/null
+          git worktree prune 2>/dev/null || true
           if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
             echo ""
             echo "To close this pane: Ctrl+A → d → y"

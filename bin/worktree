@@ -105,7 +105,7 @@ pane_label() {
     # Strip "repo--" prefix from worktree directory names to get the branch part
     label="${dir_name#*--}"
   fi
-  echo "worktree $label"
+  echo "wt $label"
 }
 
 # --- Inside mprocs: add pane(s) to the existing session ---
