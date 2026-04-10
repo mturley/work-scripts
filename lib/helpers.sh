@@ -788,22 +788,14 @@ parse_json() {
 worktree_post_setup() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
 
-  # --- Detect Editor and Open ---
+  # --- Detect Editor and set up auto-REPL task before opening ---
   echo ""
   detect_editor
+
+  # Offer VS Code auto-REPL task (must happen before opening editor
+  # so tasks.json exists when the folder opens)
+  maybe_setup_vscode_tasks "$wt_path" "$repo_root"
   open_editor "$wt_path"
-
-  # --- Offer VS Code auto-REPL task ---
-  if maybe_setup_vscode_tasks "$wt_path" "$repo_root"; then
-    # REPL will auto-start in VS Code's terminal; no need to run it here
-    echo ""
-    echo "The REPL will start automatically in VS Code's terminal."
-    if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
-      echo "To close this pane: Ctrl+A → d → y"
-    fi
-    return
-  fi
-
   worktree_repl "$repo_root" "$wt_path" "$scripts_dir"
 }
 
