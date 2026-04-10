@@ -80,11 +80,22 @@ HELPEOF
   esac
 done
 
-# Clean up stale mprocs config files from previous sessions
-STALE_MPROCS_COUNT="$(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$STALE_MPROCS_COUNT" -gt 0 ]; then
-  find /tmp -maxdepth 1 -name "worktree-mprocs-*" -exec rm -f {} + 2>/dev/null
-  echo "Cleaned up ${STALE_MPROCS_COUNT} stale mprocs config file(s)."
+# Clean up stale mprocs config/count files from dead sessions
+# Files are named worktree-mprocs-<PID>.yaml and worktree-mprocs-<PID>-count
+STALE_MPROCS_CLEANED=0
+while IFS= read -r f; do
+  fname="$(basename "$f")"
+  # Extract PID: strip prefix and known suffixes
+  pid="${fname#worktree-mprocs-}"
+  pid="${pid%.yaml}"
+  pid="${pid%-count}"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$f"
+    STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
+  fi
+done < <(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null)
+if [ "$STALE_MPROCS_CLEANED" -gt 0 ]; then
+  echo "Cleaned up ${STALE_MPROCS_CLEANED} stale mprocs file(s)."
 fi
 
 # Build flags array for re-exec calls
@@ -247,10 +258,30 @@ fi
 # --- Inside mprocs: add pane(s) to the existing session ---
 if [ $# -gt 0 ] && [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
   SELF="$(readlink -f "$0")"
+  # Track proc count for this mprocs session to enable select-proc after add
+  MPROCS_COUNT_FILE="/tmp/worktree-mprocs-${WORKTREE_MPROCS_PID:-unknown}-count"
+  if [ ! -f "$MPROCS_COUNT_FILE" ]; then
+    # Initialize: count procs from the config file
+    MPROCS_CFG_FILE="/tmp/worktree-mprocs-${WORKTREE_MPROCS_PID:-unknown}.yaml"
+    if [ -f "$MPROCS_CFG_FILE" ]; then
+      PROC_COUNT="$(grep -c '^  "' "$MPROCS_CFG_FILE" 2>/dev/null || echo 2)"
+    else
+      PROC_COUNT=2
+    fi
+    echo "$PROC_COUNT" > "$MPROCS_COUNT_FILE"
+  fi
   for arg in "$@"; do
     label="$(pane_label "$arg")"
     mprocs --server "$MPROCS_SOCKET" --ctl "{c: add-proc, cmd: \"cd $(pwd) && WORKTREE_MPROCS_PANE=1 MPROCS_SOCKET=$MPROCS_SOCKET $SELF $arg\", name: \"$label\"}"
+    # Increment the count
+    CURRENT_COUNT="$(cat "$MPROCS_COUNT_FILE")"
+    echo "$((CURRENT_COUNT + 1))" > "$MPROCS_COUNT_FILE"
   done
+  # If only one pane was added, switch to it
+  if [ $# -eq 1 ]; then
+    NEW_INDEX="$(cat "$MPROCS_COUNT_FILE")"
+    mprocs --server "$MPROCS_SOCKET" --ctl "{c: select-proc, index: $((NEW_INDEX - 1))}"
+  fi
   exit 0
 fi
 
@@ -294,8 +325,9 @@ if [ $# -gt 1 ]; then
   fi
   MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
   MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
+  MPROCS_COUNT="/tmp/worktree-mprocs-$$-count"
   rm -f "$MPROCS_CFG"
-  trap "rm -f '$MPROCS_CFG'" EXIT
+  trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
   SHELL_LABEL="[$(basename "$SHELL")]"
   MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
   echo "procs:" > "$MPROCS_CFG"
@@ -304,6 +336,7 @@ if [ $# -gt 1 ]; then
   echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
   echo "    env:" >> "$MPROCS_CFG"
   echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+  echo "      WORKTREE_MPROCS_PID: \"$$\"" >> "$MPROCS_CFG"
   for arg in "$@"; do
     label="$(pane_label "$arg")"
     echo "  \"$label\":" >> "$MPROCS_CFG"
@@ -312,7 +345,11 @@ if [ $# -gt 1 ]; then
     echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
   done
-  exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
+  ON_INIT=""
+  if [ $# -eq 1 ]; then
+    ON_INIT="--on-init {c: select-proc, index: 1}"
+  fi
+  exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK" $ON_INIT
 fi
 
 # --- Single argument: wrap in mprocs with shell + worktree pane ---
@@ -323,8 +360,9 @@ if [ $# -eq 1 ] && ! $USE_ITERM && ! $NO_MPROCS && [ -z "${WORKTREE_MPROCS_PANE:
     SELF="$(readlink -f "$0")"
     MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
     MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
+    MPROCS_COUNT="/tmp/worktree-mprocs-$$-count"
     rm -f "$MPROCS_CFG"
-    trap "rm -f '$MPROCS_CFG'" EXIT
+    trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
     label="$(pane_label "$1")"
     SHELL_LABEL="[$(basename "$SHELL")]"
     MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
@@ -334,12 +372,13 @@ if [ $# -eq 1 ] && ! $USE_ITERM && ! $NO_MPROCS && [ -z "${WORKTREE_MPROCS_PANE:
     echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
     echo "    env:" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+    echo "      WORKTREE_MPROCS_PID: \"$$\"" >> "$MPROCS_CFG"
     echo "  \"$label\":" >> "$MPROCS_CFG"
     echo "    shell: \"$SELF $1\"" >> "$MPROCS_CFG"
     echo "    env:" >> "$MPROCS_CFG"
     echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
-    exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
+    exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK" --on-init '{c: select-proc, index: 1}'
   fi
 fi
 
