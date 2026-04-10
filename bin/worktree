@@ -8,9 +8,9 @@
 # (requires mprocs, or use --iterm for iTerm2 split panes).
 #
 # Options:
-#   --iterm  Use iTerm2 split panes instead of mprocs (default: mprocs)
-#   --split  Open multiple worktrees in vertical split panes (iTerm, implies --iterm)
+#   --iterm  Use iTerm2 tabs instead of mprocs (default: tabs)
 #   --tabs   Open multiple worktrees in separate tabs (iTerm, implies --iterm)
+#   --split  Open multiple worktrees in vertical split panes (iTerm, implies --iterm)
 
 # Detect if the current directory has been deleted (e.g. after worktree cleanup)
 if ! pwd &>/dev/null; then
@@ -26,8 +26,9 @@ SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
 source "$SCRIPTS_DIR/helpers.sh"
 
 # --- Parse flags ---
-ITERM_MODE="split-v"
+ITERM_MODE="tab"
 USE_ITERM=false
+NO_MPROCS=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
@@ -47,9 +48,10 @@ Arguments:
                       All arguments open in mprocs with a shell pane (default).
 
 Options:
-  --iterm             Use iTerm2 split panes instead of mprocs.
-  --split             Open multiple worktrees in vertical split panes (iTerm, implies --iterm).
+  --iterm             Use iTerm2 tabs instead of mprocs (default: tabs).
   --tabs              Open multiple worktrees in separate iTerm tabs (implies --iterm).
+  --split             Open multiple worktrees in vertical split panes (iTerm, implies --iterm).
+  --no-mprocs         Skip mprocs wrapping for single worktrees (used internally by --iterm).
   -h, --help          Show this help message and exit.
 
 Environment:
@@ -61,14 +63,15 @@ Examples:
   worktree https://github.com/org/repo/pull/1234    # PR worktree from URL
   worktree my-feature-branch                        # branch worktree
   worktree 1234 5678 my-branch                      # multiple in mprocs (default)
-  worktree --iterm 1234 5678                        # multiple in iTerm split panes
-  worktree --tabs 1234 5678                         # multiple in iTerm tabs
+  worktree --iterm 1234 5678                        # multiple in iTerm tabs
+  worktree --split 1234 5678                        # multiple in iTerm split panes
 HELPEOF
       exit 0
       ;;
     --tabs) ITERM_MODE="tab"; USE_ITERM=true; shift ;;
     --split) ITERM_MODE="split-v"; USE_ITERM=true; shift ;;
     --iterm) USE_ITERM=true; shift ;;
+    --no-mprocs) NO_MPROCS=true; shift ;;
     *) break ;;
   esac
 done
@@ -97,7 +100,10 @@ pane_label() {
     pr_num="$(basename "$arg" | sed 's/.*--pr-\([0-9]*\)-.*/\1/')"
     label="PR #$pr_num"
   elif [ -d "$arg" ] || [[ "$arg" == "$WORKTREES_BASE"/* ]]; then
-    label="$(basename "$arg")"
+    local dir_name
+    dir_name="$(basename "$arg")"
+    # Strip "repo--" prefix from worktree directory names to get the branch part
+    label="${dir_name#*--}"
   fi
   echo "worktree $label"
 }
@@ -121,10 +127,11 @@ if [ $# -gt 1 ]; then
       echo "ERROR: --iterm requires iTerm2, but TERM_PROGRAM is '${TERM_PROGRAM:-unset}'." >&2
       exit 1
     fi
-    # iTerm: open each worktree in a new tab/pane
+    # iTerm: open each worktree in a new tab/pane (--no-mprocs prevents
+    # the child invocation from wrapping itself in mprocs)
     for arg in "$@"; do
       label="$(pane_label "$arg")"
-      iterm-new "$ITERM_MODE" -n "$label" "$SELF" "$arg"
+      iterm-new "$ITERM_MODE" -n "$label" "$SELF" --no-mprocs "$arg"
     done
     exit 0
   fi
@@ -159,7 +166,7 @@ if [ $# -gt 1 ]; then
 fi
 
 # --- Single argument: wrap in mprocs with shell + worktree pane ---
-if [ $# -eq 1 ] && ! $USE_ITERM && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
+if [ $# -eq 1 ] && ! $USE_ITERM && ! $NO_MPROCS && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
   if ! command -v mprocs &>/dev/null; then
     echo "mprocs not found, falling back to inline mode." >&2
   else
