@@ -29,11 +29,13 @@ source "$SCRIPTS_DIR/helpers.sh"
 ITERM_MODE="tab"
 USE_ITERM=false
 NO_MPROCS=false
+CLEANUP=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<'HELPEOF'
 Usage: worktree [--iterm|--tabs|--split] [pr-number|pr-url|branch-name|worktree-path] ...
+       worktree --cleanup
 
 Manage git worktrees for PRs and branches.
 
@@ -51,6 +53,7 @@ Options:
   --iterm             Use iTerm2 tabs instead of mprocs (default: tabs).
   --tabs              Open multiple worktrees in separate iTerm tabs (implies --iterm).
   --split             Open multiple worktrees in vertical split panes (iTerm, implies --iterm).
+  --cleanup           Select worktrees to remove, then clean up stale temp files.
   --no-mprocs         Skip mprocs wrapping for single worktrees (used internally by --iterm).
   -h, --help          Show this help message and exit.
 
@@ -72,6 +75,7 @@ HELPEOF
     --split) ITERM_MODE="split-v"; USE_ITERM=true; shift ;;
     --iterm) USE_ITERM=true; shift ;;
     --no-mprocs) NO_MPROCS=true; shift ;;
+    --cleanup) CLEANUP=true; shift ;;
     *) break ;;
   esac
 done
@@ -108,8 +112,117 @@ pane_label() {
   echo "wt $label"
 }
 
+# --- Cleanup mode ---
+if $CLEANUP; then
+  if [ ! -d "$WORKTREES_BASE" ]; then
+    echo "No worktrees found in $(short_path "$WORKTREES_BASE")"
+    exit 0
+  fi
+
+  worktrees=()
+  while IFS= read -r d; do
+    worktrees+=("$(basename "$d")")
+  done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+
+  if [ ${#worktrees[@]} -eq 0 ]; then
+    echo "No worktrees found in $(short_path "$WORKTREES_BASE")"
+  else
+    selected=()
+    while IFS= read -r line; do
+      [ -n "$line" ] && selected+=("$line")
+    done <<< "$(prompt_multi_select "Which worktrees to remove?" "${worktrees[@]}")"
+
+    if [ ${#selected[@]} -gt 0 ]; then
+      for name in "${selected[@]}"; do
+        wt_path="${WORKTREES_BASE}/${name}"
+        release_port_range "$name"
+        remove_worktree "$wt_path"
+        echo "Removed ${name}"
+      done
+      git worktree prune 2>/dev/null || true
+    fi
+  fi
+
+  # Check for stale port range entries
+  remaining_wts=()
+  if [ -d "$WORKTREES_BASE" ]; then
+    while IFS= read -r d; do
+      remaining_wts+=("$(basename "$d")")
+    done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
+  fi
+
+  if [ ${#remaining_wts[@]} -eq 0 ] && [ -f "$PORT_RANGE_FILE" ] && [ -s "$PORT_RANGE_FILE" ]; then
+    echo ""
+    echo "All worktrees removed, but port range file still has entries:"
+    while IFS= read -r line; do
+      echo "  $line"
+    done < "$PORT_RANGE_FILE"
+    if prompt_yn "Clean up stale port range entries?"; then
+      : > "$PORT_RANGE_FILE"
+      echo "Port range file cleared."
+    fi
+  fi
+
+  # Clean up stale mprocs configs (always safe to remove)
+  stale_mprocs=()
+  while IFS= read -r f; do
+    stale_mprocs+=("$f")
+  done < <(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null | sort)
+  if [ ${#stale_mprocs[@]} -gt 0 ]; then
+    for f in "${stale_mprocs[@]}"; do rm -f "$f"; done
+    echo ""
+    echo "Cleaned up ${#stale_mprocs[@]} stale mprocs config file(s)."
+  fi
+
+  # Offer to remove saved preferences
+  pref_files=()
+  pref_labels=()
+  if [ -f /tmp/worktree-editor-preference ]; then
+    pref_files+=("/tmp/worktree-editor-preference")
+    pref_labels+=("Editor preference ($(cat /tmp/worktree-editor-preference))")
+  fi
+  while IFS= read -r f; do
+    local_name="$(basename "$f")"
+    # e.g. worktree-clone-dotfiles-odh-dashboard → "Clone dotfiles for odh-dashboard"
+    kind="${local_name#worktree-clone-}"
+    kind="${kind%%-*}"
+    repo="${local_name#worktree-clone-${kind}-}"
+    pref_files+=("$f")
+    pref_labels+=("Clone ${kind} selection for ${repo}")
+  done < <(find /tmp -maxdepth 1 -name "worktree-clone-*" 2>/dev/null | sort)
+  while IFS= read -r f; do
+    local_name="$(basename "$f")"
+    kind="${local_name#worktree-link-}"
+    kind="${kind%%-*}"
+    repo="${local_name#worktree-link-${kind}-}"
+    pref_files+=("$f")
+    pref_labels+=("Link ${kind} selection for ${repo}")
+  done < <(find /tmp -maxdepth 1 -name "worktree-link-*" 2>/dev/null | sort)
+
+  if [ ${#pref_files[@]} -gt 0 ]; then
+    selected_prefs=()
+    while IFS= read -r line; do
+      [ -n "$line" ] && selected_prefs+=("$line")
+    done <<< "$(prompt_multi_select "Remove any saved preferences?" "${pref_labels[@]}")"
+
+    for sel in "${selected_prefs[@]+${selected_prefs[@]}}"; do
+      for i in "${!pref_labels[@]}"; do
+        if [ "${pref_labels[$i]}" = "$sel" ]; then
+          rm -f "${pref_files[$i]}"
+          echo "Removed: ${sel}"
+          break
+        fi
+      done
+    done
+  fi
+
+  echo ""
+  echo "Done."
+  exit 0
+fi
+
 # --- Inside mprocs: add pane(s) to the existing session ---
-if [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
+if [ $# -gt 0 ] && [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
   SELF="$(readlink -f "$0")"
   for arg in "$@"; do
     label="$(pane_label "$arg")"
