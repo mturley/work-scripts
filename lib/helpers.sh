@@ -479,7 +479,8 @@ maybe_setup_vscode_tasks() {
     # Ask user
     echo ""
     echo "Would you like VS Code to auto-start the worktree REPL in its terminal?"
-    echo "(This creates a .vscode/tasks.json in the worktree, hidden from git status)"
+    echo "(This creates a .vscode/tasks.json in the worktree, hidden from git status,"
+    echo " and cleaned up automatically when the last worktree for this repo is removed)"
     if prompt_yn "Set up auto-REPL task?"; then
       echo "Yes" > "$VSCODE_TASKS_PREF_FILE"
     else
@@ -599,6 +600,13 @@ worktree_repl() {
       pr_num="$(echo "$detected_pr_url" | grep -o '[0-9]*$')"
     fi
   fi
+
+  # --- Detect editor, set up auto-REPL task, and open editor ---
+  echo ""
+  detect_editor
+  # Write tasks.json before opening editor so the task triggers on folder open
+  maybe_setup_vscode_tasks "$wt_path" "$repo_root" || true
+  open_editor "$wt_path"
 
   local blue cyan green red reset
   blue="$(tput setaf 12 2>/dev/null || true)"
@@ -779,18 +787,9 @@ parse_json() {
 }
 
 # worktree_post_setup <scripts-dir> <repo-root> <worktree-path>
-# Handles opening editor, offering VS Code auto-REPL, and starting the REPL.
+# Handles starting the REPL after initial worktree creation.
 worktree_post_setup() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
-
-  # --- Detect Editor and set up auto-REPL task before opening ---
-  echo ""
-  detect_editor
-
-  # Offer VS Code auto-REPL task (must happen before opening editor
-  # so tasks.json exists when the folder opens)
-  maybe_setup_vscode_tasks "$wt_path" "$repo_root" || true
-  open_editor "$wt_path"
   worktree_repl "$repo_root" "$wt_path" "$scripts_dir"
 }
 
