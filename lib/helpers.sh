@@ -406,6 +406,123 @@ recreate_worktree() {
   return 0
 }
 
+# --- VS Code tasks.json auto-REPL support ---
+
+WORKTREE_EXCLUDE_MARKER="worktree-script-managed"
+VSCODE_TASKS_PREF_FILE="/tmp/worktree-vscode-tasks-preference"
+
+# add_worktree_git_exclude <repo-root>
+# Adds .vscode/ to .git/info/exclude with markers if not already present.
+add_worktree_git_exclude() {
+  local repo_root="$1"
+  local exclude_file="$repo_root/.git/info/exclude"
+  if grep -q "# BEGIN $WORKTREE_EXCLUDE_MARKER" "$exclude_file" 2>/dev/null; then
+    return
+  fi
+  mkdir -p "$repo_root/.git/info"
+  printf '\n# BEGIN %s\n.vscode/\n# END %s\n' "$WORKTREE_EXCLUDE_MARKER" "$WORKTREE_EXCLUDE_MARKER" >> "$exclude_file"
+}
+
+# remove_worktree_git_exclude <repo-root>
+# Removes worktree-managed entries from .git/info/exclude.
+remove_worktree_git_exclude() {
+  local repo_root="$1"
+  local exclude_file="$repo_root/.git/info/exclude"
+  if [ ! -f "$exclude_file" ]; then return; fi
+  if ! grep -q "# BEGIN $WORKTREE_EXCLUDE_MARKER" "$exclude_file" 2>/dev/null; then return; fi
+  sed -i '' "/# BEGIN $WORKTREE_EXCLUDE_MARKER/,/# END $WORKTREE_EXCLUDE_MARKER/d" "$exclude_file"
+}
+
+# cleanup_worktree_exclude_if_last <repo-root>
+# Removes git exclude entries if no non-main worktrees remain.
+cleanup_worktree_exclude_if_last() {
+  local repo_root="$1"
+  if [ -z "$repo_root" ]; then return; fi
+  local count
+  count="$(git -C "$repo_root" worktree list 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "$count" -le 1 ]; then
+    remove_worktree_git_exclude "$repo_root"
+  fi
+}
+
+# maybe_setup_vscode_tasks <wt-path> <repo-root>
+# Offers to create .vscode/tasks.json for auto-starting the REPL in VS Code.
+# Returns 0 if tasks were set up (caller should skip REPL), 1 otherwise.
+maybe_setup_vscode_tasks() {
+  local wt_path="$1" repo_root="$2"
+  local tasks_file="$wt_path/.vscode/tasks.json"
+
+  # Determine which editor was used
+  local editor="${EDITOR_CMD:-}"
+  if [ -z "$editor" ] && [ -f /tmp/worktree-editor-preference ]; then
+    local cached
+    cached="$(cat /tmp/worktree-editor-preference)"
+    case "$cached" in
+      "VS Code") editor="code" ;;
+      "Cursor") editor="cursor" ;;
+    esac
+  fi
+  if [ "$editor" != "code" ] && [ "$editor" != "cursor" ]; then
+    return 1
+  fi
+
+  # Skip if tasks.json already exists
+  if [ -f "$tasks_file" ]; then
+    return 0
+  fi
+
+  # Check cached preference
+  if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
+    local pref
+    pref="$(cat "$VSCODE_TASKS_PREF_FILE")"
+    if [ "$pref" = "No" ]; then
+      return 1
+    fi
+    # pref is "Yes", fall through to create
+  else
+    # Ask user
+    echo ""
+    echo "Would you like VS Code to auto-start the worktree REPL in its terminal?"
+    echo "(This creates a .vscode/tasks.json in the worktree, hidden from git status)"
+    if prompt_yn "Set up auto-REPL task?"; then
+      echo "Yes" > "$VSCODE_TASKS_PREF_FILE"
+    else
+      echo "No" > "$VSCODE_TASKS_PREF_FILE"
+      return 1
+    fi
+  fi
+
+  # Write tasks.json
+  mkdir -p "$wt_path/.vscode"
+  cat > "$tasks_file" <<'TASKEOF'
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Worktree REPL",
+      "type": "shell",
+      "command": "worktree",
+      "args": ["${workspaceFolder}"],
+      "runOptions": { "runOn": "folderOpen" },
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}
+TASKEOF
+
+  # Add .vscode/ to git exclude so it doesn't pollute git status
+  add_worktree_git_exclude "$repo_root"
+
+  echo "Created .vscode/tasks.json — REPL will auto-start when this folder opens in VS Code."
+  return 0
+}
+
 # detect_editor - Sets EDITOR_CMD to "cursor" or "code" if detected, empty otherwise.
 detect_editor() {
   EDITOR_CMD=""
@@ -542,11 +659,12 @@ worktree_repl() {
     if [ -n "$scripts_dir" ]; then
       clone_cmd="[c]lone files, "
     fi
-    echo "${blue}Commands: [i]nfo, [l]og, [o]pen, ${pr_cmd}${clone_cmd}[s]hell, [r]emove, [e]xit, [h]elp${reset}"
+    echo "${blue}Commands: [h]elp, [i]nfo, [l]og, [o]pen, ${pr_cmd}${clone_cmd}[s]hell, [r]emove, [e]xit${reset}"
   }
 
   _worktree_help() {
     echo ""
+    echo "  ${blue}help${reset}     (h)  Show this help"
     echo "  ${blue}info${reset}     (i)  Show PR URL (if applicable), worktree path, and git status"
     echo "  ${blue}log${reset}      (l)  Show git log"
     echo "  ${blue}open${reset}     (o)  Open worktree in your editor (focuses existing window if already open)"
@@ -557,7 +675,6 @@ worktree_repl() {
     echo "  ${blue}shell${reset}    (s)  Start a nested shell in the worktree directory; exit to return to REPL"
     echo "  ${blue}remove${reset}   (r)  Remove the worktree and its branch"
     echo "  ${blue}exit${reset}     (e)  Exit the REPL"
-    echo "  ${blue}help${reset}     (h)  Show this help"
   }
 
   # Assign port range for this worktree
@@ -577,6 +694,10 @@ worktree_repl() {
   fi
 
   _worktree_info false
+  if [ -n "$scripts_dir" ]; then
+    echo ""
+    echo "Tip: use [c]lone files to reuse installed dependencies and configuration from the main repo"
+  fi
   while true; do
     echo ""
     _worktree_commands
@@ -631,6 +752,7 @@ worktree_repl() {
           remove_worktree "$wt_path"
           echo "Worktree removed."
           git worktree prune 2>/dev/null || true
+          cleanup_worktree_exclude_if_last "$repo_root"
           if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
             echo ""
             echo "To close this pane: Ctrl+A → d → y"
@@ -662,17 +784,25 @@ parse_json() {
 }
 
 # worktree_post_setup <scripts-dir> <repo-root> <worktree-path>
-# Handles cloning gitignored files, opening editor, and starting the REPL.
+# Handles opening editor, offering VS Code auto-REPL, and starting the REPL.
 worktree_post_setup() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
-
-  # --- Clone Gitignored Files ---
-  clone_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
 
   # --- Detect Editor and Open ---
   echo ""
   detect_editor
   open_editor "$wt_path"
+
+  # --- Offer VS Code auto-REPL task ---
+  if maybe_setup_vscode_tasks "$wt_path" "$repo_root"; then
+    # REPL will auto-start in VS Code's terminal; no need to run it here
+    echo ""
+    echo "The REPL will start automatically in VS Code's terminal."
+    if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
+      echo "To close this pane: Ctrl+A → d → y"
+    fi
+    return
+  fi
 
   worktree_repl "$repo_root" "$wt_path" "$scripts_dir"
 }

@@ -31,20 +31,21 @@ Further prerequisites and setup for each command are documented in its [docs fil
 
 ### [`worktree`](docs/worktree.md) — Git Worktree Manager
 
-Create and manage git worktrees for PRs and branches, with optional cloned dependencies and an interactive REPL.
+Create and manage git worktrees for PRs and branches, with optional cloned dependencies, VS Code auto-REPL integration, and an interactive REPL.
 
 ```bash
 worktree                             # list worktrees; select one, many (1,3,5), or all
 worktree 1234                        # create or reopen a worktree for PR #1234
 worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
-worktree 1234 5678 my-branch         # open multiple worktrees in split panes
-worktree --tabs 1234 5678            # open multiple worktrees in separate tabs
+worktree 1234 5678 my-branch         # open multiple worktrees in mprocs (default)
+worktree --iterm 1234 5678           # open multiple worktrees in iTerm split panes
+worktree --tabs 1234 5678            # open multiple worktrees in iTerm tabs
 worktree --help                      # show usage help
 ```
 
 ```
-Commands: [i]nfo, [l]og, [o]pen, [p]r, [s]hell, [c]leanup, [e]xit, [h]elp
+Commands: [h]elp, [i]nfo, [l]og, [o]pen, [p]r, [c]lone files, [s]hell, [r]emove, [e]xit
 
 worktree [my-branch...origin/my-branch]>
 ```

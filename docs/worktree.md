@@ -45,9 +45,21 @@ By default, every worktree session launches in [mprocs](https://github.com/pvolo
 
 * **Worktree path** — if it matches an existing worktree, drops directly into the REPL for that worktree.
 
+### Opening Editors
+
+After creating a worktree, the script **detects your editor** (VS Code or Cursor) or uses a cached preference (in `/tmp`), and opens an editor window (or focuses an existing one).
+
+### VS Code Auto-REPL
+
+When opening VS Code or Cursor, the script offers to create a `.vscode/tasks.json` in the worktree that auto-starts the REPL in VS Code's integrated terminal when the folder opens. This preference is cached in `/tmp` and can be reset via `--cleanup`.
+
+The `.vscode/` directory is added to the repo's `.git/info/exclude` (with a marker comment) so it doesn't pollute `git status`. When the last worktree for a repo is removed, the exclude entry is automatically cleaned up.
+
+If auto-REPL is enabled, the terminal session that launched the editor exits (with a hint to close the mprocs pane if applicable) since the REPL will run inside VS Code instead.
+
 ### Cross-Worktree Dependency Cloning
 
-After creating a new worktree, the command prompts you to choose how much to share from the main working tree:
+The `[c]lone files` REPL command lets you share files from the main working tree with a worktree:
 
 - **`1` — Dotfiles, dependencies and build artifacts** — clones dotfiles plus `node_modules`, `dist/`, `bin/`, etc.
 - **`2` — Config only** — clones top-level dotfiles (`.env.local`, `.husky`, etc.). You'll need to install dependencies and build yourself.
@@ -57,13 +69,9 @@ For each category you choose, you can select which specific files to include. Se
 
 **Copy strategy** — on macOS (APFS), all targets are cloned using `cp -Rc` for copy-on-write clones (writes don't affect the original). On other platforms, all targets are copied via `rsync -a`.
 
-### Opening Editors
-
-It then **detects your editor** (VS Code or Cursor) or uses a cached preference (in `/tmp`), opens an editor window (or focuses an existing one), and drops into the interactive REPL.
-
 ### Interactive REPL
 
-Once a worktree is ready, all usage paths above end here. On entry and before each prompt, shows the available commands:
+Once a worktree is ready, all usage paths above end here (unless VS Code auto-REPL is enabled, in which case the REPL starts in VS Code's terminal instead). On entry, a tip is shown reminding you to use `[c]lone files` to reuse installed dependencies from the main repo. Before each prompt, the available commands are shown:
 
 ```
 worktree> help

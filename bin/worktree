@@ -140,13 +140,25 @@ if $CLEANUP; then
     done <<< "$(prompt_multi_select "Which worktrees to remove?" "${worktrees[@]}")"
 
     if [ ${#selected[@]} -gt 0 ]; then
+      # Track repo roots before removal so we can clean up excludes after
+      cleanup_repo_roots=()
       for name in "${selected[@]}"; do
         wt_path="${WORKTREES_BASE}/${name}"
+        if [ -e "$wt_path/.git" ]; then
+          wt_repo_root="$(git -C "$wt_path" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
+          if [ -n "$wt_repo_root" ]; then
+            cleanup_repo_roots+=("$wt_repo_root")
+          fi
+        fi
         release_port_range "$name"
         remove_worktree "$wt_path"
         echo "Removed ${name}"
       done
       git worktree prune 2>/dev/null || true
+      # Clean up git exclude entries if no worktrees remain for each repo
+      for repo_root in "${cleanup_repo_roots[@]}"; do
+        cleanup_worktree_exclude_if_last "$repo_root"
+      done
     fi
   fi
 
@@ -187,6 +199,10 @@ if $CLEANUP; then
   if [ -f /tmp/worktree-editor-preference ]; then
     pref_files+=("/tmp/worktree-editor-preference")
     pref_labels+=("Editor preference ($(cat /tmp/worktree-editor-preference))")
+  fi
+  if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
+    pref_files+=("$VSCODE_TASKS_PREF_FILE")
+    pref_labels+=("VS Code auto-REPL preference ($(cat "$VSCODE_TASKS_PREF_FILE"))")
   fi
   while IFS= read -r f; do
     local_name="$(basename "$f")"
