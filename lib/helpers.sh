@@ -794,7 +794,7 @@ worktree_post_setup() {
 
   # Offer VS Code auto-REPL task (must happen before opening editor
   # so tasks.json exists when the folder opens)
-  maybe_setup_vscode_tasks "$wt_path" "$repo_root"
+  maybe_setup_vscode_tasks "$wt_path" "$repo_root" || true
   open_editor "$wt_path"
   worktree_repl "$repo_root" "$wt_path" "$scripts_dir"
 }
