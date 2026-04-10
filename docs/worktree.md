@@ -71,7 +71,7 @@ worktree> help
   info     (i)  Show PR URL (if applicable), worktree path, tracking status, and git status
   log      (l)  Show git log
   open     (o)  Open worktree in your editor (focuses existing window if already open)
-  pr       (p)  Open the pull request page on GitHub (shown when a PR exists for the branch)
+  pr       (p)  Open the pull request page on GitHub (if applicable)
   clone    (c)  Clone gitignored files (dotfiles, dependencies) from the main repo
   shell    (s)  Start a nested shell in the worktree directory; exit to return to REPL
   remove   (r)  Remove the worktree and its branch

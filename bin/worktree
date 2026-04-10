@@ -140,9 +140,10 @@ if [ $# -gt 1 ]; then
   rm -f "$MPROCS_CFG"
   trap "rm -f '$MPROCS_CFG'" EXIT
   SHELL_LABEL="[$(basename "$SHELL")]"
+  MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
   echo "procs:" > "$MPROCS_CFG"
   echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
-  echo "    shell: \"$SHELL\"" >> "$MPROCS_CFG"
+  echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
   echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
   echo "    env:" >> "$MPROCS_CFG"
   echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
@@ -169,9 +170,10 @@ if [ $# -eq 1 ] && ! $USE_ITERM && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
     trap "rm -f '$MPROCS_CFG'" EXIT
     label="$(pane_label "$1")"
     SHELL_LABEL="[$(basename "$SHELL")]"
+    MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
     echo "procs:" > "$MPROCS_CFG"
     echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
-    echo "    shell: \"$SHELL\"" >> "$MPROCS_CFG"
+    echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
     echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
     echo "    env:" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
