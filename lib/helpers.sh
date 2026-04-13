@@ -529,12 +529,21 @@ detect_editor() {
   fi
 }
 
-# open_editor <worktree-path> - Open the worktree in an editor.
-# Uses EDITOR_CMD if set (from detect_editor), otherwise uses cached preference,
-# otherwise prompts the user to choose. Caches the choice for future runs.
+# open_editor <worktree-path> [repo-root] - Open the worktree in an editor.
+# Detects the editor, offers VS Code auto-REPL task setup if repo-root is provided,
+# then opens the editor. Uses EDITOR_CMD if set (from detect_editor), otherwise uses
+# cached preference, otherwise prompts the user to choose. Caches the choice.
 open_editor() {
   local wt_path="$1"
+  local repo_root="${2:-}"
   local cache_file="/tmp/worktree-editor-preference"
+
+  detect_editor
+
+  # Set up VS Code auto-REPL task before opening (so it exists when the folder opens)
+  if [ -n "$repo_root" ]; then
+    maybe_setup_vscode_tasks "$wt_path" "$repo_root" || true
+  fi
 
   if [ -n "${EDITOR_CMD:-}" ]; then
     env -u CLAUDECODE $EDITOR_CMD --new-window "$wt_path"
@@ -601,12 +610,9 @@ worktree_repl() {
     fi
   fi
 
-  # --- Detect editor, set up auto-REPL task, and open editor ---
+  # --- Open editor (detects editor and sets up auto-REPL task internally) ---
   echo ""
-  detect_editor
-  # Write tasks.json before opening editor so the task triggers on folder open
-  maybe_setup_vscode_tasks "$wt_path" "$repo_root" || true
-  open_editor "$wt_path"
+  open_editor "$wt_path" "$repo_root"
 
   local blue cyan green red reset
   blue="$(tput setaf 12 2>/dev/null || true)"
@@ -719,7 +725,7 @@ worktree_repl() {
         git -C "$wt_path" log --oneline --graph --decorate || true
         ;;
       open|o)
-        open_editor "$wt_path"
+        open_editor "$wt_path" "$repo_root"
         ;;
       pr|p)
         if [ -n "${pr_url:-}" ]; then
