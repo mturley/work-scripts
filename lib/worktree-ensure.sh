@@ -71,7 +71,7 @@ case "$MODE" in
     fi
 
     # Try creating with new branch first, fall back to existing branch
-    if OUTPUT="$(git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" ${BASE_REF:+"$BASE_REF"} 2>&1)"; then
+    if OUTPUT="$(git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" --no-track ${BASE_REF:+"$BASE_REF"} 2>&1)"; then
       json_out "created" "$(cd "$WORKTREE_PATH" && pwd)"
     elif OUTPUT="$(git worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>&1)"; then
       json_out "reused-branch" "$(cd "$WORKTREE_PATH" && pwd)"

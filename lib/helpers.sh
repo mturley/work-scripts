@@ -626,6 +626,7 @@ worktree_repl() {
     if [ "$show_path" = "true" ]; then
       echo "${cyan}Path:${reset} $(short_path "$wt_path")"
     fi
+    echo "${cyan}Branch:${reset} ${branch}"
     if [ -n "${pr_num:-}" ]; then
       echo "${cyan}PR:${reset} #${pr_num}${pr_url:+ — $pr_url}"
     fi
