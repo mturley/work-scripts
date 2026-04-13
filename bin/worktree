@@ -345,11 +345,7 @@ if [ $# -gt 1 ]; then
     echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
   done
-  ON_INIT=""
-  if [ $# -eq 1 ]; then
-    ON_INIT="--on-init {c: select-proc, index: 1}"
-  fi
-  exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK" $ON_INIT
+  exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
 fi
 
 # --- Single argument: wrap in mprocs with shell + worktree pane ---
@@ -378,7 +374,7 @@ if [ $# -eq 1 ] && ! $USE_ITERM && ! $NO_MPROCS && [ -z "${WORKTREE_MPROCS_PANE:
     echo "    env:" >> "$MPROCS_CFG"
     echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
-    exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK" --on-init '{c: select-proc, index: 1}'
+    exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
   fi
 fi
 
