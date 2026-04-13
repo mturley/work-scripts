@@ -80,6 +80,7 @@ Append timestamped, metadata-enriched activity entries to your [Obsidian daily n
 worklog                                  # free-form log entry
 worklog pr reviewed org/repo#123         # log a PR review with metadata
 worklog jira seen RHOAIENG-12345         # log viewing a Jira issue
+worklog combine                          # consolidate duplicate entries
 worklog undo                             # remove the last activity log entry
 ```
 

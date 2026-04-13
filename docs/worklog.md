@@ -42,9 +42,33 @@ Reference formats: issue key (`RHOAIENG-12345`) or full URL (`https://issues.red
 ## Other commands
 
 - `worklog open` — open today's daily note in Obsidian
-- `worklog undo` — remove the last entry from the activity log
+- `worklog undo` — remove the last entry from the activity log (handles combined entries correctly)
+- `worklog combine` — consolidate entries that share the same reference (see below)
 - `worklog test` — insert sample entries into today's daily note to preview formatting
 - `worklog help` — show full usage
+
+## Combining duplicate entries
+
+`worklog combine` scans today's activity log for entries with the same main reference (e.g. two entries for `RHOAIENG-12345`) and consolidates them. The combined entry:
+
+- Stacks all timestamp/emoji lines from the duplicates
+- Keeps the reference line and title from the first occurrence
+- Merges bullet lists from all entries (deduplicating exact matches)
+- Stays in the position of the first occurrence
+
+```markdown
+1:19 PM — 📋 👀 Seen Jira Bug
+1:31 PM — 📋 ✏️ Updated Jira Bug
+
+[RHOAIENG-57824](url) (Critical, mine)
+*Model Catalog Settings page returns 500*
+
+- Notes: Seen as part of fixing the renamed ConfigMap constant
+- PR: [model-registry#2593](url) (by @mturley): *Rename default catalog sources ConfigMap*
+- Notes: Linked model-registry#2593 to Git Pull Request field
+```
+
+Running `worklog combine` when there are no duplicates is a no-op.
 
 ## Slack URL linkification
 

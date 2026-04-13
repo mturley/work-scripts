@@ -93,6 +93,7 @@ Other commands:
   worklog              free-form log entry (prompts for text)
   worklog open         open today's daily note in Obsidian
   worklog undo         remove the last entry from the activity log
+  worklog combine      consolidate duplicate entries for the same reference
   worklog test         generate all format permutations with fake data
   worklog help         show this help
 
@@ -394,6 +395,8 @@ with open(filepath, 'w') as f:
 
 # Remove the last worklog entry from today's daily note.
 # Prints the removed entry to stdout.  Exits with an error if no entries exist.
+# Refuses to undo combined entries (multiple timestamp lines) since the
+# original individual entries cannot be reconstructed.
 remove_last_entry() {
   local daily_note
   daily_note="$(get_daily_note_path)"
@@ -412,6 +415,7 @@ with open(filepath, 'r') as f:
     content = f.read()
 
 # Find all worklog entries by timestamp line pattern: H:MM AM/PM — <emoji>
+ts_pat = re.compile(r'\d{1,2}:\d{2}\s*[AP]M\s*\u2014\s*')
 pattern = re.compile(r'\n(\d{1,2}:\d{2}\s*[AP]M\s*\u2014\s*)')
 matches = list(pattern.finditer(content))
 
@@ -419,8 +423,30 @@ if not matches:
     print('ERROR: No activity entries found in daily note.', file=sys.stderr)
     sys.exit(1)
 
+# Walk backwards from the last timestamp to find the true entry start.
+# In combined entries, multiple timestamp lines are consecutive (no blank
+# line between them).
 last_match = matches[-1]
 entry_start = last_match.start()
+timestamp_count = 1
+
+lines = content[:entry_start].split('\n')
+while lines:
+    prev_line = lines[-1]
+    if ts_pat.match(prev_line):
+        entry_start -= len(prev_line) + 1  # +1 for the \n
+        timestamp_count += 1
+        lines.pop()
+    else:
+        break
+
+if timestamp_count > 1:
+    print('ERROR: The last entry is a combined entry (%d timestamps).' % timestamp_count, file=sys.stderr)
+    print('Combined entries cannot be undone because the original', file=sys.stderr)
+    print('individual entries cannot be reconstructed.', file=sys.stderr)
+    print('Edit the daily note manually to make changes.', file=sys.stderr)
+    sys.exit(1)
+
 removed = content[entry_start:].strip()
 content = content[:entry_start].rstrip('\n') + '\n'
 
@@ -428,6 +454,172 @@ with open(filepath, 'w') as f:
     f.write(content)
 
 print(removed)
+" "$daily_note"
+}
+
+# Combine duplicate entries in today's activity log.
+# Groups entries by their main reference (e.g. [RHOAIENG-12345] or
+# [odh-dashboard#6300]), stacks their timestamp lines, and merges their
+# bullet lists.  The first occurrence's position is preserved.
+combine_entries() {
+  local daily_note
+  daily_note="$(get_daily_note_path)"
+
+  if [ ! -f "$daily_note" ]; then
+    echo "ERROR: Daily note not found." >&2
+    exit 1
+  fi
+
+  python3 -c "
+import sys, re
+from collections import OrderedDict
+
+filepath = sys.argv[1]
+
+with open(filepath, 'r') as f:
+    content = f.read()
+
+# Locate the activity log section
+log_marker = '## \U0001f552 Activity log'
+log_idx = content.find(log_marker)
+if log_idx == -1:
+    print('No activity log section found.', file=sys.stderr)
+    sys.exit(1)
+
+header_end = log_idx + len(log_marker)
+before_log = content[:header_end]
+after_log = content[header_end:]
+
+# Parse entries — each starts with a timestamp line
+ts_re = re.compile(r'^(\d{1,2}:\d{2}\s*[AP]M\s*\u2014\s*.+)\$', re.MULTILINE)
+matches = list(ts_re.finditer(after_log))
+
+if not matches:
+    print('No entries to combine.')
+    sys.exit(0)
+
+# Split into raw entry blocks.  An entry starts at a timestamp that is
+# preceded by a blank line (or start-of-text).  Consecutive timestamp
+# lines (combined entries) belong to the same block.
+entry_starts = []
+for i, m in enumerate(matches):
+    # Check if this timestamp is the continuation of a combined entry
+    # (i.e. the previous character is a newline directly after another
+    # timestamp line, with no blank line in between).
+    if i == 0:
+        entry_starts.append(m.start())
+        continue
+    text_between = after_log[matches[i-1].end():m.start()]
+    # If the only thing between prev timestamp end and this timestamp
+    # start is a single newline, they are part of the same entry.
+    if text_between == '\n':
+        continue
+    entry_starts.append(m.start())
+
+entries = []
+for i, start in enumerate(entry_starts):
+    end = entry_starts[i+1] if i+1 < len(entry_starts) else len(after_log)
+    entries.append(after_log[start:end].rstrip('\n'))
+
+# Extract the main reference from an entry
+ref_re = re.compile(r'^\[([^\]]+)\]\(', re.MULTILINE)
+def get_ref(entry_text):
+    m = ref_re.search(entry_text)
+    return m.group(1) if m else None
+
+# Group entries by reference
+groups = OrderedDict()
+for idx, entry in enumerate(entries):
+    ref = get_ref(entry)
+    key = ref if ref else ('__no_ref__' + str(idx))
+    if key not in groups:
+        groups[key] = []
+    groups[key].append((idx, entry))
+
+# Check if any combining is needed
+needs_combining = any(len(g) > 1 for g in groups.values())
+if not needs_combining:
+    print('No duplicate references found — nothing to combine.')
+    sys.exit(0)
+
+# Parse an entry into components
+def parse_entry(text):
+    lines = text.split('\n')
+    timestamps = []
+    ref_line = None
+    title_line = None
+    bullets = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if ts_re.match(stripped):
+            timestamps.append(stripped)
+        elif ref_re.match(stripped):
+            if ref_line is None:
+                ref_line = stripped
+        elif stripped.startswith('*') and stripped.endswith('*') and not stripped.startswith('* '):
+            if title_line is None:
+                title_line = stripped
+        elif stripped.startswith('- '):
+            bullets.append(stripped)
+    return timestamps, ref_line, title_line, bullets
+
+# Combine groups and preserve order of first occurrence
+combined_entries = []
+for key, group in groups.items():
+    if len(group) == 1:
+        combined_entries.append((group[0][0], group[0][1]))
+        continue
+
+    all_timestamps = []
+    ref_line = None
+    title_line = None
+    all_bullets = []
+
+    for _, entry in group:
+        ts, rl, tl, bl = parse_entry(entry)
+        all_timestamps.extend(ts)
+        if ref_line is None and rl:
+            ref_line = rl
+        if title_line is None and tl:
+            title_line = tl
+        all_bullets.extend(bl)
+
+    # Deduplicate bullets while preserving order
+    seen = set()
+    unique_bullets = []
+    for b in all_bullets:
+        if b not in seen:
+            seen.add(b)
+            unique_bullets.append(b)
+
+    # Compose combined entry
+    combined = '\n'.join(all_timestamps) + '\n\n'
+    if ref_line:
+        combined += ref_line + '\n'
+    if title_line:
+        combined += title_line
+    if unique_bullets:
+        combined += '\n\n' + '\n'.join(unique_bullets)
+
+    # Use the position of the first entry in the group
+    combined_entries.append((group[0][0], combined))
+
+    refs = [get_ref(e) or '(free-form)' for _, e in group]
+    print('Combined %d entries for %s' % (len(group), refs[0]))
+
+# Sort by original position
+combined_entries.sort(key=lambda x: x[0])
+
+# Rebuild
+new_log = '\n\n\n'.join(entry for _, entry in combined_entries)
+new_content = before_log + '\n\n\n' + new_log + '\n'
+
+with open(filepath, 'w') as f:
+    f.write(new_content)
+
+print('Done!')
 " "$daily_note"
 }
 
@@ -1051,6 +1243,13 @@ load_env || true
 
 # Open daily note shorthand
 if [ "${1:-}" = "open" ]; then
+  obsidian daily >/dev/null 2>&1
+  exit 0
+fi
+
+# Combine: consolidate duplicate entries for the same reference
+if [ "${1:-}" = "combine" ]; then
+  combine_entries
   obsidian daily >/dev/null 2>&1
   exit 0
 fi
