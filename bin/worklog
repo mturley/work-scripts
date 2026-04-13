@@ -1337,6 +1337,7 @@ case "$CATEGORY" in
       exit 0
     fi
     case "$ACTION" in
+      created) ACTION="opened" ;;
       opened|started|closed|seen|updated|commented) ;;
       *)
         echo "ERROR: Invalid Jira action: $ACTION" >&2
