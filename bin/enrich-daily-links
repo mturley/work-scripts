@@ -166,50 +166,57 @@ def truncate(text, max_len=TITLE_MAX_LEN):
 
 def should_skip_enrichment(text, pos):
     \"\"\"Return True if a Jira link at this position should NOT be enriched
-    because it's in the heading area of an activity log table cell.
+    because it's on the reference line of an activity log entry.
 
-    Activity log cells look like:
-      | time | emoji action<br><br>[link](url) (meta)<br>*title*<ul>...</ul> |
+    Activity log entries look like:
+      10:30 AM — 📋 🚀 Started Jira Bug
+                                              <- blank line
+      [RHOAIENG-12345](url) (Major, mine)     <- reference line (skip here)
+      *Fix model registry pagination*         <- title line
+                                              <- blank line
+      - Epic: [RHOAIENG-48000](url) — *...*   <- detail lines (enrich here)
+      - Notes: ...
 
-    The heading area (first 3 <br>-delimited segments) already shows the type
-    and title, so enriching those links is redundant.  Links in <ul><li>
-    detail items should still be enriched.
-
-    Exception: cells starting with a Note action (e.g. '📌 Note') have no
-    heading structure, so all links in those cells should be enriched.
+    The reference line already has the Jira key, and the title is shown on
+    the next line, so enriching it is redundant. Links in detail lines
+    (starting with '- ') should still be enriched.
     \"\"\"
-    # Find the current line (newline-delimited)
+    # Find the current line
     line_start = text.rfind('\n', 0, pos) + 1
     line_end = text.find('\n', pos)
     if line_end == -1:
         line_end = len(text)
+
+    # Detail lines (bullet points) should always be enriched
     line = text[line_start:line_end]
-
-    # Only applies to table rows
-    if not line.startswith('|'):
+    if line.lstrip().startswith('- '):
         return False
 
-    # Find the content cell: everything between the second | and the last |
-    # Table format: | time | content |
-    first_pipe = line.index('|')
-    second_pipe = line.index('|', first_pipe + 1)
-    last_pipe = line.rindex('|')
-    if second_pipe >= last_pipe:
+    # Check if the line two above (skipping the blank line) is a timestamp line.
+    # That means we're on the reference line of an activity log entry.
+    # Walk back: current line start -> previous line (blank) -> line before that
+    prev_line_end = line_start - 1  # points to the \n before current line
+    if prev_line_end < 0:
         return False
-    cell_content = line[second_pipe + 1:last_pipe].strip()
-    pos_in_cell = pos - (line_start + second_pipe + 1)
+    prev_line_start = text.rfind('\n', 0, prev_line_end) + 1
+    prev_line = text[prev_line_start:prev_line_end]
 
-    # Note cells have no heading structure — always enrich
-    if re.match(r'^[^\w]*Note\b', cell_content):
+    # The previous line should be blank (empty or whitespace only)
+    if prev_line.strip() != '':
         return False
 
-    # Count how many <br> tags appear before our position in the cell
-    before_pos = cell_content[:pos_in_cell]
-    br_count = len(re.findall(r'<br\s*/?>', before_pos, flags=re.IGNORECASE))
+    # The line before the blank line should be a timestamp line
+    ts_line_end = prev_line_start - 1
+    if ts_line_end < 0:
+        return False
+    ts_line_start = text.rfind('\n', 0, ts_line_end) + 1
+    ts_line = text[ts_line_start:ts_line_end]
 
-    # Heading area = action line, empty line, reference line (0-2 <br>s before)
-    # Title + details start after the 3rd <br>
-    return br_count < 3
+    # Timestamp lines match: TIME — EMOJI ACTION (e.g. '10:30 AM — 📋 🚀 Started Jira Bug')
+    if re.match(r'^\d{1,2}:\d{2}\s*[AP]M\s*\u2014\s*', ts_line):
+        return True
+
+    return False
 
 def escape_md_link_text(text):
     \"\"\"Escape characters that break markdown link syntax in link text.\"\"\"
