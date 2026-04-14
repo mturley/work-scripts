@@ -250,6 +250,9 @@ if unchecked:
         line = lines[i]
         if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
             insert_at = i + 1
+    # Preserve blank line before first checkbox
+    if insert_at < tomorrow_end and lines[insert_at].strip() == '':
+        insert_at += 1
 
     # Flatten groups and insert
     flat = []

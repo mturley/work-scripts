@@ -22,8 +22,8 @@ Copy focus and deferred items from the most recent daily note to today's note.
 
 Steps:
   1. Ensure today's daily note exists
-  2. Find the most recent previous daily note
-  3. Verify eod was run on the previous note
+  2. Run "eod yesterday" to ensure the previous note was finalized
+  3. Find the most recent previous daily note
   4. Copy "tomorrow's focus" (or "monday's focus") items to today's "today's focus"
   5. Copy "deferring for later" items to today's "deferring for later"
   6. Check off the prep checkbox in today's note
@@ -101,6 +101,14 @@ if grep -q '\- \[x\].*[Cc]opy focus items and deferred items' "$today_note" 2>/d
 fi
 
 # ---------------------------------------------------------------------------
+# Step 1b: Run eod on yesterday's note in case it was missed
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "${COLOR_CYAN}Ensuring eod was run on the previous note...${COLOR_RESET}"
+"$(dirname "$(readlink -f "$0")")/eod" yesterday
+
+# ---------------------------------------------------------------------------
 # Step 2: Find the most recent previous daily note
 # ---------------------------------------------------------------------------
 
@@ -124,24 +132,7 @@ fi
 echo "${COLOR_CYAN}Previous note:${COLOR_RESET} $(basename "$prev_note")"
 
 # ---------------------------------------------------------------------------
-# Step 3: Check if eod was run on the previous note
-# ---------------------------------------------------------------------------
-
-if ! grep -q '\- \[x\] Set up tomorrow'"'"'s focus (run `eod`)' "$prev_note" 2>/dev/null && \
-   ! grep -q '\- \[x\] Set up monday'"'"'s focus (run `eod`)' "$prev_note" 2>/dev/null; then
-  echo ""
-  echo "${COLOR_YELLOW}WARNING:${COLOR_RESET} eod was not run on $(basename "$prev_note")."
-  echo "Run 'eod yesterday' first, or continue anyway."
-  printf "${COLOR_BLUE}Continue without eod? [y/n]:${COLOR_RESET} "
-  read -r yn
-  case "$yn" in
-    [Yy]*) ;;
-    *) echo "Aborting."; exit 1 ;;
-  esac
-fi
-
-# ---------------------------------------------------------------------------
-# Step 4 & 5: Copy items using Python
+# Step 3 & 4: Copy items using Python
 # ---------------------------------------------------------------------------
 
 python3 -c "
@@ -295,6 +286,9 @@ if tomorrow_items:
                 line = today_lines[i]
                 if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
                     insert_at = i + 1
+            # Preserve blank line before first checkbox
+            if insert_at < end and today_lines[insert_at].strip() == '':
+                insert_at += 1
             flat = flatten_groups(tomorrow_items)
             for item in reversed(flat):
                 today_lines.insert(insert_at, item)
@@ -317,6 +311,9 @@ if defer_items:
                 line = today_lines[i]
                 if line.strip() and not re.match(r'^\s*[-*]\s*\[\s?\]\s*$', line):
                     insert_at = i + 1
+            # Preserve blank line before first checkbox
+            if insert_at < end and today_lines[insert_at].strip() == '':
+                insert_at += 1
             flat = flatten_groups(defer_items)
             for item in reversed(flat):
                 today_lines.insert(insert_at, item)

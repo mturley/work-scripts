@@ -498,7 +498,7 @@ maybe_setup_vscode_tasks() {
       "label": "Worktree REPL",
       "type": "shell",
       "command": "worktree",
-      "args": ["${workspaceFolder}"],
+      "args": ["--no-mprocs", "${workspaceFolder}"],
       "runOptions": { "runOn": "folderOpen" },
       "presentation": {
         "reveal": "always",
