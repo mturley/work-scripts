@@ -910,6 +910,14 @@ else
       echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
       ;;
     reused-branch)
+      echo "Branch '${BRANCH_NAME}' already exists."
+      CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing branch" "Abort")"
+      if [ "$CHOICE" = "Abort" ]; then
+        # Clean up the worktree that was already created by worktree-ensure.sh
+        remove_worktree "$WT_PATH"
+        echo "Aborted." >&2
+        exit 1
+      fi
       echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
       echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
       ;;
