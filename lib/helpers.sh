@@ -677,12 +677,13 @@ worktree_repl() {
     fi
   fi
 
-  # Fetch PR details (author, created date, last updated) if we have a PR
-  local pr_author pr_created pr_updated
+  # Fetch PR details (title, author, created date, last updated) if we have a PR
+  local pr_title pr_author pr_created pr_updated
   if [ -n "$pr_url" ]; then
     local pr_details
-    pr_details="$(gh pr view "$pr_url" --json author,createdAt,updatedAt 2>/dev/null || true)"
+    pr_details="$(gh pr view "$pr_url" --json title,author,createdAt,updatedAt 2>/dev/null || true)"
     if [ -n "$pr_details" ]; then
+      pr_title="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('title',''))" 2>/dev/null || true)"
       pr_author="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))" 2>/dev/null || true)"
       pr_created="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))" 2>/dev/null || true)"
       pr_updated="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))" 2>/dev/null || true)"
@@ -707,17 +708,21 @@ worktree_repl() {
     fi
     echo "${cyan}Branch:${reset} ${branch}"
     if [ -n "${pr_num:-}" ]; then
-      local pr_info="#${pr_num}"
+      echo ""
+      echo "${cyan}PR #${pr_num}${reset}${pr_title:+: ${pr_title}}"
       if [ -n "${pr_author:-}" ]; then
-        pr_info="${pr_info} by ${pr_author}"
+        echo "  ${cyan}Author:${reset} ${pr_author}"
       fi
-      echo "${cyan}PR:${reset} ${pr_info}${pr_url:+ — $pr_url}"
       if [ -n "${pr_created:-}" ]; then
-        echo "${cyan}Created:${reset} $(relative_time "$pr_created")"
+        echo "  ${cyan}Created:${reset} $(relative_time "$pr_created")"
       fi
       if [ -n "${pr_updated:-}" ]; then
-        echo "${cyan}Updated:${reset} $(relative_time "$pr_updated")"
+        echo "  ${cyan}Updated:${reset} $(relative_time "$pr_updated")"
       fi
+      if [ -n "${pr_url:-}" ]; then
+        echo "  ${cyan}URL:${reset} ${pr_url}"
+      fi
+      echo ""
     fi
     if [ -n "$tracking" ]; then
       local info_ahead info_behind info_parts=""
