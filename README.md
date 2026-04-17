@@ -31,7 +31,7 @@ Further prerequisites and setup for each command are documented in its [docs fil
 
 ### [`worktree`](docs/worktree.md) — Git Worktree Manager
 
-Create and manage git worktrees for PRs and branches, with optional cloned dependencies, VS Code auto-REPL integration, and an interactive REPL.
+Create and manage git worktrees for PRs and branches, with optional cloned dependencies, VS Code auto-REPL integration, and an interactive REPL. Displays PR metadata (title, author, created/updated timestamps) when working with PRs.
 
 ```bash
 worktree                             # list worktrees; select one, many (1,3,5), or all

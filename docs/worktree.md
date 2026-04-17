@@ -39,7 +39,7 @@ By default, every worktree session launches in [mprocs](https://github.com/pvolo
 
 * **No arguments** — if run from within a worktree directory under `$WORKTREES_BASE`, drops directly into the REPL for that worktree. Otherwise, lists all worktrees, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up. Supports comma-separated selections (e.g. `1,3,5`) or `all` to open multiple worktrees in parallel.
 
-* **PR number or GitHub URL** — fetches the PR and searches for any existing worktrees on related branches (the PR's head ref or a `review/pr-*` branch). If one is found, reuses it with a sync check (offering to back up and reset to the PR's latest commit if behind). If multiple are found, shows a selection with commit info and ahead/behind status. If none are found, creates a new review worktree and sets up branch tracking against the PR author's remote. Automatically locates the matching local repo if run from a different directory.
+* **PR number or GitHub URL** — fetches the PR metadata (title, author, created/updated dates) and searches for any existing worktrees on related branches (the PR's head ref or a `review/pr-*` branch). Displays the PR title, author, and relative timestamps (e.g. "2 days ago") for when it was created and last updated. If one worktree is found, reuses it with a sync check (offering to back up and reset to the PR's latest commit if behind). If multiple are found, shows a selection with commit info and ahead/behind status. If none are found, creates a new review worktree and sets up branch tracking against the PR author's remote. Automatically locates the matching local repo if run from a different directory.
 
 * **Branch name** — creates a new branch from `upstream/main` (or `origin/main`) in a worktree. If the branch is already checked out elsewhere, offers to reuse or move it. Must be run from within a git repo.
 
@@ -76,7 +76,7 @@ Once a worktree is ready, all usage paths above end here (unless VS Code auto-RE
 ```
 worktree> help
 
-  info     (i)  Show PR URL (if applicable), worktree path, tracking status, and git status
+  info     (i)  Show PR info with author and dates (if applicable), worktree path, tracking status, and git status
   log      (l)  Show git log
   open     (o)  Open worktree in your editor (focuses existing window if already open)
   pr       (p)  Open the pull request page on GitHub (if applicable)

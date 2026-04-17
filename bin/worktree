@@ -639,12 +639,15 @@ if is_pr_arg "$ARG"; then
 
   # Get PR info
   echo "Fetching PR #${PR_REF} info..."
-  PR_JSON="$(gh pr view "$PR_REF" --json number,title,url,headRefName,headRepositoryOwner)"
+  PR_JSON="$(gh pr view "$PR_REF" --json number,title,url,headRefName,headRepositoryOwner,author,createdAt,updatedAt)"
   PR_NUMBER="$(echo "$PR_JSON" | parse_json number)"
   PR_TITLE="$(echo "$PR_JSON" | parse_json title)"
   PR_URL="$(echo "$PR_JSON" | parse_json url)"
   PR_HEAD_REF="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('headRefName',''))")"
   PR_HEAD_OWNER="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('headRepositoryOwner',{}).get('login',''))")"
+  PR_AUTHOR="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))")"
+  PR_CREATED="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))")"
+  PR_UPDATED="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))")"
 
   # Generate slug from title
   SLUG="$(echo "$PR_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//' | cut -c1-40 | sed 's/-$//')"
@@ -654,7 +657,17 @@ if is_pr_arg "$ARG"; then
   REPO_NAME="$(basename "$REPO_ROOT")"
   WORKTREE_ABS="${WORKTREES_BASE}/${REPO_NAME}--${WORKTREE_NAME}"
 
+  # Display PR info with author and dates
   echo "PR #${PR_NUMBER}: ${PR_TITLE}"
+  if [ -n "$PR_AUTHOR" ]; then
+    echo "  Author: ${PR_AUTHOR}"
+  fi
+  if [ -n "$PR_CREATED" ]; then
+    echo "  Created: $(relative_time "$PR_CREATED")"
+  fi
+  if [ -n "$PR_UPDATED" ]; then
+    echo "  Updated: $(relative_time "$PR_UPDATED")"
+  fi
 
   mkdir -p "$WORKTREES_BASE"
 

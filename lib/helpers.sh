@@ -66,6 +66,73 @@ short_path() {
   echo "${1/#$HOME/~}"
 }
 
+# relative_time <iso8601-timestamp> - Convert ISO 8601 timestamp to relative time
+relative_time() {
+  local timestamp="$1"
+  if [ -z "$timestamp" ]; then
+    echo ""
+    return
+  fi
+
+  # Convert ISO 8601 to epoch seconds (works on both macOS and Linux)
+  local epoch
+  if date -j -f "%Y-%m-%dT%H:%M:%SZ" "${timestamp%.*}Z" "+%s" &>/dev/null; then
+    # macOS (BSD date)
+    epoch="$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "${timestamp%.*}Z" "+%s" 2>/dev/null || echo "")"
+  else
+    # Linux (GNU date)
+    epoch="$(date -d "$timestamp" "+%s" 2>/dev/null || echo "")"
+  fi
+
+  if [ -z "$epoch" ]; then
+    echo "$timestamp"
+    return
+  fi
+
+  local now
+  now="$(date "+%s")"
+  local diff=$((now - epoch))
+
+  if [ $diff -lt 60 ]; then
+    echo "just now"
+  elif [ $diff -lt 3600 ]; then
+    local mins=$((diff / 60))
+    if [ $mins -eq 1 ]; then
+      echo "1 minute ago"
+    else
+      echo "${mins} minutes ago"
+    fi
+  elif [ $diff -lt 86400 ]; then
+    local hours=$((diff / 3600))
+    if [ $hours -eq 1 ]; then
+      echo "1 hour ago"
+    else
+      echo "${hours} hours ago"
+    fi
+  elif [ $diff -lt 2592000 ]; then
+    local days=$((diff / 86400))
+    if [ $days -eq 1 ]; then
+      echo "1 day ago"
+    else
+      echo "${days} days ago"
+    fi
+  elif [ $diff -lt 31536000 ]; then
+    local months=$((diff / 2592000))
+    if [ $months -eq 1 ]; then
+      echo "1 month ago"
+    else
+      echo "${months} months ago"
+    fi
+  else
+    local years=$((diff / 31536000))
+    if [ $years -eq 1 ]; then
+      echo "1 year ago"
+    else
+      echo "${years} years ago"
+    fi
+  fi
+}
+
 prompt_choice() {
   local msg="$1"; shift
   local options=("$@")
@@ -610,6 +677,18 @@ worktree_repl() {
     fi
   fi
 
+  # Fetch PR details (author, created date, last updated) if we have a PR
+  local pr_author pr_created pr_updated
+  if [ -n "$pr_url" ]; then
+    local pr_details
+    pr_details="$(gh pr view "$pr_url" --json author,createdAt,updatedAt 2>/dev/null || true)"
+    if [ -n "$pr_details" ]; then
+      pr_author="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))" 2>/dev/null || true)"
+      pr_created="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))" 2>/dev/null || true)"
+      pr_updated="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))" 2>/dev/null || true)"
+    fi
+  fi
+
   # --- Open editor (detects editor and sets up auto-REPL task internally) ---
   echo ""
   open_editor "$wt_path" "$repo_root"
@@ -628,7 +707,17 @@ worktree_repl() {
     fi
     echo "${cyan}Branch:${reset} ${branch}"
     if [ -n "${pr_num:-}" ]; then
-      echo "${cyan}PR:${reset} #${pr_num}${pr_url:+ — $pr_url}"
+      local pr_info="#${pr_num}"
+      if [ -n "${pr_author:-}" ]; then
+        pr_info="${pr_info} by ${pr_author}"
+      fi
+      echo "${cyan}PR:${reset} ${pr_info}${pr_url:+ — $pr_url}"
+      if [ -n "${pr_created:-}" ]; then
+        echo "${cyan}Created:${reset} $(relative_time "$pr_created")"
+      fi
+      if [ -n "${pr_updated:-}" ]; then
+        echo "${cyan}Updated:${reset} $(relative_time "$pr_updated")"
+      fi
     fi
     if [ -n "$tracking" ]; then
       local info_ahead info_behind info_parts=""
