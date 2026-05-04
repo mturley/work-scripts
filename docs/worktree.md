@@ -12,6 +12,12 @@ Unified command for creating and managing git worktrees that optionally clone in
   ```bash
   export WORKTREES_BASE=$HOME/git/.worktrees
   ```
+- Optionally, configure worktree discovery to find worktrees created by other tools (Zed, Claude Code, etc.):
+  ```bash
+  export WORKTREE_SEARCH_ROOTS=$HOME/git        # colon-separated search roots (default: ~/git)
+  export WORKTREE_SEARCH_DEPTH=5                 # max find depth (default: 5)
+  export WORKTREE_SEARCH_PRUNE=node_modules:.Trash:.cache:.venv:venv  # dirs to skip (default)
+  ```
 
 ## Usage
 
@@ -37,7 +43,7 @@ By default, every worktree session launches in [mprocs](https://github.com/pvolo
 
 - **iTerm2** — with `--iterm` and multiple arguments, opens each worktree in a vertical split pane (named "worktree PR #1234", etc.). Use `--tabs` to open in separate tabs instead, or `--split` to explicitly request split panes.
 
-* **No arguments** — if run from within a worktree directory under `$WORKTREES_BASE`, drops directly into the REPL for that worktree. Otherwise, lists all worktrees, detects and marks orphaned ones (`.git` missing but files not fully cleaned up), and lets you select one to manage or clean up. Supports comma-separated selections (e.g. `1,3,5`) or `all` to open multiple worktrees in parallel.
+* **No arguments** — if run from within any git worktree directory, drops directly into the REPL for that worktree. Otherwise, discovers all worktrees across `$WORKTREE_SEARCH_ROOTS` (including those created by Zed, Claude Code, or any other tool), groups them by repo name, and lets you select one to manage or clean up. Detects and marks orphaned worktrees (`.git` missing) and prunable ones (stale git references). Supports comma-separated selections (e.g. `1,3,5`) or `all` to open multiple worktrees in parallel.
 
 * **PR number or GitHub URL** — fetches the PR metadata (title, author, created/updated dates) and searches for any existing worktrees on related branches (the PR's head ref or a `review/pr-*` branch). Displays the PR title, author, and relative timestamps (e.g. "2 days ago") for when it was created and last updated. If one worktree is found, reuses it with a sync check (offering to back up and reset to the PR's latest commit if behind). If multiple are found, shows a selection with commit info and ahead/behind status. If none are found, creates a new review worktree and sets up branch tracking against the PR author's remote. Automatically locates the matching local repo if run from a different directory.
 

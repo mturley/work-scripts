@@ -4,6 +4,11 @@
 # Base directory for all worktrees. Override with WORKTREES_BASE env var.
 WORKTREES_BASE="${WORKTREES_BASE:-$HOME/git/.worktrees}"
 
+# Worktree discovery settings (for finding worktrees created by any tool)
+WORKTREE_SEARCH_ROOTS="${WORKTREE_SEARCH_ROOTS:-$HOME/git}"
+WORKTREE_SEARCH_DEPTH="${WORKTREE_SEARCH_DEPTH:-5}"
+WORKTREE_SEARCH_PRUNE="${WORKTREE_SEARCH_PRUNE:-node_modules:.Trash:.cache:.venv:venv}"
+
 # Port range configuration
 PORT_RANGE_FILE="${WORKTREES_BASE}/.port-ranges"
 PORT_RANGE_SIZE=10
@@ -937,6 +942,162 @@ worktree_post_setup() {
   worktree_repl "$repo_root" "$wt_path" "$scripts_dir"
 }
 
+# discover_all_worktrees
+# Finds all git worktrees across WORKTREE_SEARCH_ROOTS by locating repos and
+# querying each for its worktrees. Populates global arrays:
+#   disc_wt_paths[]      — absolute path to each worktree
+#   disc_wt_branches[]   — branch name (short) for each worktree
+#   disc_wt_repos[]      — repo name (for grouping) for each worktree
+#   disc_wt_repo_roots[] — main repo root path for each worktree
+#   disc_wt_labels[]     — display label for each worktree
+#   disc_wt_prunable[]   — "true" if git reports the worktree as prunable
+#   disc_repos[]         — unique repo names found (ordered)
+discover_all_worktrees() {
+  disc_wt_paths=()
+  disc_wt_branches=()
+  disc_wt_repos=()
+  disc_wt_repo_roots=()
+  disc_wt_labels=()
+  disc_wt_prunable=()
+  disc_repos=()
+
+  # Build prune args for find
+  local prune_args=()
+  local IFS_SAVE="$IFS"
+  IFS=':'
+  local prune_names
+  read -ra prune_names <<< "$WORKTREE_SEARCH_PRUNE"
+  IFS="$IFS_SAVE"
+  for pname in "${prune_names[@]}"; do
+    [ -n "$pname" ] || continue
+    if [ ${#prune_args[@]} -eq 0 ]; then
+      prune_args=(-name "$pname")
+    else
+      prune_args+=(-o -name "$pname")
+    fi
+  done
+
+  # Track seen repo roots to avoid duplicates
+  local seen_repos=""
+
+  # Search each root
+  IFS=':'
+  local search_roots
+  read -ra search_roots <<< "$WORKTREE_SEARCH_ROOTS"
+  IFS="$IFS_SAVE"
+
+  for search_root in "${search_roots[@]}"; do
+    [ -d "$search_root" ] || continue
+
+    # Find .git directories (repos) under this search root
+    local find_cmd=(find "$search_root" -maxdepth "$WORKTREE_SEARCH_DEPTH")
+    if [ ${#prune_args[@]} -gt 0 ]; then
+      find_cmd+=('(' "${prune_args[@]}" ')' -prune -o)
+    fi
+    find_cmd+=(-name ".git" -type d -print)
+
+    while IFS= read -r gitdir; do
+      local repo_path
+      repo_path="$(dirname "$gitdir")"
+
+      # Skip if we've already processed this repo
+      case "$seen_repos" in
+        *"|${repo_path}|"*) continue ;;
+      esac
+      seen_repos="${seen_repos}|${repo_path}|"
+
+      # Get worktree list for this repo
+      local porcelain
+      porcelain="$(git -C "$repo_path" worktree list --porcelain 2>/dev/null)" || continue
+
+      # Parse porcelain output: collect all entries, skip the first (main worktree)
+      local main_root=""
+      local wt_paths_tmp=() wt_branches_tmp=() wt_prunable_tmp=()
+      local current_wt="" current_branch="" current_prunable=false
+      while IFS= read -r line; do
+        case "$line" in
+          "worktree "*)
+            # Save previous entry
+            if [ -n "$current_wt" ]; then
+              wt_paths_tmp+=("$current_wt")
+              wt_branches_tmp+=("$current_branch")
+              wt_prunable_tmp+=("$current_prunable")
+            fi
+            current_wt="${line#worktree }"
+            current_branch=""
+            current_prunable=false
+            ;;
+          "branch refs/heads/"*)
+            current_branch="${line#branch refs/heads/}"
+            ;;
+          "prunable "*)
+            current_prunable=true
+            ;;
+        esac
+      done <<< "$porcelain"
+      # Save last entry
+      if [ -n "$current_wt" ]; then
+        wt_paths_tmp+=("$current_wt")
+        wt_branches_tmp+=("$current_branch")
+        wt_prunable_tmp+=("$current_prunable")
+      fi
+
+      # First entry is the main worktree; skip it, emit the rest
+      [ ${#wt_paths_tmp[@]} -gt 1 ] || continue
+      main_root="${wt_paths_tmp[0]}"
+      local j
+      for j in "${!wt_paths_tmp[@]}"; do
+        [ "$j" -eq 0 ] && continue
+        _disc_add_worktree "$main_root" "${wt_paths_tmp[$j]}" "${wt_branches_tmp[$j]}" "${wt_prunable_tmp[$j]}"
+      done
+    done < <("${find_cmd[@]}" 2>/dev/null)
+  done
+}
+
+_disc_add_worktree() {
+  local main_root="$1" wt_path="$2" branch="$3" prunable="$4"
+  local repo_name
+  repo_name="$(basename "$main_root")"
+
+  # Build display label
+  local wt_name
+  wt_name="$(basename "$wt_path")"
+  local label="$wt_name"
+  if [ -n "$branch" ]; then
+    label="$branch"
+    # Append dir name if it differs from both the branch and the repo name
+    if [ "$wt_name" != "$branch" ] && [ "$wt_name" != "$(echo "$branch" | tr '/' '-')" ] && [ "$wt_name" != "$repo_name" ]; then
+      label="$branch ($wt_name)"
+    fi
+  fi
+  if [ "$prunable" = "true" ]; then
+    label="$label (prunable)"
+  elif [ ! -d "$wt_path" ]; then
+    label="$label (missing)"
+  elif [ ! -e "$wt_path/.git" ]; then
+    label="$label (orphaned)"
+  fi
+
+  disc_wt_paths+=("$wt_path")
+  disc_wt_branches+=("$branch")
+  disc_wt_repos+=("$repo_name")
+  disc_wt_repo_roots+=("$main_root")
+  disc_wt_labels+=("$label")
+  disc_wt_prunable+=("$prunable")
+
+  # Track unique repos in order
+  local already_listed=false
+  for r in "${disc_repos[@]+${disc_repos[@]}}"; do
+    if [ "$r" = "$repo_name" ]; then
+      already_listed=true
+      break
+    fi
+  done
+  if ! $already_listed; then
+    disc_repos+=("$repo_name")
+  fi
+}
+
 # resolve_worktree <arg>
 # Resolves a worktree path from a PR number, PR URL, branch name, or direct path.
 # Sets WT_PATH to the resolved absolute path. Returns 1 if not found.
@@ -996,7 +1157,7 @@ resolve_worktree() {
     done < <(find "$WORKTREES_BASE" -maxdepth 2 -mindepth 2 -type d -name "${dir_branch}" 2>/dev/null)
   fi
 
-  # Also check git worktree list for the branch
+  # Also check git worktree list for the branch (current repo only)
   local existing_wt
   existing_wt="$(git worktree list --porcelain 2>/dev/null | awk -v branch="$arg" '
     /^worktree / { wt = $0; sub(/^worktree /, "", wt) }
@@ -1009,6 +1170,28 @@ resolve_worktree() {
     WT_PATH="$existing_wt"
     return 0
   fi
+
+  # Fall back to full discovery across all search roots
+  discover_all_worktrees
+  for i in "${!disc_wt_paths[@]}"; do
+    local dwt="${disc_wt_paths[$i]}"
+    local dbranch="${disc_wt_branches[$i]}"
+    # Match by branch name
+    if [ "$dbranch" = "$arg" ]; then
+      WT_PATH="$dwt"
+      return 0
+    fi
+    # Match by directory name
+    if [ "$(basename "$dwt")" = "$arg" ] || [ "$(basename "$dwt")" = "$dir_branch" ]; then
+      WT_PATH="$dwt"
+      return 0
+    fi
+    # Match PR number by directory name pattern
+    if [ -n "$pr_number" ] && [[ "$(basename "$dwt")" == pr-${pr_number}-* ]]; then
+      WT_PATH="$dwt"
+      return 0
+    fi
+  done
 
   return 1
 }
