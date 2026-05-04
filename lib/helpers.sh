@@ -684,15 +684,15 @@ open_editor() {
 
   local choice
   choice="$(prompt_choice "Which editor?" "VS Code" "Cursor" "Zed" "None")"
+  if prompt_yn "Remember this choice for future worktrees?"; then
+    echo "$choice" > "$cache_file"
+  fi
   case "$choice" in
     "VS Code") env -u CLAUDECODE code --new-window "$wt_path" ;;
     "Cursor") env -u CLAUDECODE cursor --new-window "$wt_path" ;;
     "Zed") _open_zed "$wt_path" ;;
     "None") echo "Skipping editor."; return ;;
   esac
-  if prompt_yn "Remember this choice for future worktrees?"; then
-    echo "$choice" > "$cache_file"
-  fi
 }
 
 # worktree_repl <repo-root> <worktree-path>
