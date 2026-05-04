@@ -22,7 +22,7 @@ worktree                             # list existing worktrees and select one
 worktree 1234                        # create or reopen a worktree for PR #1234
 worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
-worktree ~/git/.worktrees/repo--name # open an existing worktree by path
+worktree ~/git/.worktrees/repo/name  # open an existing worktree by path
 worktree 1234 5678 my-branch         # open multiple worktrees in mprocs (default)
 worktree --iterm 1234 5678           # open multiple worktrees in iTerm split panes
 worktree --tabs 1234 5678            # open multiple worktrees in iTerm tabs

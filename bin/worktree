@@ -59,6 +59,7 @@ Options:
 
 Environment:
   WORKTREES_BASE      Directory where worktrees are created (default: ~/git/.worktrees).
+                      Worktrees are organized in per-project subdirectories.
 
 Examples:
   worktree                                          # list and select
@@ -117,15 +118,12 @@ pane_label() {
     if [ -n "$pr_num" ]; then
       label="PR #$pr_num"
     fi
-  elif [[ "$(basename "$arg")" == *--pr-* ]]; then
+  elif [[ "$(basename "$arg")" == pr-* ]]; then
     local pr_num
-    pr_num="$(basename "$arg" | sed 's/.*--pr-\([0-9]*\)-.*/\1/')"
+    pr_num="$(basename "$arg" | sed 's/^pr-\([0-9]*\)-.*/\1/')"
     label="PR #$pr_num"
   elif [ -d "$arg" ] || [[ "$arg" == "$WORKTREES_BASE"/* ]]; then
-    local dir_name
-    dir_name="$(basename "$arg")"
-    # Strip "repo--" prefix from worktree directory names to get the branch part
-    label="${dir_name#*--}"
+    label="$(basename "$arg")"
   fi
   echo "wt $label"
 }
@@ -137,39 +135,52 @@ if $CLEANUP; then
     exit 0
   fi
 
-  worktrees=()
-  while IFS= read -r d; do
-    worktrees+=("$(basename "$d")")
+  # Build worktree list grouped by project
+  cleanup_keys=()    # "project/name" for path reconstruction
+  cleanup_labels=()  # display labels for prompt_multi_select
+  while IFS= read -r proj_dir; do
+    proj="$(basename "$proj_dir")"
+    while IFS= read -r d; do
+      name="$(basename "$d")"
+      cleanup_keys+=("${proj}/${name}")
+      cleanup_labels+=("${proj}/${name}")
+    done < <(find "$proj_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
   done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
 
-  if [ ${#worktrees[@]} -eq 0 ]; then
+  if [ ${#cleanup_keys[@]} -eq 0 ]; then
     echo "No worktrees found in $(short_path "$WORKTREES_BASE")"
   else
     selected=()
     while IFS= read -r line; do
       [ -n "$line" ] && selected+=("$line")
-    done <<< "$(prompt_multi_select "Which worktrees to remove?" "${worktrees[@]}")"
+    done <<< "$(prompt_multi_select "Which worktrees to remove?" "${cleanup_labels[@]}")"
 
     if [ ${#selected[@]} -gt 0 ]; then
       # Track repo roots before removal so we can clean up excludes after
       cleanup_repo_roots=()
-      for name in "${selected[@]}"; do
-        wt_path="${WORKTREES_BASE}/${name}"
+      for key in "${selected[@]}"; do
+        wt_path="${WORKTREES_BASE}/${key}"
         if [ -e "$wt_path/.git" ]; then
           wt_repo_root="$(git -C "$wt_path" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
           if [ -n "$wt_repo_root" ]; then
             cleanup_repo_roots+=("$wt_repo_root")
           fi
         fi
-        release_port_range "$name"
+        release_port_range "$key"
         remove_worktree "$wt_path"
-        echo "Removed ${name}"
+        echo "Removed ${key}"
       done
       git worktree prune 2>/dev/null || true
       # Clean up git exclude entries if no worktrees remain for each repo
       for repo_root in "${cleanup_repo_roots[@]}"; do
         cleanup_worktree_exclude_if_last "$repo_root"
       done
+      # Clean up empty project subdirectories
+      while IFS= read -r proj_dir; do
+        if [ -d "$proj_dir" ] && [ -z "$(ls -A "$proj_dir" 2>/dev/null)" ]; then
+          rmdir "$proj_dir" 2>/dev/null || true
+        fi
+      done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
     fi
   fi
 
@@ -178,7 +189,7 @@ if $CLEANUP; then
   if [ -d "$WORKTREES_BASE" ]; then
     while IFS= read -r d; do
       remaining_wts+=("$(basename "$d")")
-    done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
+    done < <(find "$WORKTREES_BASE" -maxdepth 2 -mindepth 2 -type d 2>/dev/null)
   fi
 
   if [ ${#remaining_wts[@]} -eq 0 ] && [ -f "$PORT_RANGE_FILE" ] && [ -s "$PORT_RANGE_FILE" ]; then
@@ -210,6 +221,10 @@ if $CLEANUP; then
   if [ -f /tmp/worktree-editor-preference ]; then
     pref_files+=("/tmp/worktree-editor-preference")
     pref_labels+=("Editor preference ($(cat /tmp/worktree-editor-preference))")
+  fi
+  if [ -f /tmp/worktree-zed-window-preference ]; then
+    pref_files+=("/tmp/worktree-zed-window-preference")
+    pref_labels+=("Zed window mode preference ($(cat /tmp/worktree-zed-window-preference))")
   fi
   if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
     pref_files+=("$VSCODE_TASKS_PREF_FILE")
@@ -389,15 +404,21 @@ fi
 
 if [ $# -eq 0 ]; then
   # Check if we're already inside a worktree under WORKTREES_BASE
+  # Worktrees are at WORKTREES_BASE/<project>/<worktree-name>
   CURRENT_DIR="$(pwd)"
   if [[ "$CURRENT_DIR" == "$WORKTREES_BASE"/* ]]; then
     WT_REL="${CURRENT_DIR#"$WORKTREES_BASE"/}"
-    WT_NAME="${WT_REL%%/*}"
-    WT_PATH="${WORKTREES_BASE}/${WT_NAME}"
-    if [ -e "$WT_PATH/.git" ]; then
-      REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-      worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
-      exit 0
+    # Extract project/worktree-name (first two path components)
+    WT_PROJECT="${WT_REL%%/*}"
+    WT_REST="${WT_REL#*/}"
+    WT_NAME="${WT_REST%%/*}"
+    if [ -n "$WT_PROJECT" ] && [ -n "$WT_NAME" ]; then
+      WT_PATH="${WORKTREES_BASE}/${WT_PROJECT}/${WT_NAME}"
+      if [ -e "$WT_PATH/.git" ]; then
+        REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+        worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
+        exit 0
+      fi
     fi
   fi
 
@@ -406,47 +427,70 @@ if [ $# -eq 0 ]; then
     exit 0
   fi
 
-  worktrees=()
+  # Build worktree list grouped by project subdirectory
+  # Each entry in worktree_keys is "project/name", used for path reconstruction
+  worktree_keys=()
+  worktree_labels=()
   orphaned=()
-  while IFS= read -r d; do
-    name="$(basename "$d")"
-    if git -C "$d" rev-parse --git-dir &>/dev/null; then
-      worktrees+=("$name")
-    else
-      worktrees+=("$name (orphaned)")
-      orphaned+=("$name")
+  projects=()
+  while IFS= read -r proj_dir; do
+    proj="$(basename "$proj_dir")"
+    proj_has_wts=false
+    while IFS= read -r d; do
+      name="$(basename "$d")"
+      key="${proj}/${name}"
+      if git -C "$d" rev-parse --git-dir &>/dev/null; then
+        worktree_keys+=("$key")
+        worktree_labels+=("$name")
+        proj_has_wts=true
+      else
+        worktree_keys+=("$key")
+        worktree_labels+=("$name (orphaned)")
+        orphaned+=("$key")
+        proj_has_wts=true
+      fi
+    done < <(find "$proj_dir" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+    if $proj_has_wts; then
+      projects+=("$proj")
     fi
   done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
 
-  if [ ${#worktrees[@]} -eq 0 ]; then
+  if [ ${#worktree_keys[@]} -eq 0 ]; then
     echo "No worktrees found in $(short_path "$WORKTREES_BASE")"
     exit 0
   fi
 
-  # Display worktree list
+  # Display worktree list grouped by project
   echo ""
   echo "Select a worktree (comma-separated for multiple, 'all' for all):"
-  for i in "${!worktrees[@]}"; do
-    echo "  ${COLOR_BLUE}$((i+1)))${COLOR_RESET} ${worktrees[$i]}"
+  idx=0
+  for proj in "${projects[@]}"; do
+    echo "  ${COLOR_CYAN}${proj}:${COLOR_RESET}"
+    for i in "${!worktree_keys[@]}"; do
+      key="${worktree_keys[$i]}"
+      if [ "${key%%/*}" = "$proj" ]; then
+        echo "    ${COLOR_BLUE}$((i+1)))${COLOR_RESET} ${worktree_labels[$i]}"
+      fi
+    done
   done
 
   while true; do
-    printf "Choice [${COLOR_BLUE}1-%d${COLOR_RESET}, or ${COLOR_BLUE}all${COLOR_RESET}]: " "${#worktrees[@]}"
+    printf "Choice [${COLOR_BLUE}1-%d${COLOR_RESET}, or ${COLOR_BLUE}all${COLOR_RESET}]: " "${#worktree_keys[@]}"
     read -r input
 
     if [ "$input" = "all" ]; then
       # Collect all non-orphaned worktree paths
       selected_paths=()
-      for i in "${!worktrees[@]}"; do
-        name="${worktrees[$i]% (orphaned)}"
+      for i in "${!worktree_keys[@]}"; do
+        key="${worktree_keys[$i]}"
         is_orph=false
         if [ ${#orphaned[@]} -gt 0 ]; then
           for o in "${orphaned[@]}"; do
-            if [ "$o" = "$name" ]; then is_orph=true; break; fi
+            if [ "$o" = "$key" ]; then is_orph=true; break; fi
           done
         fi
         if ! $is_orph; then
-          selected_paths+=("${WORKTREES_BASE}/${name}")
+          selected_paths+=("${WORKTREES_BASE}/${key}")
         fi
       done
       if [ ${#selected_paths[@]} -eq 0 ]; then
@@ -462,7 +506,7 @@ if [ $# -eq 0 ]; then
     selected_indices=()
     for pick in "${picks[@]}"; do
       pick="$(echo "$pick" | tr -d '[:space:]')"
-      if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "${#worktrees[@]}" ]; then
+      if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "${#worktree_keys[@]}" ]; then
         selected_indices+=("$((pick-1))")
       else
         valid=false
@@ -479,8 +523,7 @@ if [ $# -eq 0 ]; then
     if [ ${#selected_indices[@]} -gt 1 ]; then
       selected_paths=()
       for idx in "${selected_indices[@]}"; do
-        name="${worktrees[$idx]% (orphaned)}"
-        selected_paths+=("${WORKTREES_BASE}/${name}")
+        selected_paths+=("${WORKTREES_BASE}/${worktree_keys[$idx]%% (orphaned)}")
       done
       exec "$0" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "${selected_paths[@]}"
     fi
@@ -489,19 +532,18 @@ if [ $# -eq 0 ]; then
     break
   done
 
-  choice="${worktrees[${selected_indices[0]}]}"
-  selected_name="${choice% (orphaned)}"
+  selected_key="${worktree_keys[${selected_indices[0]}]}"
   is_orphaned=false
   if [ ${#orphaned[@]} -gt 0 ]; then
     for o in "${orphaned[@]}"; do
-      if [ "$o" = "$selected_name" ]; then
+      if [ "$o" = "$selected_key" ]; then
         is_orphaned=true
         break
       fi
     done
   fi
 
-  WT_PATH="${WORKTREES_BASE}/${selected_name}"
+  WT_PATH="${WORKTREES_BASE}/${selected_key}"
 
   if $is_orphaned; then
     echo ""
@@ -655,7 +697,7 @@ if is_pr_arg "$ARG"; then
   REPO_ROOT="$(git rev-parse --show-toplevel)"
   BASE_REPO="$(echo "$PR_URL" | sed 's|https://github.com/||' | sed 's|/pull/.*||')"
   REPO_NAME="$(basename "$REPO_ROOT")"
-  WORKTREE_ABS="${WORKTREES_BASE}/${REPO_NAME}--${WORKTREE_NAME}"
+  WORKTREE_ABS="${WORKTREES_BASE}/${REPO_NAME}/${WORKTREE_NAME}"
 
   # Display PR info with author and dates
   echo "PR #${PR_NUMBER}: ${PR_TITLE}"
@@ -669,7 +711,7 @@ if is_pr_arg "$ARG"; then
     echo "  Updated: $(relative_time "$PR_UPDATED")"
   fi
 
-  mkdir -p "$WORKTREES_BASE"
+  mkdir -p "${WORKTREES_BASE}/${REPO_NAME}"
 
   # Fetch the PR's latest commit into a named ref (avoids FETCH_HEAD race when
   # multiple worktree processes run in parallel via mprocs).
@@ -904,10 +946,9 @@ else
   cd "$REPO_ROOT"
   REPO_NAME="$(basename "$REPO_ROOT")"
   DIR_BRANCH="$(echo "$BRANCH_NAME" | tr '/' '-')"
-  WORKTREE_NAME="${REPO_NAME}--${DIR_BRANCH}"
-  WORKTREE_ABS="${WORKTREES_BASE}/${WORKTREE_NAME}"
+  WORKTREE_ABS="${WORKTREES_BASE}/${REPO_NAME}/${DIR_BRANCH}"
 
-  mkdir -p "$WORKTREES_BASE"
+  mkdir -p "${WORKTREES_BASE}/${REPO_NAME}"
 
   if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" branch "$WORKTREE_ABS" "$BRANCH_NAME" 2>&1)"; then
     MSG="$(echo "$RESULT" | parse_json message)"

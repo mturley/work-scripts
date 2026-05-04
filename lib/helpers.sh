@@ -586,13 +586,42 @@ TASKEOF
   return 0
 }
 
-# detect_editor - Sets EDITOR_CMD to "cursor" or "code" if detected, empty otherwise.
+# detect_editor - Sets EDITOR_CMD to "cursor", "code", or "zed" if detected, empty otherwise.
 detect_editor() {
   EDITOR_CMD=""
   if [ -n "${CURSOR_CHANNEL:-}" ] || [[ "${__CFBundleIdentifier:-}" == *cursor* ]]; then
     EDITOR_CMD="cursor"
   elif [ -n "${VSCODE_PID:-}" ] || [ "${TERM_PROGRAM:-}" = "vscode" ]; then
     EDITOR_CMD="code"
+  elif [ "${TERM_PROGRAM:-}" = "zed" ] || [ -n "${ZED_TERM:-}" ]; then
+    EDITOR_CMD="zed"
+  fi
+}
+
+# _open_zed <worktree-path> - Open in Zed, prompting for same/new window.
+# Uses a separate cache file for the window mode preference.
+_open_zed() {
+  local wt_path="$1"
+  local zed_cache="/tmp/worktree-zed-window-preference"
+  local zed_mode=""
+
+  if [ -f "$zed_cache" ]; then
+    zed_mode="$(cat "$zed_cache")"
+  fi
+
+  if [ -z "$zed_mode" ]; then
+    zed_mode="$(prompt_choice "Zed window mode?" "Same window" "New window")"
+    if prompt_yn "Remember this choice for future worktrees?"; then
+      echo "$zed_mode" > "$zed_cache"
+    fi
+  fi
+
+  if [ "$zed_mode" = "New window" ]; then
+    env -u CLAUDECODE zed -n "$wt_path"
+    echo "Opened Zed in a new window."
+  else
+    env -u CLAUDECODE zed "$wt_path"
+    echo "Opened in Zed (same window)."
   fi
 }
 
@@ -613,8 +642,12 @@ open_editor() {
   fi
 
   if [ -n "${EDITOR_CMD:-}" ]; then
-    env -u CLAUDECODE $EDITOR_CMD --new-window "$wt_path"
-    echo "Opened new ${EDITOR_CMD} window."
+    if [ "$EDITOR_CMD" = "zed" ]; then
+      _open_zed "$wt_path"
+    else
+      env -u CLAUDECODE $EDITOR_CMD --new-window "$wt_path"
+      echo "Opened new ${EDITOR_CMD} window."
+    fi
     return
   fi
 
@@ -635,31 +668,41 @@ open_editor() {
         echo "Opened new Cursor window (remembered preference)."
         return
         ;;
+      "Zed")
+        _open_zed "$wt_path"
+        return
+        ;;
       "None")
         ;;
     esac
   fi
 
   local choice
-  choice="$(prompt_choice "Which editor?" "VS Code" "Cursor" "None")"
+  choice="$(prompt_choice "Which editor?" "VS Code" "Cursor" "Zed" "None")"
   case "$choice" in
-    "VS Code") echo "$choice" > "$cache_file"; env -u CLAUDECODE code --new-window "$wt_path" ;;
-    "Cursor") echo "$choice" > "$cache_file"; env -u CLAUDECODE cursor --new-window "$wt_path" ;;
-    "None") echo "Skipping editor." ;;
+    "VS Code") env -u CLAUDECODE code --new-window "$wt_path" ;;
+    "Cursor") env -u CLAUDECODE cursor --new-window "$wt_path" ;;
+    "Zed") _open_zed "$wt_path" ;;
+    "None") echo "Skipping editor."; return ;;
   esac
+  if prompt_yn "Remember this choice for future worktrees?"; then
+    echo "$choice" > "$cache_file"
+  fi
 }
 
 # worktree_repl <repo-root> <worktree-path>
 # Interactive loop offering shell, open, cleanup, and exit commands.
 worktree_repl() {
   local repo_root="$1" wt_path="$2" scripts_dir="${3:-}"
-  local wt_name branch tracking pr_num pr_url
+  local wt_name wt_port_key branch tracking pr_num pr_url
   wt_name="$(basename "$wt_path")"
+  # Port range key includes project dir to avoid cross-repo collisions
+  wt_port_key="${wt_path#"$WORKTREES_BASE"/}"
   branch="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
   tracking="$(git -C "$wt_path" rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || true)"
 
-  if [[ "$wt_name" == *--pr-* ]]; then
-    pr_num="$(echo "$wt_name" | sed 's/.*--pr-\([0-9]*\)-.*/\1/')"
+  if [[ "$wt_name" == pr-* ]]; then
+    pr_num="$(echo "$wt_name" | sed 's/^pr-\([0-9]*\)-.*/\1/')"
     local remote_url
     remote_url="$(git -C "$wt_path" remote get-url upstream 2>/dev/null || git -C "$wt_path" remote get-url origin 2>/dev/null || true)"
     if [ -n "$remote_url" ]; then
@@ -783,7 +826,7 @@ worktree_repl() {
 
   # Assign port range for this worktree
   local worktree_ports
-  worktree_ports="$(assign_port_range "$wt_name")"
+  worktree_ports="$(assign_port_range "$wt_port_key")"
 
   # Set iTerm2 tab title and WORKTREE_TITLE
   local worktree_title iterm_label=""
@@ -852,7 +895,7 @@ worktree_repl() {
         echo "This will remove the worktree at:"
         echo "  $(short_path "$wt_path")"
         if prompt_yn "Proceed?"; then
-          release_port_range "$wt_name"
+          release_port_range "$wt_port_key"
           remove_worktree "$wt_path"
           echo "Worktree removed."
           git worktree prune 2>/dev/null || true
@@ -910,6 +953,17 @@ resolve_worktree() {
     return 0
   fi
 
+  # Check for worktree name under any project subdir
+  if [ -d "$WORKTREES_BASE" ]; then
+    local candidate
+    while IFS= read -r candidate; do
+      if [ -d "$candidate" ] && [ -e "$candidate/.git" ]; then
+        WT_PATH="$candidate"
+        return 0
+      fi
+    done < <(find "$WORKTREES_BASE" -maxdepth 2 -mindepth 2 -type d -name "$arg" 2>/dev/null)
+  fi
+
   # Case 2: PR number or URL
   local pr_number=""
   if [[ "$arg" == *github.com* ]]; then
@@ -925,7 +979,7 @@ resolve_worktree() {
           WT_PATH="$candidate"
           return 0
         fi
-      done < <(find "$WORKTREES_BASE" -maxdepth 1 -type d -name "*--pr-${pr_number}-*" 2>/dev/null)
+      done < <(find "$WORKTREES_BASE" -maxdepth 2 -mindepth 2 -type d -name "pr-${pr_number}-*" 2>/dev/null)
     fi
     return 1
   fi
@@ -939,7 +993,7 @@ resolve_worktree() {
         WT_PATH="$candidate"
         return 0
       fi
-    done < <(find "$WORKTREES_BASE" -maxdepth 1 -type d -name "*--${dir_branch}" 2>/dev/null)
+    done < <(find "$WORKTREES_BASE" -maxdepth 2 -mindepth 2 -type d -name "${dir_branch}" 2>/dev/null)
   fi
 
   # Also check git worktree list for the branch

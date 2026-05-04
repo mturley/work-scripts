@@ -86,11 +86,11 @@ case "$MODE" in
     SLUG="${4:?Missing slug}"
     BASE_REPO="${5:?Missing base repo (owner/repo)}"
 
-    # Check for existing worktree matching this PR number (glob on *--pr-<number>-*)
+    # Check for existing worktree matching this PR number (glob on pr-<number>-*)
     WORKTREE_DIR="$(dirname "$WORKTREE_PATH")"
     EXISTING=""
     if [ -d "$WORKTREE_DIR" ]; then
-      for d in "$WORKTREE_DIR"/*--pr-"${PR_NUMBER}"-*; do
+      for d in "$WORKTREE_DIR"/pr-"${PR_NUMBER}"-*; do
         if [ -d "$d" ] && [ -e "$d/.git" ]; then
           EXISTING="$d"
           break
