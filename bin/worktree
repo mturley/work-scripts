@@ -29,14 +29,14 @@ source "$SCRIPTS_DIR/helpers.sh"
 ITERM_MODE="tab"
 USE_ITERM=false
 NO_MPROCS=false
-PERSISTENT="${WORKTREE_PERSISTENT:-false}"
+PERSISTENT="${WORKTREE_PERSISTENT:-true}"
 CLEANUP=false
 CLEANUP_PREFS=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<'HELPEOF'
-Usage: worktree [--iterm|--tabs|--split|--persistent] [pr-number|pr-url|branch-name|worktree-path] ...
+Usage: worktree [--iterm|--tabs|--split|--no-persist] [pr-number|pr-url|branch-name|worktree-path] ...
        worktree --sessions | --kill-session <name>
        worktree --cleanup | --cleanup-prefs
 
@@ -56,8 +56,8 @@ Options:
   --iterm             Use iTerm2 tabs instead of mprocs (default: tabs).
   --tabs              Open multiple worktrees in separate iTerm tabs (implies --iterm).
   --split             Open multiple worktrees in vertical split panes (iTerm, implies --iterm).
-  --persistent, -P    Wrap mprocs in a tmux session for persistence and remote reattach.
-                      Reattaches to an existing session if one matches the same arguments.
+  --no-persist        Skip tmux wrapping (mprocs only, no persistence).
+                      By default, mprocs runs inside a tmux session for persistence.
   --sessions          List active persistent (tmux) worktree sessions.
   --kill-session <n>  Kill a persistent session by name and clean up its temp files.
   --cleanup           Select worktrees to remove, then clean up stale temp files and preferences.
@@ -74,7 +74,7 @@ Environment:
   WORKTREE_SEARCH_DEPTH     Max find depth when searching for repos (default: 5).
   WORKTREE_SEARCH_PRUNE     Colon-separated directory names to skip during search
                             (default: node_modules:.Trash:.cache:.venv:venv).
-  WORKTREE_PERSISTENT       Set to "true" to enable --persistent by default.
+  WORKTREE_PERSISTENT       Set to "false" to disable persistence by default.
   WORKTREE_HIDE_KEYMAP      Hide mprocs keymap pane in persistent mode (default: true).
 
 Examples:
@@ -85,8 +85,7 @@ Examples:
   worktree 1234 5678 my-branch                      # multiple in mprocs (default)
   worktree --iterm 1234 5678                        # multiple in iTerm tabs
   worktree --split 1234 5678                        # multiple in iTerm split panes
-  worktree -P 1234                                  # persistent session (survives disconnect)
-  worktree -P 1234 5678                             # persistent multi-worktree session
+  worktree --no-persist 1234                      # skip tmux, mprocs only
   worktree --sessions                               # list active persistent sessions
   worktree --kill-session wt-PR-1234                # kill a persistent session
 HELPEOF
@@ -95,8 +94,8 @@ HELPEOF
     --tabs) ITERM_MODE="tab"; USE_ITERM=true; shift ;;
     --split) ITERM_MODE="split-v"; USE_ITERM=true; shift ;;
     --iterm) USE_ITERM=true; shift ;;
-    --no-mprocs) NO_MPROCS=true; shift ;;
-    --persistent|-P) PERSISTENT=true; shift ;;
+    --no-mprocs) NO_MPROCS=true; PERSISTENT=false; shift ;;
+    --no-persist) PERSISTENT=false; shift ;;
     --sessions) list_persistent_sessions; exit 0 ;;
     --kill-session)
       shift
@@ -111,6 +110,7 @@ HELPEOF
         rm -f "/tmp/worktree-tmux-${KILL_SESSION}.sock"
         rm -f "/tmp/worktree-mprocs-${KILL_SESSION}.yaml"
         rm -f "/tmp/worktree-mprocs-${KILL_SESSION}-count"
+        rm -f "/tmp/worktree-launch-${KILL_SESSION}.sh"
         echo "Killed session: $KILL_SESSION"
       else
         echo "Session not found: $KILL_SESSION" >&2
@@ -145,8 +145,8 @@ while IFS= read -r f; do
   session="${fname#worktree-tmux-}"
   if ! tmux has-session -t "$session" 2>/dev/null; then
     rm -f "$f"
-    # Also clean up associated mprocs files
-    rm -f "/tmp/worktree-mprocs-${session}.yaml" "/tmp/worktree-mprocs-${session}-count"
+    # Also clean up associated mprocs and launcher files
+    rm -f "/tmp/worktree-mprocs-${session}.yaml" "/tmp/worktree-mprocs-${session}-count" "/tmp/worktree-launch-${session}.sh"
     STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
   fi
 done < <(find /tmp -maxdepth 1 -name "worktree-tmux-*.sock" 2>/dev/null)
@@ -157,7 +157,7 @@ fi
 # Build flags array for re-exec calls
 REEXEC_FLAGS=()
 $USE_ITERM && REEXEC_FLAGS+=(--iterm)
-$PERSISTENT && REEXEC_FLAGS+=(--persistent)
+$PERSISTENT || REEXEC_FLAGS+=(--no-persist)
 
 CYAN="$(tput setaf 6 2>/dev/null || true)"
 RESET="$(tput sgr0 2>/dev/null || true)"
@@ -461,6 +461,7 @@ if [ $# -gt 1 ]; then
     echo "    env:" >> "$MPROCS_CFG"
     echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+    echo "      WORKTREE_TITLE: \"$label\"" >> "$MPROCS_CFG"
   done
   if $PERSISTENT; then
     launch_mprocs_persistent "$SESSION_NAME" "$MPROCS_CFG" "$MPROCS_SOCK" "$MPROCS_COUNT"
@@ -515,6 +516,7 @@ if [ $# -eq 1 ] && ! $USE_ITERM && ! $NO_MPROCS && [ -z "${WORKTREE_MPROCS_PANE:
     echo "    env:" >> "$MPROCS_CFG"
     echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+    echo "      WORKTREE_TITLE: \"$label\"" >> "$MPROCS_CFG"
     if $PERSISTENT; then
       launch_mprocs_persistent "$SESSION_NAME" "$MPROCS_CFG" "$MPROCS_SOCK" "$MPROCS_COUNT"
       rc=$?
@@ -561,6 +563,20 @@ if [ $# -eq 0 ]; then
   if [ ${#disc_wt_paths[@]} -eq 0 ]; then
     echo "No worktrees found (searched: ${WORKTREE_SEARCH_ROOTS})"
     exit 0
+  fi
+
+  # In persistent mode, auto-select all usable worktrees (no interactive prompt)
+  if $PERSISTENT; then
+    selected_paths=()
+    for i in "${!disc_wt_paths[@]}"; do
+      wt="${disc_wt_paths[$i]}"
+      if [ -d "$wt" ] && [ -e "$wt/.git" ] && [ "${disc_wt_prunable[$i]}" != "true" ]; then
+        selected_paths+=("$wt")
+      fi
+    done
+    if [ ${#selected_paths[@]} -gt 0 ]; then
+      exec "$0" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "${selected_paths[@]}"
+    fi
   fi
 
   # Display worktree list grouped by repo

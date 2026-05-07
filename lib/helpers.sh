@@ -155,9 +155,17 @@ launch_mprocs_persistent() {
   tmux -f /dev/null new-session -d -s "$session_name"
   tmux set-option -t "$session_name" mouse on
   tmux set-option -t "$session_name" status off
-  # Launch mprocs inside tmux; chain cleanup to run when mprocs exits
-  tmux send-keys -t "$session_name" \
-    "mprocs --config '$mprocs_cfg' --server '$mprocs_sock'; rm -f '$mprocs_cfg' '$mprocs_count' '$sock_file'" Enter
+  # Launch mprocs inside tmux via a wrapper script that traps EXIT to ensure
+  # cleanup happens even if mprocs is force-quit (signal death skips ;-chained commands)
+  local wrapper="/tmp/worktree-launch-${session_name}.sh"
+  cat > "$wrapper" <<WRAPPER_EOF
+#!/usr/bin/env bash
+cleanup() { rm -f '$mprocs_cfg' '$mprocs_count' '$sock_file' '$wrapper'; tmux kill-session -t '$session_name' 2>/dev/null; }
+trap cleanup EXIT
+mprocs --config '$mprocs_cfg' --server '$mprocs_sock'
+WRAPPER_EOF
+  chmod +x "$wrapper"
+  tmux send-keys -t "$session_name" "'$wrapper'" Enter
   exec tmux attach-session -t "$session_name"
 }
 
@@ -815,14 +823,18 @@ open_editor() {
 
   local choice
   choice="$(prompt_choice "Which editor?" "VS Code" "Cursor" "Zed" "None")"
-  if prompt_yn "Remember this choice for future worktrees?"; then
-    echo "$choice" > "$cache_file"
-  fi
+  case "$choice" in
+    "None") echo "Skipping editor."; return ;;
+    *)
+      if prompt_yn "Remember this choice for future worktrees?"; then
+        echo "$choice" > "$cache_file"
+      fi
+      ;;
+  esac
   case "$choice" in
     "VS Code") env -u CLAUDECODE code --new-window "$wt_path" ;;
     "Cursor") env -u CLAUDECODE cursor --new-window "$wt_path" ;;
     "Zed") _open_zed "$wt_path" ;;
-    "None") echo "Skipping editor."; return ;;
   esac
 }
 
@@ -935,14 +947,17 @@ worktree_repl() {
   }
 
   _worktree_commands() {
-    local pr_cmd="" clone_cmd=""
+    local pr_cmd="" clone_cmd="" name_cmd=""
     if [ -n "${pr_url:-}" ]; then
       pr_cmd="[p]r, "
     fi
     if [ -n "$scripts_dir" ]; then
       clone_cmd="[c]lone files, "
     fi
-    echo "${blue}Commands: [h]elp, [i]nfo, [l]og, [o]pen, ${pr_cmd}${clone_cmd}[s]hell, [r]emove, [e]xit${reset}"
+    if [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
+      name_cmd="[n]ame, "
+    fi
+    echo "${blue}Commands: [h]elp, [i]nfo, [l]og, ${name_cmd}[o]pen, ${pr_cmd}${clone_cmd}[s]hell, [r]emove, [e]xit${reset}"
   }
 
   _worktree_help() {
@@ -950,6 +965,9 @@ worktree_repl() {
     echo "  ${blue}help${reset}     (h)  Show this help"
     echo "  ${blue}info${reset}     (i)  Show PR URL (if applicable), worktree path, and git status"
     echo "  ${blue}log${reset}      (l)  Show git log"
+    if [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
+      echo "  ${blue}name${reset}     (n)  Rename this mprocs pane (no arg resets to default)"
+    fi
     echo "  ${blue}open${reset}     (o)  Open worktree in your editor (focuses existing window if already open)"
     echo "  ${blue}pr${reset}       (p)  Open the pull request page on GitHub (if applicable)"
     if [ -n "$scripts_dir" ]; then
@@ -1049,6 +1067,23 @@ worktree_repl() {
           echo "To close this pane: Ctrl+A → d → y"
         fi
         exit 0
+        ;;
+      name|n|name\ *|n\ *)
+        if [ -z "${WORKTREE_MPROCS_PANE:-}" ] || [ -z "${MPROCS_SOCKET:-}" ]; then
+          echo "Name command is only available inside mprocs."
+        else
+          local new_name=""
+          case "$cmd" in
+            "name "*)  new_name="${cmd#name }" ;;
+            "n "*)     new_name="${cmd#n }" ;;
+          esac
+          if [ -z "$new_name" ]; then
+            new_name="${WORKTREE_TITLE:-$worktree_title}"
+          fi
+          mprocs --server "$MPROCS_SOCKET" --ctl "{c: rename-proc, name: \"$new_name\"}" 2>/dev/null \
+            && echo "Renamed to: $new_name" \
+            || echo "Failed to rename (mprocs server not reachable)."
+        fi
         ;;
       help|h)
         _worktree_help

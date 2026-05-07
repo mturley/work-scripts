@@ -84,6 +84,7 @@ worktree> help
 
   info     (i)  Show PR info with author and dates (if applicable), worktree path, tracking status, and git status
   log      (l)  Show git log
+  name     (n)  Rename this mprocs pane (no arg resets to default; only in mprocs)
   open     (o)  Open worktree in your editor (focuses existing window if already open)
   pr       (p)  Open the pull request page on GitHub (if applicable)
   clone    (c)  Clone gitignored files (dotfiles, dependencies) from the main repo
@@ -92,7 +93,7 @@ worktree> help
   exit     (e)  Exit the REPL
   help     (h)  Show this help
 
-Commands: [i]nfo, [l]og, [o]pen, [p]r, [c]lone files, [s]hell, [r]emove, [e]xit, [h]elp
+Commands: [i]nfo, [l]og, [n]ame, [o]pen, [p]r, [c]lone files, [s]hell, [r]emove, [e]xit, [h]elp
 
 worktree [my-branch...origin/my-branch]>
 ```
@@ -101,26 +102,38 @@ I leave the REPL open in multiple terminals for quick cleanup of each one, but y
 
 ### Persistent Sessions
 
-By default, mprocs sessions are ephemeral — closing the terminal kills the session and all its processes. With the `--persistent` (or `-P`) flag, mprocs runs inside a tmux session that survives terminal disconnects and can be reattached later.
+By default, mprocs sessions run inside a tmux session that survives terminal disconnects and can be reattached later. Use `--no-persist` to skip tmux wrapping.
 
 ```bash
-worktree -P 1234                   # create a persistent session
-worktree -P 1234 5678              # persistent multi-worktree session
+worktree 1234                      # persistent session (default)
+worktree 1234 5678                 # persistent multi-worktree session
+worktree --no-persist 1234         # skip tmux, mprocs only
 worktree --sessions                # list active persistent sessions
 worktree --kill-session wt-PR-1234 # kill a persistent session
 ```
 
-To make persistence the default, set the environment variable:
+To disable persistence by default, set the environment variable:
 ```bash
-export WORKTREE_PERSISTENT=true
+export WORKTREE_PERSISTENT=false
 ```
 
 **How it works:**
 - A tmux session is created with a name derived from the arguments (e.g. `wt-PR-1234`)
 - mprocs runs inside tmux, which provides detach/reattach capability
 - Detach with `Ctrl+b d` — the session keeps running in the background
-- Reattach by running `worktree -P` with the same arguments, or `tmux attach -t <session-name>`
+- Quitting mprocs (`q` or `Q`) automatically exits the tmux session
+- Reattach by running `worktree` with the same arguments, or `tmux attach -t <session-name>`
 - If you reattach with additional arguments, new panes are added to the existing session
+- Running `worktree` with no arguments in persistent mode auto-selects all discovered worktrees
+
+### Renaming Panes
+
+Inside a worktree REPL running in mprocs, use the `name` (or `n`) command to rename the mprocs process pane:
+
+```
+worktree [my-branch]> n my-custom-name    # rename the pane
+worktree [my-branch]> name                # reset to default name
+```
 
 **Mobile-friendly configuration:**
 When using persistent sessions (especially over SSH from a phone):

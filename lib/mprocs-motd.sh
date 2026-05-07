@@ -27,7 +27,8 @@ if [ -n "${TMUX:-}" ]; then
 
 ${bold}tmux persistence${reset}
 ${dim}Ctrl+b d${reset}  Detach (session keeps running in the background)
-${dim}Reattach with: worktree --persistent <same args>${reset}
+${dim}Quitting mprocs (q/Q) will automatically exit tmux.${reset}
+${dim}Reattach with: worktree <same args>${reset}
 ${dim}List sessions: worktree --sessions${reset}
 
 ${bold}mobile tips${reset}
