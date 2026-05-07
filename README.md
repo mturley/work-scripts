@@ -38,9 +38,7 @@ worktree                             # list worktrees; select one, many (1,3,5),
 worktree 1234                        # create or reopen a worktree for PR #1234
 worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
-worktree 1234 5678 my-branch         # open multiple worktrees in mprocs (default)
-worktree --iterm 1234 5678           # open multiple worktrees in iTerm split panes
-worktree --tabs 1234 5678            # open multiple worktrees in iTerm tabs
+worktree 1234 5678 my-branch         # open multiple worktrees in mprocs
 worktree --no-persist 1234           # skip tmux, mprocs only
 worktree --sessions                  # list active persistent sessions
 worktree --help                      # show usage help

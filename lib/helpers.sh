@@ -152,9 +152,6 @@ launch_mprocs_persistent() {
 
   echo "$mprocs_sock" > "$sock_file"
 
-  tmux -f /dev/null new-session -d -s "$session_name"
-  tmux set-option -t "$session_name" mouse on
-  tmux set-option -t "$session_name" status off
   # Launch mprocs inside tmux via a wrapper script that traps EXIT to ensure
   # cleanup happens even if mprocs is force-quit (signal death skips ;-chained commands)
   local wrapper="/tmp/worktree-launch-${session_name}.sh"
@@ -165,7 +162,9 @@ trap cleanup EXIT
 mprocs --config '$mprocs_cfg' --server '$mprocs_sock'
 WRAPPER_EOF
   chmod +x "$wrapper"
-  tmux send-keys -t "$session_name" "'$wrapper'" Enter
+  tmux -f /dev/null new-session -d -s "$session_name" "$wrapper"
+  tmux set-option -t "$session_name" mouse on
+  tmux set-option -t "$session_name" status off
   exec tmux attach-session -t "$session_name"
 }
 

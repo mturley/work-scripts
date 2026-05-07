@@ -6,8 +6,7 @@ Unified command for creating and managing git worktrees that optionally clone in
 
 - [GitHub CLI](https://cli.github.com/) (`gh`, must be authenticated)
 - Python 3
-- [mprocs](https://github.com/pvolok/mprocs) (`brew install mprocs`) for the default multi-pane terminal (shell + worktree panes). Falls back to inline mode if not installed.
-- Optionally, [iTerm2](https://iterm2.com/) (with `--iterm`) for multi-worktree split panes/tabs instead of mprocs
+- [mprocs](https://github.com/pvolok/mprocs) (`brew install mprocs`) for the multi-pane terminal (shell + worktree panes). Falls back to inline mode if not installed.
 - Optionally, set `WORKTREES_BASE` to control where worktrees are created (default: `~/git/.worktrees`). This should be outside your project git repos.
   ```bash
   export WORKTREES_BASE=$HOME/git/.worktrees
@@ -29,9 +28,7 @@ worktree 1234                        # create or reopen a worktree for PR #1234
 worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
 worktree ~/git/.worktrees/repo/name  # open an existing worktree by path
-worktree 1234 5678 my-branch         # open multiple worktrees in mprocs (default)
-worktree --iterm 1234 5678           # open multiple worktrees in iTerm split panes
-worktree --tabs 1234 5678            # open multiple worktrees in iTerm tabs
+worktree 1234 5678 my-branch         # open multiple worktrees in mprocs
 worktree --help                      # show usage help
 ```
 
@@ -40,8 +37,6 @@ Based on the arguments, the script detects what you're trying to do, finds or cr
 ### mprocs Multi-Pane Terminal
 
 By default, every worktree session launches in [mprocs](https://github.com/pvolok/mprocs) with a **shell pane** (for running further commands) and one **worktree pane** per argument. This applies whether you pass one argument or many. Running `worktree` from the shell pane dynamically adds new panes to the session. If mprocs is not installed, falls back to inline mode.
-
-- **iTerm2** — with `--iterm` and multiple arguments, opens each worktree in a vertical split pane (named "worktree PR #1234", etc.). Use `--tabs` to open in separate tabs instead, or `--split` to explicitly request split panes.
 
 * **No arguments** — if run from within any git worktree directory, drops directly into the REPL for that worktree. Otherwise, discovers all worktrees across `$WORKTREE_SEARCH_ROOTS` (including those created by Zed, Claude Code, or any other tool), groups them by repo name, and lets you select one to manage or clean up. Detects and marks orphaned worktrees (`.git` missing) and prunable ones (stale git references). Supports comma-separated selections (e.g. `1,3,5`) or `all` to open multiple worktrees in parallel.
 
@@ -109,7 +104,7 @@ worktree 1234                      # persistent session (default)
 worktree 1234 5678                 # persistent multi-worktree session
 worktree --no-persist 1234         # skip tmux, mprocs only
 worktree --sessions                # list active persistent sessions
-worktree --kill-session wt-PR-1234 # kill a persistent session
+worktree --kill-session wt-all     # kill the persistent session
 ```
 
 To disable persistence by default, set the environment variable:
@@ -118,12 +113,13 @@ export WORKTREE_PERSISTENT=false
 ```
 
 **How it works:**
-- A tmux session is created with a name derived from the arguments (e.g. `wt-PR-1234`)
+- All persistent sessions use a single canonical tmux session named `wt-all`
 - mprocs runs inside tmux, which provides detach/reattach capability
 - Detach with `Ctrl+b d` — the session keeps running in the background
 - Quitting mprocs (`q` or `Q`) automatically exits the tmux session
-- Reattach by running `worktree` with the same arguments, or `tmux attach -t <session-name>`
-- If you reattach with additional arguments, new panes are added to the existing session
+- When creating a new session, all existing worktrees are automatically included alongside the requested ones
+- When adding to an existing session, new worktrees are added as panes (duplicates are skipped)
+- Reattach by running `worktree` with any arguments, or `tmux attach -t wt-all`
 - Running `worktree` with no arguments in persistent mode auto-selects all discovered worktrees
 
 ### Renaming Panes

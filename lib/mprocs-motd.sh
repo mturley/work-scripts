@@ -17,6 +17,7 @@ ${bold}When focused on the process list:${reset}
   ${dim}x${reset}       Stop selected process
   ${dim}X${reset}       Force-stop selected process
   ${dim}d${reset}       Remove selected process from the list
+  ${dim}?${reset}       Show/hide keybinding help
   ${dim}q${reset}       Quit (asks to stop running processes)
   ${dim}Q${reset}       Force-quit all processes and exit
 ${dim}This shell pane must be exited or force-quit (Q) to close mprocs.${reset}
