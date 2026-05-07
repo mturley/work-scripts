@@ -31,13 +31,14 @@ USE_ITERM=false
 NO_MPROCS=false
 PERSISTENT="${WORKTREE_PERSISTENT:-false}"
 CLEANUP=false
+CLEANUP_PREFS=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<'HELPEOF'
 Usage: worktree [--iterm|--tabs|--split|--persistent] [pr-number|pr-url|branch-name|worktree-path] ...
        worktree --sessions | --kill-session <name>
-       worktree --cleanup
+       worktree --cleanup | --cleanup-prefs
 
 Manage git worktrees for PRs and branches.
 
@@ -59,7 +60,8 @@ Options:
                       Reattaches to an existing session if one matches the same arguments.
   --sessions          List active persistent (tmux) worktree sessions.
   --kill-session <n>  Kill a persistent session by name and clean up its temp files.
-  --cleanup           Select worktrees to remove, then clean up stale temp files.
+  --cleanup           Select worktrees to remove, then clean up stale temp files and preferences.
+  --cleanup-prefs     Clean up saved preferences only (editor, clone/link selections, etc.).
   --no-mprocs         Skip mprocs wrapping for single worktrees (used internally by --iterm).
   -h, --help          Show this help message and exit.
 
@@ -118,6 +120,7 @@ HELPEOF
       exit 0
       ;;
     --cleanup) CLEANUP=true; shift ;;
+    --cleanup-prefs) CLEANUP_PREFS=true; shift ;;
     *) break ;;
   esac
 done
@@ -186,6 +189,60 @@ pane_label() {
     fi
   fi
   echo "wt $label"
+}
+
+cleanup_preferences() {
+  echo ""
+  echo "Checking for saved preferences..."
+  pref_files=()
+  pref_labels=()
+  if [ -f /tmp/worktree-editor-preference ]; then
+    pref_files+=("/tmp/worktree-editor-preference")
+    pref_labels+=("Editor preference ($(cat /tmp/worktree-editor-preference))")
+  fi
+  if [ -f /tmp/worktree-zed-window-preference ]; then
+    pref_files+=("/tmp/worktree-zed-window-preference")
+    pref_labels+=("Zed window mode preference ($(cat /tmp/worktree-zed-window-preference))")
+  fi
+  if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
+    pref_files+=("$VSCODE_TASKS_PREF_FILE")
+    pref_labels+=("VS Code auto-REPL preference ($(cat "$VSCODE_TASKS_PREF_FILE"))")
+  fi
+  while IFS= read -r f; do
+    local_name="$(basename "$f")"
+    kind="${local_name#worktree-clone-}"
+    kind="${kind%%-*}"
+    repo="${local_name#worktree-clone-${kind}-}"
+    pref_files+=("$f")
+    pref_labels+=("Clone ${kind} selection for ${repo}")
+  done < <(find /tmp -maxdepth 1 -name "worktree-clone-*" 2>/dev/null | sort)
+  while IFS= read -r f; do
+    local_name="$(basename "$f")"
+    kind="${local_name#worktree-link-}"
+    kind="${kind%%-*}"
+    repo="${local_name#worktree-link-${kind}-}"
+    pref_files+=("$f")
+    pref_labels+=("Link ${kind} selection for ${repo}")
+  done < <(find /tmp -maxdepth 1 -name "worktree-link-*" 2>/dev/null | sort)
+
+  if [ ${#pref_files[@]} -gt 0 ]; then
+    selected_prefs=()
+    while IFS= read -r line; do
+      [ -n "$line" ] && selected_prefs+=("$line")
+    done <<< "$(prompt_multi_select "Remove any saved preferences?" "${pref_labels[@]}")"
+
+    for sel in "${selected_prefs[@]+${selected_prefs[@]}}"; do
+      for i in "${!pref_labels[@]}"; do
+        if [ "${pref_labels[$i]}" = "$sel" ]; then
+          rm -f "${pref_files[$i]}"
+          echo "Removed: ${sel}"
+          break
+        fi
+      done
+    done
+  else
+    echo "No saved preferences found."
+  fi
 }
 
 # --- Cleanup mode ---
@@ -280,56 +337,16 @@ if $CLEANUP; then
     echo "Cleaned up ${#stale_mprocs[@]} stale mprocs config file(s)."
   fi
 
-  # Offer to remove saved preferences
-  pref_files=()
-  pref_labels=()
-  if [ -f /tmp/worktree-editor-preference ]; then
-    pref_files+=("/tmp/worktree-editor-preference")
-    pref_labels+=("Editor preference ($(cat /tmp/worktree-editor-preference))")
-  fi
-  if [ -f /tmp/worktree-zed-window-preference ]; then
-    pref_files+=("/tmp/worktree-zed-window-preference")
-    pref_labels+=("Zed window mode preference ($(cat /tmp/worktree-zed-window-preference))")
-  fi
-  if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
-    pref_files+=("$VSCODE_TASKS_PREF_FILE")
-    pref_labels+=("VS Code auto-REPL preference ($(cat "$VSCODE_TASKS_PREF_FILE"))")
-  fi
-  while IFS= read -r f; do
-    local_name="$(basename "$f")"
-    # e.g. worktree-clone-dotfiles-odh-dashboard → "Clone dotfiles for odh-dashboard"
-    kind="${local_name#worktree-clone-}"
-    kind="${kind%%-*}"
-    repo="${local_name#worktree-clone-${kind}-}"
-    pref_files+=("$f")
-    pref_labels+=("Clone ${kind} selection for ${repo}")
-  done < <(find /tmp -maxdepth 1 -name "worktree-clone-*" 2>/dev/null | sort)
-  while IFS= read -r f; do
-    local_name="$(basename "$f")"
-    kind="${local_name#worktree-link-}"
-    kind="${kind%%-*}"
-    repo="${local_name#worktree-link-${kind}-}"
-    pref_files+=("$f")
-    pref_labels+=("Link ${kind} selection for ${repo}")
-  done < <(find /tmp -maxdepth 1 -name "worktree-link-*" 2>/dev/null | sort)
+  cleanup_preferences
 
-  if [ ${#pref_files[@]} -gt 0 ]; then
-    selected_prefs=()
-    while IFS= read -r line; do
-      [ -n "$line" ] && selected_prefs+=("$line")
-    done <<< "$(prompt_multi_select "Remove any saved preferences?" "${pref_labels[@]}")"
+  echo ""
+  echo "Done."
+  exit 0
+fi
 
-    for sel in "${selected_prefs[@]+${selected_prefs[@]}}"; do
-      for i in "${!pref_labels[@]}"; do
-        if [ "${pref_labels[$i]}" = "$sel" ]; then
-          rm -f "${pref_files[$i]}"
-          echo "Removed: ${sel}"
-          break
-        fi
-      done
-    done
-  fi
-
+# --- Cleanup preferences only ---
+if $CLEANUP_PREFS; then
+  cleanup_preferences
   echo ""
   echo "Done."
   exit 0
