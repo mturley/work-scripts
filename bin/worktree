@@ -29,12 +29,14 @@ source "$SCRIPTS_DIR/helpers.sh"
 ITERM_MODE="tab"
 USE_ITERM=false
 NO_MPROCS=false
+PERSISTENT="${WORKTREE_PERSISTENT:-false}"
 CLEANUP=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<'HELPEOF'
-Usage: worktree [--iterm|--tabs|--split] [pr-number|pr-url|branch-name|worktree-path] ...
+Usage: worktree [--iterm|--tabs|--split|--persistent] [pr-number|pr-url|branch-name|worktree-path] ...
+       worktree --sessions | --kill-session <name>
        worktree --cleanup
 
 Manage git worktrees for PRs and branches.
@@ -53,19 +55,25 @@ Options:
   --iterm             Use iTerm2 tabs instead of mprocs (default: tabs).
   --tabs              Open multiple worktrees in separate iTerm tabs (implies --iterm).
   --split             Open multiple worktrees in vertical split panes (iTerm, implies --iterm).
+  --persistent, -P    Wrap mprocs in a tmux session for persistence and remote reattach.
+                      Reattaches to an existing session if one matches the same arguments.
+  --sessions          List active persistent (tmux) worktree sessions.
+  --kill-session <n>  Kill a persistent session by name and clean up its temp files.
   --cleanup           Select worktrees to remove, then clean up stale temp files.
   --no-mprocs         Skip mprocs wrapping for single worktrees (used internally by --iterm).
   -h, --help          Show this help message and exit.
 
 Environment:
-  WORKTREES_BASE          Directory where worktrees are created (default: ~/git/.worktrees).
-                          Worktrees are organized in per-project subdirectories.
-  WORKTREE_SEARCH_ROOTS   Colon-separated directories to search for git repos with
-                          worktrees (default: ~/git). Discovers worktrees created by
-                          any tool (Zed, Claude Code, this script, etc.).
-  WORKTREE_SEARCH_DEPTH   Max find depth when searching for repos (default: 5).
-  WORKTREE_SEARCH_PRUNE   Colon-separated directory names to skip during search
-                          (default: node_modules:.Trash:.cache:.venv:venv).
+  WORKTREES_BASE            Directory where worktrees are created (default: ~/git/.worktrees).
+                            Worktrees are organized in per-project subdirectories.
+  WORKTREE_SEARCH_ROOTS     Colon-separated directories to search for git repos with
+                            worktrees (default: ~/git). Discovers worktrees created by
+                            any tool (Zed, Claude Code, this script, etc.).
+  WORKTREE_SEARCH_DEPTH     Max find depth when searching for repos (default: 5).
+  WORKTREE_SEARCH_PRUNE     Colon-separated directory names to skip during search
+                            (default: node_modules:.Trash:.cache:.venv:venv).
+  WORKTREE_PERSISTENT       Set to "true" to enable --persistent by default.
+  WORKTREE_HIDE_KEYMAP      Hide mprocs keymap pane in persistent mode (default: true).
 
 Examples:
   worktree                                          # list and select
@@ -75,6 +83,10 @@ Examples:
   worktree 1234 5678 my-branch                      # multiple in mprocs (default)
   worktree --iterm 1234 5678                        # multiple in iTerm tabs
   worktree --split 1234 5678                        # multiple in iTerm split panes
+  worktree -P 1234                                  # persistent session (survives disconnect)
+  worktree -P 1234 5678                             # persistent multi-worktree session
+  worktree --sessions                               # list active persistent sessions
+  worktree --kill-session wt-PR-1234                # kill a persistent session
 HELPEOF
       exit 0
       ;;
@@ -82,6 +94,29 @@ HELPEOF
     --split) ITERM_MODE="split-v"; USE_ITERM=true; shift ;;
     --iterm) USE_ITERM=true; shift ;;
     --no-mprocs) NO_MPROCS=true; shift ;;
+    --persistent|-P) PERSISTENT=true; shift ;;
+    --sessions) list_persistent_sessions; exit 0 ;;
+    --kill-session)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "ERROR: --kill-session requires a session name." >&2
+        echo "  Use --sessions to list active sessions." >&2
+        exit 1
+      fi
+      KILL_SESSION="$1"
+      if tmux has-session -t "$KILL_SESSION" 2>/dev/null; then
+        tmux kill-session -t "$KILL_SESSION"
+        rm -f "/tmp/worktree-tmux-${KILL_SESSION}.sock"
+        rm -f "/tmp/worktree-mprocs-${KILL_SESSION}.yaml"
+        rm -f "/tmp/worktree-mprocs-${KILL_SESSION}-count"
+        echo "Killed session: $KILL_SESSION"
+      else
+        echo "Session not found: $KILL_SESSION" >&2
+        echo "  Use --sessions to list active sessions." >&2
+        exit 1
+      fi
+      exit 0
+      ;;
     --cleanup) CLEANUP=true; shift ;;
     *) break ;;
   esac
@@ -101,6 +136,17 @@ while IFS= read -r f; do
     STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
   fi
 done < <(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null)
+# Clean up stale tmux socket files for dead persistent sessions
+while IFS= read -r f; do
+  fname="$(basename "$f" .sock)"
+  session="${fname#worktree-tmux-}"
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    rm -f "$f"
+    # Also clean up associated mprocs files
+    rm -f "/tmp/worktree-mprocs-${session}.yaml" "/tmp/worktree-mprocs-${session}-count"
+    STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
+  fi
+done < <(find /tmp -maxdepth 1 -name "worktree-tmux-*.sock" 2>/dev/null)
 if [ "$STALE_MPROCS_CLEANED" -gt 0 ]; then
   echo "Cleaned up ${STALE_MPROCS_CLEANED} stale mprocs file(s)."
 fi
@@ -108,6 +154,7 @@ fi
 # Build flags array for re-exec calls
 REEXEC_FLAGS=()
 $USE_ITERM && REEXEC_FLAGS+=(--iterm)
+$PERSISTENT && REEXEC_FLAGS+=(--persistent)
 
 CYAN="$(tput setaf 6 2>/dev/null || true)"
 RESET="$(tput sgr0 2>/dev/null || true)"
@@ -363,14 +410,27 @@ if [ $# -gt 1 ]; then
     echo "  Install mprocs: brew install mprocs" >&2
     exit 1
   fi
-  MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
-  MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
-  MPROCS_COUNT="/tmp/worktree-mprocs-$$-count"
+  if $PERSISTENT; then
+    SESSION_NAME="$(tmux_session_name "$@")"
+    MPROCS_CFG="/tmp/worktree-mprocs-${SESSION_NAME}.yaml"
+    MPROCS_PORT="$(tmux_mprocs_port "$SESSION_NAME")"
+    MPROCS_SOCK="127.0.0.1:${MPROCS_PORT}"
+    MPROCS_COUNT="/tmp/worktree-mprocs-${SESSION_NAME}-count"
+  else
+    MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
+    MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
+    MPROCS_COUNT="/tmp/worktree-mprocs-$$-count"
+  fi
   rm -f "$MPROCS_CFG"
   trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
   SHELL_LABEL="[$(basename "$SHELL")]"
   MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
-  echo "procs:" > "$MPROCS_CFG"
+  if $PERSISTENT; then
+    echo "hide_keymap_window: ${WORKTREE_HIDE_KEYMAP:-true}" > "$MPROCS_CFG"
+    echo "procs:" >> "$MPROCS_CFG"
+  else
+    echo "procs:" > "$MPROCS_CFG"
+  fi
   echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
   echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
   echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
@@ -385,6 +445,16 @@ if [ $# -gt 1 ]; then
     echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
   done
+  if $PERSISTENT; then
+    launch_mprocs_persistent "$SESSION_NAME" "$MPROCS_CFG" "$MPROCS_SOCK" "$MPROCS_COUNT"
+    rc=$?
+    # Returns 2 if user chose to skip persistence (nested tmux)
+    if [ $rc -eq 2 ]; then
+      exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
+    fi
+    # Returns 1 on error (already printed message)
+    exit $rc
+  fi
   exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
 fi
 
@@ -394,15 +464,29 @@ if [ $# -eq 1 ] && ! $USE_ITERM && ! $NO_MPROCS && [ -z "${WORKTREE_MPROCS_PANE:
     echo "mprocs not found, falling back to inline mode." >&2
   else
     SELF="$(readlink -f "$0")"
-    MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
-    MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
-    MPROCS_COUNT="/tmp/worktree-mprocs-$$-count"
+    if $PERSISTENT; then
+      SESSION_NAME="$(tmux_session_name "$1")"
+      MPROCS_CFG="/tmp/worktree-mprocs-${SESSION_NAME}.yaml"
+      MPROCS_PORT="$(tmux_mprocs_port "$SESSION_NAME")"
+      MPROCS_SOCK="127.0.0.1:${MPROCS_PORT}"
+      MPROCS_COUNT="/tmp/worktree-mprocs-${SESSION_NAME}-count"
+    else
+      MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
+      MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
+      MPROCS_COUNT="/tmp/worktree-mprocs-$$-count"
+    fi
     rm -f "$MPROCS_CFG"
     trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
     label="$(pane_label "$1")"
     SHELL_LABEL="[$(basename "$SHELL")]"
     MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
-    echo "procs:" > "$MPROCS_CFG"
+    if $PERSISTENT; then
+      echo "proc_list_width: ${WORKTREE_PROC_LIST_WIDTH:-10}" > "$MPROCS_CFG"
+      echo "hide_keymap_window: ${WORKTREE_HIDE_KEYMAP:-true}" >> "$MPROCS_CFG"
+      echo "procs:" >> "$MPROCS_CFG"
+    else
+      echo "procs:" > "$MPROCS_CFG"
+    fi
     echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
     echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
     echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
@@ -414,6 +498,14 @@ if [ $# -eq 1 ] && ! $USE_ITERM && ! $NO_MPROCS && [ -z "${WORKTREE_MPROCS_PANE:
     echo "    env:" >> "$MPROCS_CFG"
     echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+    if $PERSISTENT; then
+      launch_mprocs_persistent "$SESSION_NAME" "$MPROCS_CFG" "$MPROCS_SOCK" "$MPROCS_COUNT"
+      rc=$?
+      if [ $rc -eq 2 ]; then
+        exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
+      fi
+      exit $rc
+    fi
     exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
   fi
 fi

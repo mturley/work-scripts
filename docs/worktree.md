@@ -98,3 +98,34 @@ worktree [my-branch...origin/my-branch]>
 ```
 
 I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it. If you want to run a dev environment in the worktree, you can use the `[s]hell` command and run it from within the nested shell.
+
+### Persistent Sessions
+
+By default, mprocs sessions are ephemeral — closing the terminal kills the session and all its processes. With the `--persistent` (or `-P`) flag, mprocs runs inside a tmux session that survives terminal disconnects and can be reattached later.
+
+```bash
+worktree -P 1234                   # create a persistent session
+worktree -P 1234 5678              # persistent multi-worktree session
+worktree --sessions                # list active persistent sessions
+worktree --kill-session wt-PR-1234 # kill a persistent session
+```
+
+To make persistence the default, set the environment variable:
+```bash
+export WORKTREE_PERSISTENT=true
+```
+
+**How it works:**
+- A tmux session is created with a name derived from the arguments (e.g. `wt-PR-1234`)
+- mprocs runs inside tmux, which provides detach/reattach capability
+- Detach with `Ctrl+b d` — the session keeps running in the background
+- Reattach by running `worktree -P` with the same arguments, or `tmux attach -t <session-name>`
+- If you reattach with additional arguments, new panes are added to the existing session
+
+**Mobile-friendly configuration:**
+When using persistent sessions (especially over SSH from a phone):
+- `WORKTREE_HIDE_KEYMAP` — hide the keybinding help bar to save vertical space (default: `true` in persistent mode)
+
+Use the mprocs **zoom** command (`z` key) to expand the terminal pane to full screen, hiding the sidebar entirely. Press `z` again to unzoom. Use `Ctrl+a` to switch between processes while zoomed.
+
+See [remote-access.md](remote-access.md) for a guide on setting up SSH access from a phone.

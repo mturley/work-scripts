@@ -41,8 +41,12 @@ worktree my-feature-branch           # create or reopen a branch worktree
 worktree 1234 5678 my-branch         # open multiple worktrees in mprocs (default)
 worktree --iterm 1234 5678           # open multiple worktrees in iTerm split panes
 worktree --tabs 1234 5678            # open multiple worktrees in iTerm tabs
+worktree -P 1234                     # persistent session (survives disconnect, SSH-accessible)
+worktree --sessions                  # list active persistent sessions
 worktree --help                      # show usage help
 ```
+
+Persistent sessions (`-P`) wrap mprocs in tmux for detach/reattach support. Ideal for [remote access from a phone](docs/remote-access.md) via SSH.
 
 ```
 Commands: [h]elp, [i]nfo, [l]og, [o]pen, [p]r, [c]lone files, [s]hell, [r]emove, [e]xit

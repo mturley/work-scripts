@@ -12,6 +12,7 @@ ${dim}Ctrl+a${reset}  Toggle focus between process list and terminal
 ${dim}You can also click with the mouse to change focus.${reset}
 ${bold}When focused on the process list:${reset}
   ${dim}arrows${reset}  Navigate processes
+  ${dim}z${reset}       Zoom terminal to full screen (press again to unzoom)
   ${dim}r${reset}       Restart selected process
   ${dim}x${reset}       Stop selected process
   ${dim}X${reset}       Force-stop selected process
@@ -20,3 +21,17 @@ ${bold}When focused on the process list:${reset}
   ${dim}Q${reset}       Force-quit all processes and exit
 ${dim}This shell pane must be exited or force-quit (Q) to close mprocs.${reset}
 EOF
+
+if [ -n "${TMUX:-}" ]; then
+  cat <<EOF
+
+${bold}tmux persistence${reset}
+${dim}Ctrl+b d${reset}  Detach (session keeps running in the background)
+${dim}Reattach with: worktree --persistent <same args>${reset}
+${dim}List sessions: worktree --sessions${reset}
+
+${bold}mobile tips${reset}
+${dim}z${reset}          Zoom terminal to full screen (hide sidebar for narrow screens)
+${dim}Ctrl+a${reset}     Switch between processes while zoomed
+EOF
+fi

@@ -57,6 +57,137 @@ release_port_range() {
   fi
 }
 
+# --- Persistent session (tmux) helpers ---
+
+# tmux_session_name <arg1> [arg2 ...]
+# Derives a stable, human-readable tmux session name from worktree arguments.
+# Single arg: wt-<sanitized-label>
+# Multiple args: wt-multi-<8-char-hash>
+tmux_session_name() {
+  if [ $# -eq 1 ]; then
+    local sanitized
+    sanitized="$(echo "$1" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')"
+    # tmux session names have practical length limits
+    sanitized="${sanitized:0:48}"
+    echo "wt-${sanitized}"
+  else
+    local combined=""
+    local arg
+    for arg in "$@"; do
+      combined="${combined}${arg}|"
+    done
+    local hash
+    if command -v md5 &>/dev/null; then
+      hash="$(echo -n "$combined" | md5 -q)"
+    elif command -v md5sum &>/dev/null; then
+      hash="$(echo -n "$combined" | md5sum | awk '{print $1}')"
+    else
+      hash="$(echo -n "$combined" | cksum | awk '{print $1}')"
+    fi
+    echo "wt-multi-${hash:0:8}"
+  fi
+}
+
+# tmux_mprocs_port <session-name>
+# Derives a deterministic mprocs server port from a tmux session name.
+# Port range: 19000-19999.
+tmux_mprocs_port() {
+  local name="$1"
+  local hash
+  if command -v cksum &>/dev/null; then
+    hash="$(echo -n "$name" | cksum | awk '{print $1}')"
+  else
+    hash="$(echo -n "$name" | sum | awk '{print $1}')"
+  fi
+  echo $((19000 + (hash % 1000)))
+}
+
+# tmux_mprocs_socket <session-name>
+# Reads the mprocs socket address for a persistent session from its socket file.
+# Returns empty string if the file doesn't exist.
+tmux_mprocs_socket() {
+  local session_name="$1"
+  local sock_file="/tmp/worktree-tmux-${session_name}.sock"
+  if [ -f "$sock_file" ]; then
+    cat "$sock_file"
+  fi
+}
+
+# launch_mprocs_persistent <session_name> <mprocs_cfg> <mprocs_sock> <mprocs_count>
+# Launches mprocs inside a tmux session, or reattaches to an existing one.
+launch_mprocs_persistent() {
+  local session_name="$1" mprocs_cfg="$2" mprocs_sock="$3" mprocs_count="$4"
+
+  if ! command -v tmux &>/dev/null; then
+    echo "ERROR: --persistent requires tmux." >&2
+    echo "  Install tmux: brew install tmux" >&2
+    return 1
+  fi
+
+  # Warn about nested tmux
+  if [ -n "${TMUX:-}" ]; then
+    echo "Already inside a tmux session."
+    echo "  1) Attach anyway (nested tmux — use Ctrl+b b d to detach inner session)"
+    echo "  2) Run without --persistent (mprocs only, no persistence)"
+    local choice
+    printf "Choice [1]: "
+    read -r choice
+    case "$choice" in
+      2)
+        # Fall through — caller should exec mprocs directly after this returns 2
+        return 2
+        ;;
+    esac
+  fi
+
+  local sock_file="/tmp/worktree-tmux-${session_name}.sock"
+
+  if tmux has-session -t "$session_name" 2>/dev/null; then
+    echo "Reattaching to persistent session: $session_name"
+    exec tmux attach-session -t "$session_name"
+  fi
+
+  # New session — disable cleanup trap (mprocs will run beyond this script)
+  trap "" EXIT
+
+  echo "$mprocs_sock" > "$sock_file"
+
+  tmux -f /dev/null new-session -d -s "$session_name"
+  tmux set-option -t "$session_name" mouse on
+  tmux set-option -t "$session_name" status off
+  # Launch mprocs inside tmux; chain cleanup to run when mprocs exits
+  tmux send-keys -t "$session_name" \
+    "mprocs --config '$mprocs_cfg' --server '$mprocs_sock'; rm -f '$mprocs_cfg' '$mprocs_count' '$sock_file'" Enter
+  exec tmux attach-session -t "$session_name"
+}
+
+# list_persistent_sessions
+# Lists all active worktree tmux sessions with their attached/detached status.
+list_persistent_sessions() {
+  if ! command -v tmux &>/dev/null; then
+    echo "tmux is not installed." >&2
+    return 1
+  fi
+  local found=false
+  while IFS= read -r line; do
+    local session_name
+    session_name="$(echo "$line" | awk -F: '{print $1}')"
+    case "$session_name" in
+      wt-*)
+        local attached=""
+        if echo "$line" | grep -q "(attached)"; then
+          attached=" (attached)"
+        fi
+        echo "  ${session_name}${attached}"
+        found=true
+        ;;
+    esac
+  done < <(tmux list-sessions 2>/dev/null || true)
+  if ! $found; then
+    echo "  (none)"
+  fi
+}
+
 # Terminal colors
 COLOR_BLUE="$(tput setaf 12 2>/dev/null || true)"
 COLOR_CYAN="$(tput setaf 6 2>/dev/null || true)"
