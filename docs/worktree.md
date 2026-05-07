@@ -123,9 +123,8 @@ export WORKTREE_PERSISTENT=true
 - If you reattach with additional arguments, new panes are added to the existing session
 
 **Mobile-friendly configuration:**
-When using persistent sessions (especially over SSH from a phone), these environment variables tune the mprocs layout for narrow screens:
-- `WORKTREE_PROC_LIST_WIDTH` — process list sidebar width (default: `10` in persistent mode)
-- `WORKTREE_HIDE_KEYMAP` — hide the keybinding help bar (default: `true` in persistent mode)
+When using persistent sessions (especially over SSH from a phone):
+- `WORKTREE_HIDE_KEYMAP` — hide the keybinding help bar to save vertical space (default: `true` in persistent mode)
 
 Use the mprocs **zoom** command (`z` key) to expand the terminal pane to full screen, hiding the sidebar entirely. Press `z` again to unzoom. Use `Ctrl+a` to switch between processes while zoomed.
 

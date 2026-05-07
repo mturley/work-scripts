@@ -73,7 +73,6 @@ Environment:
   WORKTREE_SEARCH_PRUNE     Colon-separated directory names to skip during search
                             (default: node_modules:.Trash:.cache:.venv:venv).
   WORKTREE_PERSISTENT       Set to "true" to enable --persistent by default.
-  WORKTREE_PROC_LIST_WIDTH  mprocs process list width in persistent mode (default: 10).
   WORKTREE_HIDE_KEYMAP      Hide mprocs keymap pane in persistent mode (default: true).
 
 Examples:
@@ -427,8 +426,7 @@ if [ $# -gt 1 ]; then
   SHELL_LABEL="[$(basename "$SHELL")]"
   MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
   if $PERSISTENT; then
-    echo "proc_list_width: ${WORKTREE_PROC_LIST_WIDTH:-10}" > "$MPROCS_CFG"
-    echo "hide_keymap_window: ${WORKTREE_HIDE_KEYMAP:-true}" >> "$MPROCS_CFG"
+    echo "hide_keymap_window: ${WORKTREE_HIDE_KEYMAP:-true}" > "$MPROCS_CFG"
     echo "procs:" >> "$MPROCS_CFG"
   else
     echo "procs:" > "$MPROCS_CFG"
