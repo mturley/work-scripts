@@ -369,6 +369,7 @@ if [ $# -gt 0 ] && [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-
   done
   # If only one pane was added, switch to it
   if [ $# -eq 1 ]; then
+    sleep 0.3
     NEW_INDEX="$(cat "$MPROCS_COUNT_FILE")"
     mprocs --server "$MPROCS_SOCKET" --ctl "{c: select-proc, index: $((NEW_INDEX - 1))}"
   fi
@@ -442,7 +443,8 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
           added=$((added + 1))
         done
         if [ $added -eq 1 ]; then
-          # Switch to the newly added pane
+          # Switch to the newly added pane (brief delay for mprocs to register it)
+          sleep 0.3
           NEW_INDEX="$(cat "$MPROCS_COUNT")"
           mprocs --server "$EXISTING_SOCK" --ctl "{c: select-proc, index: $((NEW_INDEX - 1))}"
         fi
