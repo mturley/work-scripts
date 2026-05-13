@@ -127,17 +127,10 @@ launch_mprocs_persistent() {
   # Warn about nested tmux
   if [ -n "${TMUX:-}" ]; then
     echo "Already inside a tmux session."
-    echo "  1) Attach anyway (nested tmux — use Ctrl+b b d to detach inner session)"
-    echo "  2) Run without --persistent (mprocs only, no persistence)"
-    local choice
-    printf "Choice [1]: "
-    read -r choice
-    case "$choice" in
-      2)
-        # Fall through — caller should exec mprocs directly after this returns 2
-        return 2
-        ;;
-    esac
+    echo "Attaching will create a nested tmux session (use Ctrl+b b d to detach inner session)."
+    if ! prompt_yn "Attach anyway?"; then
+      return 2
+    fi
   fi
 
   local sock_file="/tmp/worktree-tmux-${session_name}.sock"

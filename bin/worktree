@@ -1031,8 +1031,7 @@ if is_pr_arg "$ARG"; then
         branch-exists)
           STALE_BRANCH="$(echo "$RESULT" | parse_json branch)"
           echo "A local branch '${STALE_BRANCH}' already exists (likely leftover from a previous worktree)."
-          CHOICE="$(prompt_choice "Delete the old branch and re-fetch the PR?" "Yes" "No")"
-          if [ "$CHOICE" = "Yes" ]; then
+          if prompt_yn "Delete the old branch and re-fetch the PR?"; then
             git branch -D "$STALE_BRANCH"
             if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
               MSG="$(echo "$RESULT" | parse_json message)"
@@ -1111,8 +1110,7 @@ else
       ;;
     reused-branch)
       echo "Branch '${BRANCH_NAME}' already exists."
-      CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing branch" "Abort")"
-      if [ "$CHOICE" = "Abort" ]; then
+      if ! prompt_yn "Reuse existing branch?"; then
         # Clean up the worktree that was already created by worktree-ensure.sh
         remove_worktree "$WT_PATH"
         echo "Aborted." >&2
@@ -1124,8 +1122,7 @@ else
     exists)
       echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
-      CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Recreate from scratch")"
-      if [ "$CHOICE" = "Recreate from scratch" ]; then
+      if prompt_yn "Recreate worktree from scratch?"; then
         recreate_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
       fi
       ;;
@@ -1133,8 +1130,7 @@ else
       echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
       echo "Already checked out in a worktree at:"
       echo "  $(short_path "$WT_PATH")"
-      CHOICE="$(prompt_choice "What would you like to do?" "Reuse existing worktree" "Move to new location ($(short_path "$WORKTREE_ABS"))")"
-      if [ "$CHOICE" != "Reuse existing worktree" ]; then
+      if prompt_yn "Move to new location ($(short_path "$WORKTREE_ABS"))?"; then
         recreate_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
       fi
       ;;
