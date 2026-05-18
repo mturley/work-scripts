@@ -6,6 +6,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`worktree`](docs/worktree.md) — Create and manage git worktrees for PRs and branches
 - [`pr-ci`](docs/pr-ci.md) — Check or watch CI status for a GitHub PR
 - [`gh-safe`](docs/gh-safe.md) — AI agent guardrail for the GitHub CLI
+- [`dev-ports`](docs/dev-ports.md) — Find dev servers running in git repos, grouped by repo and branch
 
 **Commands for Obsidian Notes**
 - [`worklog`](docs/worklog.md) — Append timestamped activity entries to your Obsidian daily note
@@ -32,6 +33,14 @@ export PATH=$HOME/git/work-scripts/bin:$PATH  # add to ~/.zshrc or ~/.bashrc
 Further prerequisites and setup for each command are documented in its [docs file](docs/).
 
 ## Commands for Git and GitHub
+
+### [`dev-ports`](docs/dev-ports.md) — Dev Server Port Finder
+
+Find listening TCP ports whose process is running in a git repo, grouped by repo and branch/worktree. Useful for tracking down which terminals have dev servers running and on what branches.
+
+```bash
+dev-ports    # list all dev servers grouped by repo and branch
+```
 
 ### [`worktree`](docs/worktree.md) — Git Worktree Manager
 
