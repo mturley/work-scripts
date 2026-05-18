@@ -1,0 +1,1374 @@
+#!/usr/bin/env bash
+# worklog - Append timestamped activity entries to today's Obsidian daily note.
+# Usage: worklog <category> <action> [reference]
+
+set -euo pipefail
+
+SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
+WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+
+# shellcheck source=../lib/helpers.sh
+source "$SCRIPTS_DIR/helpers.sh"
+
+# ---------------------------------------------------------------------------
+# Help / usage
+# ---------------------------------------------------------------------------
+
+PR_ACTIONS="opened | closed | seen | reviewed | commented | approved | updated"
+PR_REFS="  https://github.com/owner/repo/pull/123
+  owner/repo#123
+  #123  (infers repo from current directory)
+  123   (infers repo from current directory)"
+PR_EXAMPLES="  worklog pr opened https://github.com/opendatahub-io/odh-dashboard/pull/6300
+  worklog pr reviewed odh-dashboard#6300
+  worklog pr approved #123"
+
+JIRA_ACTIONS="opened | started | closed | seen | updated | commented"
+JIRA_REFS="  RHOAIENG-12345
+  https://issues.redhat.com/browse/RHOAIENG-12345
+  https://redhat.atlassian.net/browse/RHOAIENG-12345"
+JIRA_EXAMPLES="  worklog jira started RHOAIENG-12345
+  worklog jira seen RHOAIENG-12345
+  worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345"
+
+usage_pr() {
+  cat <<EOF
+Usage: worklog pr <action> <ref>
+
+Actions:  ${PR_ACTIONS}
+
+Reference formats:
+${PR_REFS}
+
+Examples:
+${PR_EXAMPLES}
+EOF
+}
+
+usage_jira() {
+  cat <<EOF
+Usage: worklog jira <action> <ref>
+
+Actions:  ${JIRA_ACTIONS}
+
+Reference formats:
+${JIRA_REFS}
+
+Examples:
+${JIRA_EXAMPLES}
+EOF
+}
+
+usage() {
+  cat <<EOF
+Usage: worklog <category> <action> [reference]
+
+Append a timestamped, metadata-enriched activity entry to today's Obsidian
+daily note.
+
+Categories and actions:
+
+  pr      ${PR_ACTIONS}   <ref>
+  jira    ${JIRA_ACTIONS}              <ref>
+
+Reference formats:
+
+  PR:
+${PR_REFS}
+
+  Jira:
+${JIRA_REFS}
+
+Examples:
+
+${PR_EXAMPLES}
+${JIRA_EXAMPLES}
+
+Options:
+
+  --detail "text"      Add a detail note non-interactively (skips prompt)
+
+Other commands:
+
+  worklog              free-form log entry (prompts for text)
+  worklog open         open today's daily note in Obsidian
+  worklog undo         remove the last entry from the activity log
+  worklog combine      consolidate duplicate entries for the same reference
+  worklog test         generate all format permutations with fake data
+  worklog help         show this help
+
+Environment:
+
+  Requires the Obsidian CLI on PATH.
+    Enable in Obsidian: Settings → General → Advanced.
+
+  For Jira integration, create a .env file in the work-scripts directory:
+    cp .env.example .env   # then fill in your credentials
+EOF
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Dependency checks
+# ---------------------------------------------------------------------------
+
+require_obsidian() {
+  if ! command -v obsidian >/dev/null 2>&1; then
+    echo "ERROR: Obsidian CLI not found on PATH." >&2
+    echo "Enable it in Obsidian: Settings → General → Advanced." >&2
+    exit 1
+  fi
+}
+
+# check_already_seen <grep-pattern>
+# Reads today's daily note and checks if a "Seen" entry matching the pattern
+# already exists. Exits with a message if so.
+check_already_seen() {
+  local pattern="$1"
+  local daily_content
+  daily_content="$(obsidian daily:read 2>/dev/null || true)"
+  if [ -z "$daily_content" ]; then
+    return 0
+  fi
+  if echo "$daily_content" | grep -q "👀.*Seen.*${pattern}"; then
+    echo "Already logged as seen today: ${pattern}" >&2
+    exit 0
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# .env loading
+# ---------------------------------------------------------------------------
+
+OBSIDIAN_VAULT=""
+JIRA_HOST=""
+JIRA_EMAIL=""
+JIRA_API_TOKEN=""
+JIRA_LOADED=false
+
+load_env() {
+  local env_file="$WORK_SCRIPTS_DIR/.env"
+  if [ ! -f "$env_file" ]; then
+    return 1
+  fi
+  while IFS='=' read -r key value; do
+    # Skip comments and blank lines
+    case "$key" in
+      \#*|"") continue ;;
+    esac
+    # Strip surrounding whitespace
+    key="$(echo "$key" | tr -d '[:space:]')"
+    value="$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    case "$key" in
+      OBSIDIAN_VAULT) OBSIDIAN_VAULT="$value" ;;
+      JIRA_HOST) JIRA_HOST="$value" ;;
+      JIRA_EMAIL) JIRA_EMAIL="$value" ;;
+      JIRA_API_TOKEN) JIRA_API_TOKEN="$value" ;;
+    esac
+  done < "$env_file"
+  if [ -n "$JIRA_HOST" ] && [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ]; then
+    JIRA_LOADED=true
+    return 0
+  fi
+  return 1
+}
+
+require_jira_env() {
+  if [ "$JIRA_LOADED" = true ]; then
+    return 0
+  fi
+  echo "ERROR: Jira credentials not configured." >&2
+  echo "Create a .env file in $(short_path "$WORK_SCRIPTS_DIR"):" >&2
+  echo "  cp .env.example .env" >&2
+  echo "  # Then fill in JIRA_HOST, JIRA_EMAIL, and JIRA_API_TOKEN" >&2
+  echo "  # Generate a token at: https://id.atlassian.com/manage-profile/security/api-tokens" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Utility functions
+# ---------------------------------------------------------------------------
+
+TAB=$'\t'
+
+get_emoji() {
+  local category="$1" action="$2"
+  local cat_emoji action_emoji
+  case "$category" in
+    pr)   cat_emoji="🔀" ;;
+    jira) cat_emoji="📋" ;;
+    *)    echo "📌"; return ;;
+  esac
+  case "$action" in
+    opened)    action_emoji="✨" ;;
+    closed)    action_emoji="🏁" ;;
+    seen)      action_emoji="👀" ;;
+    reviewed)  action_emoji="📝" ;;
+    commented) action_emoji="💬" ;;
+    approved)  action_emoji="✅" ;;
+    started)   action_emoji="🚀" ;;
+    updated)   action_emoji="✏️" ;;
+    *)         action_emoji="📌" ;;
+  esac
+  echo "${cat_emoji} ${action_emoji}"
+}
+
+title_case() {
+  case "$1" in
+    opened)    echo "Opened" ;;
+    closed)    echo "Closed" ;;
+    seen)      echo "Seen" ;;
+    reviewed)  echo "Reviewed" ;;
+    commented) echo "Commented on" ;;
+    approved)  echo "Approved" ;;
+    started)   echo "Started" ;;
+    updated)   echo "Updated" ;;
+    *)         echo "$1" ;;
+  esac
+}
+
+get_timestamp() {
+  date "+%-I:%M %p"
+}
+
+truncate_text() {
+  local text="$1" max_len="${2:-80}"
+  # Collapse newlines to spaces
+  text="$(echo "$text" | tr '\n' ' ' | sed 's/  */ /g')"
+  if [ "${#text}" -gt "$max_len" ]; then
+    local truncated="${text:0:$max_len}"
+    # If we cut inside a URL, back up to before it started
+    # Check if there's an unfinished URL (http/https with no trailing space)
+    local before_url
+    if echo "$truncated" | grep -q 'https\{0,1\}://[^ ]*$'; then
+      before_url="$(echo "$truncated" | sed 's/https\{0,1\}:\/\/[^ ]*$//')"
+      # Trim trailing whitespace
+      before_url="$(echo "$before_url" | sed 's/[[:space:]]*$//')"
+      if [ -n "$before_url" ]; then
+        truncated="$before_url"
+      fi
+    fi
+    # Check for unclosed markdown link: [text](url..., [text..., or ](...
+    if echo "$truncated" | grep -q '\[[^]]*\]([^)]*$'; then
+      before_url="$(echo "$truncated" | sed 's/\[[^]]*\]([^)]*$//')"
+      before_url="$(echo "$before_url" | sed 's/[[:space:]]*$//')"
+      if [ -n "$before_url" ]; then
+        truncated="$before_url"
+      fi
+    elif echo "$truncated" | grep -q '\[[^]]*$'; then
+      before_url="$(echo "$truncated" | sed 's/\[[^]]*$//')"
+      before_url="$(echo "$before_url" | sed 's/[[:space:]]*$//')"
+      if [ -n "$before_url" ]; then
+        truncated="$before_url"
+      fi
+    fi
+    echo "${truncated}..."
+  else
+    echo "$text"
+  fi
+}
+
+# Replace bare Slack URLs with markdown links
+linkify_slack_urls() {
+  echo "$1" | sed 's|\(https\{0,1\}://[^ ]*slack\.com[^ ]*\)|[See slack thread](\1)|g'
+}
+
+urlencode() {
+  python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$1" 2>/dev/null
+}
+
+# Extract a value from JSON using a Python expression.
+# Usage: echo '{"a":{"b":"c"}}' | extract_json 'data["a"]["b"]'
+# The JSON is loaded into a variable called 'data'.
+extract_json() {
+  local expr="$1"
+  python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+except:
+    sys.exit(1)
+try:
+    result = $expr
+    if result is None:
+        print('')
+    else:
+        print(result)
+except (KeyError, IndexError, TypeError):
+    print('')
+" 2>/dev/null
+}
+
+jira_api() {
+  local endpoint="$1"
+  curl -s -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    "https://${JIRA_HOST}/rest/api/2/${endpoint}" 2>/dev/null
+}
+
+jira_search() {
+  local jql="$1" fields="${2:-key,summary}"
+  local encoded
+  encoded="$(urlencode "$jql")"
+  local encoded_fields
+  encoded_fields="$(urlencode "$fields")"
+  jira_api "search?jql=${encoded}&fields=${encoded_fields}&maxResults=10"
+}
+
+# ---------------------------------------------------------------------------
+# Entry formatting
+# ---------------------------------------------------------------------------
+
+# Row components (set by handlers, composed into an entry by compose_entry)
+ROW_TIME=""
+ROW_EMOJI=""
+ROW_ACTION=""
+ROW_REF=""
+ROW_TITLE=""
+ROW_SUB_DETAILS=()
+
+# Get full filesystem path to today's daily note
+get_daily_note_path() {
+  if [ -z "$OBSIDIAN_VAULT" ]; then
+    echo "ERROR: OBSIDIAN_VAULT not set in .env" >&2
+    echo "Add OBSIDIAN_VAULT=/path/to/your/vault to your .env file." >&2
+    exit 1
+  fi
+  local relative_path
+  relative_path="$(obsidian daily:path 2>/dev/null | tail -1)"
+  if [ -z "$relative_path" ]; then
+    echo "ERROR: Could not get daily note path from Obsidian CLI" >&2
+    exit 1
+  fi
+  echo "${OBSIDIAN_VAULT}/${relative_path}"
+}
+
+# Compose a markdown entry from ROW_* globals and ROW_SUB_DETAILS array
+compose_entry() {
+  local entry="${ROW_TIME} — ${ROW_EMOJI} ${ROW_ACTION}"$'\n'$'\n'
+  if [ -n "$ROW_REF" ]; then
+    entry+="${ROW_REF}"$'\n'
+  fi
+  entry+="*${ROW_TITLE}*"
+  if [ ${#ROW_SUB_DETAILS[@]} -gt 0 ]; then
+    entry+=$'\n'
+    local detail
+    for detail in "${ROW_SUB_DETAILS[@]}"; do
+      entry+=$'\n'"- ${detail}"
+    done
+  fi
+  printf '%s' "$entry"
+}
+
+# Append an entry to today's daily note
+insert_entry() {
+  local entry="$1"
+  local daily_note
+  daily_note="$(get_daily_note_path)"
+
+  # Ensure the daily note exists
+  if [ ! -f "$daily_note" ]; then
+    obsidian daily >/dev/null 2>&1
+    sleep 1
+  fi
+
+  if [ ! -f "$daily_note" ]; then
+    echo "ERROR: Daily note not found at: $daily_note" >&2
+    exit 1
+  fi
+
+  python3 -c "
+import sys
+
+filepath = sys.argv[1]
+entry = sys.argv[2]
+
+with open(filepath, 'r') as f:
+    content = f.read()
+
+content = content.rstrip('\n') + '\n\n\n' + entry + '\n'
+
+with open(filepath, 'w') as f:
+    f.write(content)
+" "$daily_note" "$entry"
+}
+
+# Remove the last worklog entry from today's daily note.
+# Prints the removed entry to stdout.  Exits with an error if no entries exist.
+# Refuses to undo combined entries (multiple timestamp lines) since the
+# original individual entries cannot be reconstructed.
+remove_last_entry() {
+  local daily_note
+  daily_note="$(get_daily_note_path)"
+
+  if [ ! -f "$daily_note" ]; then
+    echo "ERROR: Daily note not found." >&2
+    exit 1
+  fi
+
+  python3 -c "
+import sys, re
+
+filepath = sys.argv[1]
+
+with open(filepath, 'r') as f:
+    content = f.read()
+
+# Find all worklog entries by timestamp line pattern: H:MM AM/PM — <emoji>
+ts_pat = re.compile(r'\d{1,2}:\d{2}\s*[AP]M\s*\u2014\s*')
+pattern = re.compile(r'\n(\d{1,2}:\d{2}\s*[AP]M\s*\u2014\s*)')
+matches = list(pattern.finditer(content))
+
+if not matches:
+    print('ERROR: No activity entries found in daily note.', file=sys.stderr)
+    sys.exit(1)
+
+# Walk backwards from the last timestamp to find the true entry start.
+# In combined entries, multiple timestamp lines are consecutive (no blank
+# line between them).
+last_match = matches[-1]
+entry_start = last_match.start()
+timestamp_count = 1
+
+lines = content[:entry_start].split('\n')
+while lines:
+    prev_line = lines[-1]
+    if ts_pat.match(prev_line):
+        entry_start -= len(prev_line) + 1  # +1 for the \n
+        timestamp_count += 1
+        lines.pop()
+    else:
+        break
+
+if timestamp_count > 1:
+    print('ERROR: The last entry is a combined entry (%d timestamps).' % timestamp_count, file=sys.stderr)
+    print('Combined entries cannot be undone because the original', file=sys.stderr)
+    print('individual entries cannot be reconstructed.', file=sys.stderr)
+    print('Edit the daily note manually to make changes.', file=sys.stderr)
+    sys.exit(1)
+
+removed = content[entry_start:].strip()
+content = content[:entry_start].rstrip('\n') + '\n'
+
+with open(filepath, 'w') as f:
+    f.write(content)
+
+print(removed)
+" "$daily_note"
+}
+
+# Combine duplicate entries in today's activity log.
+# Groups entries by their main reference (e.g. [RHOAIENG-12345] or
+# [odh-dashboard#6300]), stacks their timestamp lines, and merges their
+# bullet lists.  The first occurrence's position is preserved.
+combine_entries() {
+  local daily_note
+  daily_note="$(get_daily_note_path)"
+
+  if [ ! -f "$daily_note" ]; then
+    echo "ERROR: Daily note not found." >&2
+    exit 1
+  fi
+
+  python3 -c "
+import sys, re
+from collections import OrderedDict
+
+filepath = sys.argv[1]
+
+with open(filepath, 'r') as f:
+    content = f.read()
+
+# Locate the activity log section
+log_marker = '## \U0001f552 Activity log'
+log_idx = content.find(log_marker)
+if log_idx == -1:
+    print('No activity log section found.', file=sys.stderr)
+    sys.exit(1)
+
+header_end = log_idx + len(log_marker)
+before_log = content[:header_end]
+after_log = content[header_end:]
+
+# Parse entries — each starts with a timestamp line
+ts_re = re.compile(r'^(\d{1,2}:\d{2}\s*[AP]M\s*\u2014\s*.+)\$', re.MULTILINE)
+matches = list(ts_re.finditer(after_log))
+
+if not matches:
+    print('No entries to combine.')
+    sys.exit(0)
+
+# Split into raw entry blocks.  An entry starts at a timestamp that is
+# preceded by a blank line (or start-of-text).  Consecutive timestamp
+# lines (combined entries) belong to the same block.
+entry_starts = []
+for i, m in enumerate(matches):
+    # Check if this timestamp is the continuation of a combined entry
+    # (i.e. the previous character is a newline directly after another
+    # timestamp line, with no blank line in between).
+    if i == 0:
+        entry_starts.append(m.start())
+        continue
+    text_between = after_log[matches[i-1].end():m.start()]
+    # If the only thing between prev timestamp end and this timestamp
+    # start is a single newline, they are part of the same entry.
+    if text_between == '\n':
+        continue
+    entry_starts.append(m.start())
+
+entries = []
+for i, start in enumerate(entry_starts):
+    end = entry_starts[i+1] if i+1 < len(entry_starts) else len(after_log)
+    entries.append(after_log[start:end].rstrip('\n'))
+
+# Extract the main reference from an entry
+ref_re = re.compile(r'^\[([^\]]+)\]\(', re.MULTILINE)
+def get_ref(entry_text):
+    m = ref_re.search(entry_text)
+    return m.group(1) if m else None
+
+# Group entries by reference
+groups = OrderedDict()
+for idx, entry in enumerate(entries):
+    ref = get_ref(entry)
+    key = ref if ref else ('__no_ref__' + str(idx))
+    if key not in groups:
+        groups[key] = []
+    groups[key].append((idx, entry))
+
+# Check if any combining is needed
+needs_combining = any(len(g) > 1 for g in groups.values())
+if not needs_combining:
+    print('No duplicate references found — nothing to combine.')
+    sys.exit(0)
+
+# Parse an entry into components
+def parse_entry(text):
+    lines = text.split('\n')
+    timestamps = []
+    ref_line = None
+    title_line = None
+    bullets = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if ts_re.match(stripped):
+            timestamps.append(stripped)
+        elif ref_re.match(stripped):
+            if ref_line is None:
+                ref_line = stripped
+        elif stripped.startswith('*') and stripped.endswith('*') and not stripped.startswith('* '):
+            if title_line is None:
+                title_line = stripped
+        elif stripped.startswith('- '):
+            bullets.append(stripped)
+    return timestamps, ref_line, title_line, bullets
+
+# Combine groups and preserve order of first occurrence
+combined_entries = []
+for key, group in groups.items():
+    if len(group) == 1:
+        combined_entries.append((group[0][0], group[0][1]))
+        continue
+
+    all_timestamps = []
+    ref_line = None
+    title_line = None
+    all_bullets = []
+
+    for _, entry in group:
+        ts, rl, tl, bl = parse_entry(entry)
+        all_timestamps.extend(ts)
+        if ref_line is None and rl:
+            ref_line = rl
+        if title_line is None and tl:
+            title_line = tl
+        all_bullets.extend(bl)
+
+    # Deduplicate bullets while preserving order
+    seen = set()
+    unique_bullets = []
+    for b in all_bullets:
+        if b not in seen:
+            seen.add(b)
+            unique_bullets.append(b)
+
+    # Compose combined entry
+    combined = '\n'.join(all_timestamps) + '\n\n'
+    if ref_line:
+        combined += ref_line + '\n'
+    if title_line:
+        combined += title_line
+    if unique_bullets:
+        combined += '\n\n' + '\n'.join(unique_bullets)
+
+    # Use the position of the first entry in the group
+    combined_entries.append((group[0][0], combined))
+
+    refs = [get_ref(e) or '(free-form)' for _, e in group]
+    print('Combined %d entries for %s' % (len(group), refs[0]))
+
+# Sort by original position
+combined_entries.sort(key=lambda x: x[0])
+
+# Rebuild
+new_log = '\n\n\n'.join(entry for _, entry in combined_entries)
+new_content = before_log + '\n\n\n' + new_log + '\n'
+
+with open(filepath, 'w') as f:
+    f.write(new_content)
+
+print('Done!')
+" "$daily_note"
+}
+
+# ---------------------------------------------------------------------------
+# PR reference parsing
+# ---------------------------------------------------------------------------
+
+PR_OWNER=""
+PR_REPO=""
+PR_NUMBER=""
+
+parse_pr_ref() {
+  local ref="$1"
+  PR_OWNER=""
+  PR_REPO=""
+  PR_NUMBER=""
+
+  # Full GitHub URL: https://github.com/owner/repo/pull/123
+  if [[ "$ref" == *github.com* ]]; then
+    PR_NUMBER="$(echo "$ref" | grep -o '/pull/[0-9]*' | grep -o '[0-9]*')"
+    local path
+    path="$(echo "$ref" | sed 's|.*github\.com/||' | sed 's|/pull/.*||')"
+    PR_OWNER="$(echo "$path" | cut -d/ -f1)"
+    PR_REPO="$(echo "$path" | cut -d/ -f2)"
+    return 0
+  fi
+
+  # owner/repo#123
+  if [[ "$ref" == */*#* ]]; then
+    PR_OWNER="$(echo "$ref" | cut -d/ -f1)"
+    PR_REPO="$(echo "$ref" | cut -d/ -f2 | cut -d# -f1)"
+    PR_NUMBER="$(echo "$ref" | cut -d# -f2)"
+    return 0
+  fi
+
+  # repo#123 (no owner, infer org)
+  if [[ "$ref" == *#* ]]; then
+    PR_REPO="$(echo "$ref" | cut -d# -f1)"
+    PR_NUMBER="$(echo "$ref" | cut -d# -f2)"
+    if [ -n "$PR_REPO" ]; then
+      # Try to infer owner from gh
+      local nwo
+      nwo="$(gh repo view "$PR_REPO" --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
+      if [ -n "$nwo" ]; then
+        PR_OWNER="$(echo "$nwo" | cut -d/ -f1)"
+      fi
+    fi
+    return 0
+  fi
+
+  # Bare number (possibly with #)
+  local num
+  num="$(echo "$ref" | tr -d '#')"
+  if [[ "$num" =~ ^[0-9]+$ ]]; then
+    PR_NUMBER="$num"
+    # Infer repo from current directory
+    local nwo
+    nwo="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
+    if [ -n "$nwo" ]; then
+      PR_OWNER="$(echo "$nwo" | cut -d/ -f1)"
+      PR_REPO="$(echo "$nwo" | cut -d/ -f2)"
+    fi
+    return 0
+  fi
+
+  echo "ERROR: Could not parse PR reference: $ref" >&2
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# PR handler
+# ---------------------------------------------------------------------------
+
+handle_pr() {
+  local action="$1" ref="$2"
+
+  parse_pr_ref "$ref" || return 1
+
+  if [ -z "$PR_NUMBER" ]; then
+    echo "ERROR: Could not determine PR number from: $ref" >&2
+    return 1
+  fi
+
+  if [ "$action" = "seen" ] && [ -n "$PR_REPO" ]; then
+    check_already_seen "${PR_REPO}#${PR_NUMBER}"
+  fi
+
+  local repo_flag=""
+  if [ -n "$PR_OWNER" ] && [ -n "$PR_REPO" ]; then
+    repo_flag="--repo ${PR_OWNER}/${PR_REPO}"
+  fi
+
+  # Fetch PR metadata
+  local pr_json pr_title pr_author pr_url
+  pr_json="$(gh pr view "$PR_NUMBER" $repo_flag --json title,author,url,state,isDraft 2>/dev/null || true)"
+
+  if [ -n "$pr_json" ]; then
+    pr_title="$(echo "$pr_json" | extract_json 'data["title"]')"
+    pr_author="$(echo "$pr_json" | extract_json 'data["author"]["login"]')"
+    pr_url="$(echo "$pr_json" | extract_json 'data["url"]')"
+    local pr_state pr_is_draft
+    pr_state="$(echo "$pr_json" | extract_json 'data["state"]')"
+    pr_is_draft="$(echo "$pr_json" | extract_json 'data["isDraft"]')"
+  else
+    pr_title="(could not fetch PR info)"
+    pr_author=""
+    pr_url="https://github.com/${PR_OWNER}/${PR_REPO}/pull/${PR_NUMBER}"
+  fi
+
+  # Short display name
+  local display_repo="${PR_REPO}"
+  local display_ref="${display_repo}#${PR_NUMBER}"
+
+  # Build row components
+  ROW_TIME="$(get_timestamp)"
+  ROW_EMOJI="$(get_emoji pr "$action")"
+  ROW_ACTION="$(title_case "$action") PR"
+  ROW_TITLE="$pr_title"
+  ROW_SUB_DETAILS=()
+
+  # Reference: link on first line, metadata on second
+  local ref_meta=""
+  if [ -n "$pr_author" ]; then
+    ref_meta="by @${pr_author}"
+  fi
+  if [ "$action" = "seen" ] || [ "$action" = "closed" ]; then
+    local state_label=""
+    if [ "$pr_is_draft" = "True" ] || [ "$pr_is_draft" = "true" ]; then
+      state_label="Draft"
+    elif [ "$pr_state" = "MERGED" ]; then
+      state_label="Merged"
+    elif [ "$pr_state" = "CLOSED" ]; then
+      state_label="Closed"
+    fi
+    if [ -n "$state_label" ] && [ -n "$ref_meta" ]; then
+      ref_meta="${ref_meta}, ${state_label}"
+    elif [ -n "$state_label" ]; then
+      ref_meta="${state_label}"
+    fi
+  fi
+  ROW_REF="[${display_ref}](${pr_url})"
+  if [ -n "$ref_meta" ]; then
+    ROW_REF="${ROW_REF} (${ref_meta})"
+  fi
+
+  # For reviewed/commented, try to get excerpt
+  if [ "$action" = "reviewed" ] || [ "$action" = "commented" ]; then
+    local gh_user excerpt=""
+    gh_user="$(gh api user --jq '.login' 2>/dev/null || true)"
+
+    if [ -n "$gh_user" ] && [ -n "$PR_OWNER" ] && [ -n "$PR_REPO" ]; then
+      if [ "$action" = "reviewed" ]; then
+        excerpt="$(gh api "repos/${PR_OWNER}/${PR_REPO}/pulls/${PR_NUMBER}/reviews" \
+          --jq "[.[] | select(.user.login==\"${gh_user}\" and .body != \"\")] | last | .body" 2>/dev/null || true)"
+      else
+        excerpt="$(gh api "repos/${PR_OWNER}/${PR_REPO}/issues/${PR_NUMBER}/comments" \
+          --jq "[.[] | select(.user.login==\"${gh_user}\")] | last | .body" 2>/dev/null || true)"
+      fi
+    fi
+
+    if [ -n "$excerpt" ] && [ "$excerpt" != "null" ]; then
+      local label="Comment"
+      [ "$action" = "reviewed" ] && label="Review"
+      excerpt="$(truncate_text "$excerpt" 120)"
+      ROW_SUB_DETAILS+=("${label}: \"${excerpt}\"")
+    fi
+  fi
+
+  # Search Jira for linked issues (if credentials available)
+  if [ "$JIRA_LOADED" = true ] && [ -n "$PR_OWNER" ] && [ -n "$PR_REPO" ]; then
+    local jql="project = RHOAIENG AND \"Git Pull Request\" ~ \"${PR_OWNER}/${PR_REPO}/pull/${PR_NUMBER}\" AND sprint in openSprints()"
+    local search_json
+    search_json="$(jira_search "$jql" "key,summary,assignee,priority" 2>/dev/null || true)"
+
+    if [ -n "$search_json" ]; then
+      local linked_issues
+      linked_issues="$(echo "$search_json" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for issue in data.get('issues', []):
+        key = issue.get('key', '')
+        fields = issue.get('fields', {})
+        summary = fields.get('summary', '')
+        assignee_obj = fields.get('assignee') or {}
+        assignee = assignee_obj.get('displayName', '')
+        assignee_email = assignee_obj.get('emailAddress', '')
+        priority = (fields.get('priority') or {}).get('name', '')
+        if key:
+            print(key + '|' + summary + '|' + assignee + '|' + priority + '|' + assignee_email)
+except:
+    pass
+" 2>/dev/null || true)"
+
+      if [ -n "$linked_issues" ]; then
+        while IFS='|' read -r jira_key jira_summary jira_assignee jira_priority jira_assignee_email; do
+          if [ -n "$jira_key" ]; then
+            local jira_url="https://${JIRA_HOST}/browse/${jira_key}"
+            local jira_meta=""
+            local is_mine=false
+            if [ -n "$jira_assignee_email" ] && [ "$jira_assignee_email" = "$JIRA_EMAIL" ]; then
+              is_mine=true
+            fi
+            if [ "$is_mine" = true ] && [ -n "$jira_priority" ]; then
+              jira_meta=" (${jira_priority}, mine)"
+            elif [ "$is_mine" = true ]; then
+              jira_meta=" (mine)"
+            elif [ -n "$jira_assignee" ] && [ -n "$jira_priority" ]; then
+              jira_meta=" (${jira_priority}, Assigned to ${jira_assignee})"
+            elif [ -n "$jira_assignee" ]; then
+              jira_meta=" (Assigned to ${jira_assignee})"
+            elif [ -n "$jira_priority" ]; then
+              jira_meta=" (${jira_priority})"
+            fi
+            ROW_SUB_DETAILS+=("Jira: [${jira_key}](${jira_url}) — *${jira_summary}*${jira_meta}")
+          fi
+        done <<< "$linked_issues"
+      fi
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Jira reference parsing
+# ---------------------------------------------------------------------------
+
+JIRA_KEY=""
+
+parse_jira_ref() {
+  local ref="$1"
+  JIRA_KEY=""
+
+  # URL containing /browse/KEY (any Jira host)
+  if [[ "$ref" == */browse/* ]]; then
+    JIRA_KEY="$(echo "$ref" | sed 's|.*/browse/||' | sed 's|[?#].*||')"
+    return 0
+  fi
+
+  # Bare key: RHOAIENG-12345 (or any PROJECT-NUM pattern)
+  if [[ "$ref" =~ ^[A-Z]+-[0-9]+$ ]]; then
+    JIRA_KEY="$ref"
+    return 0
+  fi
+
+  echo "ERROR: Could not parse Jira reference: $ref" >&2
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Jira handler
+# ---------------------------------------------------------------------------
+
+handle_jira() {
+  local action="$1" ref="$2"
+
+  require_jira_env
+  parse_jira_ref "$ref" || return 1
+
+  if [ "$action" = "seen" ]; then
+    check_already_seen "$JIRA_KEY"
+  fi
+
+  local jira_url="https://${JIRA_HOST}/browse/${JIRA_KEY}"
+
+  # Fetch issue data
+  local issue_json
+  issue_json="$(jira_api "issue/${JIRA_KEY}?fields=summary,issuetype,assignee,priority,parent,customfield_10875,comment" 2>/dev/null || true)"
+
+  local summary issue_type assignee priority
+  local parent_key parent_summary
+
+  if [ -n "$issue_json" ]; then
+    summary="$(echo "$issue_json" | extract_json 'data["fields"]["summary"]')"
+    issue_type="$(echo "$issue_json" | extract_json 'data["fields"]["issuetype"]["name"]')"
+    assignee="$(echo "$issue_json" | extract_json 'data["fields"]["assignee"]["displayName"]')"
+    local assignee_email
+    assignee_email="$(echo "$issue_json" | extract_json 'data["fields"]["assignee"]["emailAddress"]')"
+    priority="$(echo "$issue_json" | extract_json 'data["fields"]["priority"]["name"]')"
+    parent_key="$(echo "$issue_json" | extract_json 'data["fields"]["parent"]["key"]')"
+    parent_summary="$(echo "$issue_json" | extract_json 'data["fields"]["parent"]["fields"]["summary"]')"
+  else
+    summary="(could not fetch issue info)"
+    issue_type=""
+    assignee=""
+    priority=""
+    parent_key=""
+    parent_summary=""
+  fi
+
+  # Build row components
+  ROW_TIME="$(get_timestamp)"
+  ROW_EMOJI="$(get_emoji jira "$action")"
+  local action_text="$(title_case "$action")"
+  if [ -n "$issue_type" ]; then
+    ROW_ACTION="${action_text} Jira ${issue_type}"
+  else
+    ROW_ACTION="${action_text} Jira"
+  fi
+  ROW_TITLE="$summary"
+  ROW_SUB_DETAILS=()
+
+  # Reference: link with priority/assignee inline
+  local ref_meta_parts=""
+  if [ -n "$priority" ]; then
+    ref_meta_parts="${priority}"
+  fi
+  if [ -n "$assignee" ]; then
+    local assignee_text
+    if [ -n "$assignee_email" ] && [ "$assignee_email" = "$JIRA_EMAIL" ]; then
+      assignee_text="mine"
+    else
+      assignee_text="Assigned to ${assignee}"
+    fi
+    if [ -n "$ref_meta_parts" ]; then
+      ref_meta_parts="${ref_meta_parts}, ${assignee_text}"
+    else
+      ref_meta_parts="${assignee_text}"
+    fi
+  fi
+  ROW_REF="[${JIRA_KEY}](${jira_url})"
+  if [ -n "$ref_meta_parts" ]; then
+    ROW_REF="${ROW_REF} (${ref_meta_parts})"
+  fi
+
+  # Epic parent
+  if [ -n "$parent_key" ]; then
+    local parent_url="https://${JIRA_HOST}/browse/${parent_key}"
+    local parent_text="[${parent_key}](${parent_url})"
+    if [ -n "$parent_summary" ]; then
+      parent_text="${parent_text} — *${parent_summary}*"
+    fi
+    ROW_SUB_DETAILS+=("Epic: ${parent_text}")
+  fi
+
+  # For commented action, get latest comment excerpt
+  if [ "$action" = "commented" ] && [ -n "$issue_json" ]; then
+    local comment_body
+    comment_body="$(echo "$issue_json" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    comments = data.get('fields', {}).get('comment', {}).get('comments', [])
+    if comments:
+        print(comments[-1].get('body', ''))
+except:
+    pass
+" 2>/dev/null || true)"
+
+    if [ -n "$comment_body" ]; then
+      comment_body="$(truncate_text "$comment_body" 120)"
+      ROW_SUB_DETAILS+=("Comment: \"${comment_body}\"")
+    fi
+  fi
+
+  # Linked PRs from customfield_10875
+  if [ -n "$issue_json" ]; then
+    local pr_urls
+    pr_urls="$(echo "$issue_json" | python3 -c "
+import sys, json, re
+try:
+    data = json.load(sys.stdin)
+    field = data.get('fields', {}).get('customfield_10875', '')
+    if not field:
+        sys.exit(0)
+    urls = set()
+    if isinstance(field, str):
+        urls = set(re.findall(r'https://github\.com/[^\s\"<>|]+/pull/\d+', field))
+    elif isinstance(field, dict):
+        def walk(node):
+            if isinstance(node, dict):
+                url = node.get('attrs', {}).get('url', '')
+                if url and '/pull/' in url:
+                    for u in url.split('|'):
+                        m = re.match(r'(https://github\.com/[^\s\"<>|]+/pull/\d+)', u)
+                        if m:
+                            urls.add(m.group(1))
+                for mark in node.get('marks', []):
+                    href = mark.get('attrs', {}).get('href', '')
+                    if href and '/pull/' in href:
+                        for u in href.split('|'):
+                            m = re.match(r'(https://github\.com/[^\s\"<>|]+/pull/\d+)', u)
+                            if m:
+                                urls.add(m.group(1))
+                for child in node.get('content', []):
+                    walk(child)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+        walk(field)
+    for url in sorted(urls):
+        print(url)
+except:
+    pass
+" 2>/dev/null || true)"
+
+    if [ -n "$pr_urls" ]; then
+      while IFS= read -r url; do
+        if [ -n "$url" ]; then
+          local pr_path
+          pr_path="$(echo "$url" | sed 's|.*/github\.com/||')"
+          local pr_repo_name pr_num_part
+          pr_repo_name="$(echo "$pr_path" | cut -d/ -f2)"
+          pr_num_part="$(echo "$pr_path" | grep -o '[0-9]*$')"
+          local display="${pr_repo_name}#${pr_num_part}"
+
+          local pr_linked_title="" pr_linked_author="" pr_linked_json=""
+          pr_linked_json="$(gh pr view "$url" --json title,author 2>/dev/null || true)"
+          if [ -n "$pr_linked_json" ]; then
+            pr_linked_title="$(echo "$pr_linked_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('title',''))" 2>/dev/null || true)"
+            pr_linked_author="$(echo "$pr_linked_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('author',{}).get('login',''))" 2>/dev/null || true)"
+          fi
+
+          local pr_detail="PR: [${display}](${url})"
+          if [ -n "$pr_linked_author" ]; then
+            pr_detail="${pr_detail} (by @${pr_linked_author})"
+          fi
+          if [ -n "$pr_linked_title" ]; then
+            pr_detail="${pr_detail}: *${pr_linked_title}*"
+          fi
+          ROW_SUB_DETAILS+=("$pr_detail")
+        fi
+      done <<< "$pr_urls"
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Test handler — generates fake entries for every permutation
+# ---------------------------------------------------------------------------
+
+handle_test() {
+  local timestamp
+  timestamp="$(get_timestamp)"
+
+  local pr_url="https://github.com/opendatahub-io/odh-dashboard/pull/6300"
+  local pr_ref="odh-dashboard#6300"
+  local pr_title="Fix model registry pagination for large result sets"
+  local pr_author="chrjones-rh"
+
+  local jira_key="RHOAIENG-50351"
+  local jira_url="https://${JIRA_HOST}/browse/RHOAIENG-50351"
+  local jira_summary="Fix model registry pagination for large result sets"
+  local jira_type="Bug"
+  local jira_priority="Major"
+  local jira_assignee="Mike Turley"
+
+  local epic_key="RHOAIENG-48000"
+  local epic_url="https://${JIRA_HOST}/browse/RHOAIENG-48000"
+  local epic_summary="Model Registry improvements"
+
+  local pr_url_2="https://github.com/kubeflow/model-registry/pull/2288"
+  local pr_ref_2="model-registry#2288"
+
+  local review_excerpt="Looks good overall, one minor nit on the error handling path in the submit handler. Can we add a fallback for the empty state?"
+  local comment_excerpt="I think we should also handle the case where the API returns an empty list vs null — they have different semantics downstream."
+
+  TEST_ROWS=()
+
+  # --- Free-form ---
+  ROW_TIME="$timestamp"; ROW_EMOJI="📌"; ROW_ACTION="Note"; ROW_REF=""
+  ROW_TITLE="Caught up on Slack messages and replied to a thread about the release timeline"
+  ROW_SUB_DETAILS=()
+  TEST_ROWS+=("$(compose_entry)")
+
+  # --- PR: all actions ---
+  local pr_action
+  for pr_action in opened closed seen reviewed commented approved updated; do
+    ROW_TIME="$timestamp"
+    ROW_EMOJI="$(get_emoji pr "$pr_action")"
+    ROW_ACTION="$(title_case "$pr_action") PR"
+    ROW_TITLE="$pr_title"
+    ROW_SUB_DETAILS=()
+
+    local ref_meta="by @${pr_author}"
+    if [ "$pr_action" = "seen" ]; then
+      ref_meta="${ref_meta}, Merged"
+    elif [ "$pr_action" = "closed" ]; then
+      ref_meta="${ref_meta}, Closed"
+    fi
+    ROW_REF="[${pr_ref}](${pr_url}) (${ref_meta})"
+
+    # Add excerpt for reviewed/commented
+    if [ "$pr_action" = "reviewed" ]; then
+      ROW_SUB_DETAILS+=("Review: \"${review_excerpt}\"")
+    elif [ "$pr_action" = "commented" ]; then
+      ROW_SUB_DETAILS+=("Comment: \"${comment_excerpt}\"")
+    fi
+
+    # Add linked Jira on some entries
+    if [ "$pr_action" = "opened" ] || [ "$pr_action" = "closed" ] || [ "$pr_action" = "approved" ]; then
+      ROW_SUB_DETAILS+=("Jira: [${jira_key}](${jira_url}) — *${jira_summary}* (${jira_priority}, mine)")
+    elif [ "$pr_action" = "reviewed" ]; then
+      ROW_SUB_DETAILS+=("Jira: [${jira_key}](${jira_url}) — *${jira_summary}* (${jira_priority}, Assigned to ${jira_assignee})")
+    fi
+
+    # Add notes on one entry
+    if [ "$pr_action" = "reviewed" ]; then
+      ROW_SUB_DETAILS+=("Notes: Requested a small change, otherwise LGTM")
+    fi
+
+    TEST_ROWS+=("$(compose_entry)")
+  done
+
+  # --- Jira: all actions ---
+  local jira_action
+  for jira_action in opened started closed seen updated commented; do
+    ROW_TIME="$timestamp"
+    ROW_EMOJI="$(get_emoji jira "$jira_action")"
+    ROW_ACTION="$(title_case "$jira_action") Jira ${jira_type}"
+    ROW_TITLE="$jira_summary"
+    ROW_SUB_DETAILS=()
+    ROW_REF="[${jira_key}](${jira_url}) (${jira_priority}, mine)"
+
+    # Add epic on some entries
+    if [ "$jira_action" = "opened" ] || [ "$jira_action" = "started" ] || [ "$jira_action" = "seen" ] || [ "$jira_action" = "commented" ]; then
+      ROW_SUB_DETAILS+=("Epic: [${epic_key}](${epic_url}) — *${epic_summary}*")
+    fi
+
+    # Add comment excerpt for commented
+    if [ "$jira_action" = "commented" ]; then
+      ROW_SUB_DETAILS+=("Comment: \"${comment_excerpt}\"")
+    fi
+
+    # Add linked PRs on some entries
+    if [ "$jira_action" = "seen" ] || [ "$jira_action" = "updated" ]; then
+      ROW_SUB_DETAILS+=("PR: [${pr_ref}](${pr_url}) (by @${pr_author}): *${pr_title}*")
+      ROW_SUB_DETAILS+=("PR: [${pr_ref_2}](${pr_url_2}) (by @${pr_author}): *${pr_title}*")
+    fi
+
+    # Add notes on one entry
+    if [ "$jira_action" = "updated" ]; then
+      ROW_SUB_DETAILS+=("Notes: Moved to In Progress and updated the description with the latest requirements")
+    fi
+
+    TEST_ROWS+=("$(compose_entry)")
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Notes prompt and Obsidian append
+# ---------------------------------------------------------------------------
+
+prompt_and_append() {
+  # Pre-populate detail if provided via --detail
+  if [ -n "$DETAIL" ]; then
+    DETAIL="$(linkify_slack_urls "$DETAIL")"
+    ROW_SUB_DETAILS+=("Notes: ${DETAIL}")
+  fi
+
+  # Compose and display the entry
+  local row
+  row="$(compose_entry)"
+  echo ""
+  echo "${COLOR_CYAN}Log entry:${COLOR_RESET}"
+  echo "$row"
+  echo ""
+
+  # Prompt for additional notes (skip if --detail was provided)
+  if [ -z "$DETAIL" ]; then
+    printf "${COLOR_BLUE}Add any additional notes? (press Enter to skip):${COLOR_RESET} "
+    read -r notes || true
+    if [ -n "$notes" ]; then
+      notes="$(linkify_slack_urls "$notes")"
+      ROW_SUB_DETAILS+=("Notes: ${notes}")
+      row="$(compose_entry)"
+      echo ""
+      echo "${COLOR_CYAN}Updated entry:${COLOR_RESET}"
+      echo "$row"
+    fi
+  fi
+
+  # Insert into daily note and open it
+  echo ""
+  echo "${COLOR_GREEN}Appending to daily note...${COLOR_RESET}"
+  insert_entry "$row"
+  obsidian daily >/dev/null 2>&1
+
+  echo "${COLOR_GREEN}Done!${COLOR_RESET}"
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Parse --detail flag (can appear anywhere in args)
+# ---------------------------------------------------------------------------
+
+DETAIL=""
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --detail)
+      if [ -n "${2:-}" ]; then
+        DETAIL="$2"
+        shift 2
+      else
+        echo "ERROR: --detail requires a value" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+# Handle help
+case "${1:-}" in
+  -h|--help|help)
+    usage
+    ;;
+esac
+
+require_obsidian
+
+# Load .env early (non-fatal — needed for test mode and Jira commands)
+load_env || true
+
+# Open daily note shorthand
+if [ "${1:-}" = "open" ]; then
+  obsidian daily >/dev/null 2>&1
+  exit 0
+fi
+
+# Combine: consolidate duplicate entries for the same reference
+if [ "${1:-}" = "combine" ]; then
+  combine_entries
+  obsidian daily >/dev/null 2>&1
+  exit 0
+fi
+
+# Undo: remove the last entry from the activity log
+if [ "${1:-}" = "undo" ]; then
+  removed_row="$(remove_last_entry)"
+  echo ""
+  echo "${COLOR_CYAN}Removed entry:${COLOR_RESET}"
+  echo "$removed_row"
+  echo ""
+  echo "${COLOR_GREEN}Done!${COLOR_RESET}"
+  exit 0
+fi
+
+# Test mode: generate all permutations with fake data
+if [ "${1:-}" = "test" ]; then
+  handle_test
+  echo ""
+  echo "${COLOR_CYAN}Test entries:${COLOR_RESET}"
+  for row in "${TEST_ROWS[@]}"; do
+    echo "$row"
+    echo ""
+  done
+  echo ""
+
+  echo "${COLOR_GREEN}Inserting test entries into daily note...${COLOR_RESET}"
+  for row in "${TEST_ROWS[@]}"; do
+    insert_entry "$row"
+  done
+  obsidian daily >/dev/null 2>&1
+  echo "${COLOR_GREEN}Done! Check your daily note in Obsidian.${COLOR_RESET}"
+  exit 0
+fi
+
+# No arguments: free-form log entry
+if [ $# -eq 0 ]; then
+  printf "${COLOR_BLUE}What do you want to log?${COLOR_RESET} "
+  read -r freeform || true
+  if [ -z "$freeform" ]; then
+    echo "Nothing to log." >&2
+    exit 0
+  fi
+  freeform="$(linkify_slack_urls "$freeform")"
+  ROW_TIME="$(get_timestamp)"
+  ROW_EMOJI="📌"
+  ROW_ACTION="Note"
+  ROW_REF=""
+  ROW_TITLE="$freeform"
+  ROW_SUB_DETAILS=()
+  prompt_and_append
+  exit 0
+fi
+
+CATEGORY="${1:-}"
+ACTION="${2:-}"
+REFERENCE="${3:-}"
+
+# Validate category and action
+case "$CATEGORY" in
+  pr)
+    if [ -z "$ACTION" ]; then
+      usage_pr
+      exit 0
+    fi
+    case "$ACTION" in
+      opened|closed|seen|reviewed|commented|approved|updated) ;;
+      *)
+        echo "ERROR: Invalid PR action: $ACTION" >&2
+        echo "" >&2
+        usage_pr >&2
+        exit 1
+        ;;
+    esac
+    if [ -z "$REFERENCE" ]; then
+      echo "ERROR: PR reference required." >&2
+      echo "" >&2
+      usage_pr >&2
+      exit 1
+    fi
+    ;;
+  jira)
+    if [ -z "$ACTION" ]; then
+      usage_jira
+      exit 0
+    fi
+    case "$ACTION" in
+      created) ACTION="opened" ;;
+      opened|started|closed|seen|updated|commented) ;;
+      *)
+        echo "ERROR: Invalid Jira action: $ACTION" >&2
+        echo "" >&2
+        usage_jira >&2
+        exit 1
+        ;;
+    esac
+    if [ -z "$REFERENCE" ]; then
+      echo "ERROR: Jira reference required." >&2
+      echo "" >&2
+      usage_jira >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "ERROR: Unknown category: $CATEGORY" >&2
+    echo "Valid categories: pr, jira" >&2
+    echo "Run 'worklog help' for full usage." >&2
+    exit 1
+    ;;
+esac
+
+case "$CATEGORY" in
+  pr)   handle_pr "$ACTION" "$REFERENCE" ;;
+  jira) handle_jira "$ACTION" "$REFERENCE" ;;
+esac
+
+if [ -z "$ROW_TIME" ]; then
+  echo "ERROR: Failed to build log entry." >&2
+  exit 1
+fi
+
+prompt_and_append

@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+#
+# pr-ci — check or watch CI status for a GitHub PR.
+#
+# Usage:
+#   pr-ci <pr> [SEC]              Watch CI, polling every SEC seconds (default
+#                                 120), alert on first failure or when done
+#   pr-ci <pr> --continue-on-fail  Wait for all checks even if some fail
+#   pr-ci <pr> --once              Show current CI status summary and exit
+#
+# <pr> can be a PR number, URL, or branch name — anything `gh pr` accepts.
+#
+
+set -euo pipefail
+
+TAB=$'\t'
+
+# ── Usage ───────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<'EOF'
+Usage: pr-ci <pr> [SECONDS] [--once] [--continue-on-fail]
+
+  <pr>                PR number, URL, or branch name
+  [SEC]               Poll interval in seconds (default 120)
+  --once              Show current status and exit (no watching)
+  --continue-on-fail  Wait for all checks even if some fail
+
+Examples:
+  pr-ci 6999                       Watch CI, polling every 120s
+  pr-ci 6999 60                    Watch CI, polling every 60s
+  pr-ci 6999 --once                Show status once and exit
+  pr-ci 6999 --continue-on-fail    Wait for all checks to finish
+  pr-ci https://github.com/org/repo/pull/6999
+EOF
+  exit 1
+}
+
+[[ $# -eq 0 ]] && usage
+
+PR="$1"
+shift
+
+WATCH=true
+INTERVAL=120
+FAIL_FAST=true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --once)
+      WATCH=false
+      shift
+      ;;
+    --continue-on-fail)
+      FAIL_FAST=false
+      shift
+      ;;
+    -h|--help)
+      usage
+      ;;
+    *)
+      if [[ "$1" =~ ^[0-9]+$ ]]; then
+        INTERVAL="$1"
+        shift
+      else
+        echo "pr-ci: unknown option: $1" >&2
+        usage
+      fi
+      ;;
+  esac
+done
+
+# ── iTerm title ────────────────────────────────────────────────────────
+
+set_iterm_title() {
+  if [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
+    # Set session title (tab/window name) using iTerm escape sequence
+    printf '\033]1;%s\007' "$1"
+  fi
+}
+
+# Extract PR number for display (strip URL prefix if present)
+PR_DISPLAY="$PR"
+case "$PR" in
+  *://*)  PR_DISPLAY="${PR##*/}" ;;
+esac
+
+PR_TITLE=$(gh pr view "$PR" --json title --jq '.title' 2>/dev/null || echo "")
+PR_URL=$(gh pr view "$PR" --json url --jq '.url' 2>/dev/null || echo "")
+
+set_iterm_title "pr-ci #${PR_DISPLAY}"
+
+# ── Helpers ─────────────────────────────────────────────────────────────
+
+get_checks() {
+  # Use JSON output to deduplicate: when a check has multiple runs, keep
+  # only the latest (by startedAt).  The "bucket" field gives the same
+  # pass/fail/pending/skipping values as the plain-text output.
+  gh pr checks "$PR" --json name,bucket,startedAt,link \
+    --jq '
+      group_by(.name) | map(sort_by(.startedAt) | last) |
+      map(.name + "\t" + .bucket + "\t\t" + (.link // "")) | .[]
+    ' 2>&1 || true
+}
+
+count_status() {
+  local output="$1" status="$2"
+  echo "$output" | grep -c "${TAB}${status}${TAB}" || true
+}
+
+only_pending_is_tide() {
+  local output="$1"
+  local pending_lines
+  pending_lines=$(echo "$output" | grep "${TAB}pending${TAB}" || true)
+  [[ -n "$pending_lines" ]] && \
+    [[ $(echo "$pending_lines" | wc -l) -eq 1 ]] && \
+    echo "$pending_lines" | grep -q "^tide${TAB}"
+}
+
+summarize() {
+  local output="$1"
+  local passed failed pending skipping
+  passed=$(count_status "$output" "pass")
+  failed=$(count_status "$output" "fail")
+  pending=$(count_status "$output" "pending")
+  skipping=$(count_status "$output" "skipping")
+
+  echo "Passed: $passed  Failed: $failed  Pending: $pending  Skipped: $skipping"
+
+  if [[ "$failed" -gt 0 ]]; then
+    echo ""
+    echo "Failed checks:"
+    echo "$output" | grep "${TAB}fail${TAB}" | awk -F'\t' '{print "  ✗ " $1}' || true
+  fi
+
+  if [[ "$pending" -gt 0 ]]; then
+    if only_pending_is_tide "$output"; then
+      echo ""
+      echo "Pending: tide (requires approval — ignored)"
+    else
+      echo ""
+      echo "Pending checks:"
+      echo "$output" | grep "${TAB}pending${TAB}" | awk -F'\t' '{print "  ⏳ " $1}' || true
+    fi
+  fi
+}
+
+is_done() {
+  local output="$1"
+  local pending
+  pending=$(count_status "$output" "pending")
+  [[ "$pending" -eq 0 ]] || only_pending_is_tide "$output"
+}
+
+has_failures() {
+  local output="$1"
+  local failed
+  failed=$(count_status "$output" "fail")
+  [[ "$failed" -gt 0 ]]
+}
+
+alert() {
+  local title="$1"
+  local body="$2"
+  osascript -e "display alert \"$title\" message \"$body\" buttons {\"OK\"} default button \"OK\"" 2>/dev/null || true
+}
+
+# ── Main: one-shot ──────────────────────────────────────────────────────
+
+output=$(get_checks)
+if [[ -n "$PR_TITLE" ]]; then
+  echo "PR #${PR_DISPLAY}: ${PR_TITLE}"
+else
+  echo "PR $PR"
+fi
+echo ""
+echo "CI Status"
+echo "─────────────────────────────────"
+summarize "$output"
+if [[ -n "$PR_URL" ]]; then
+  echo ""
+  echo "$PR_URL"
+fi
+
+if ! $WATCH; then
+  exit 0
+fi
+
+# ── Main: watch mode ────────────────────────────────────────────────────
+
+report_and_alert() {
+  local label="$1"
+  local output="$2"
+
+  echo ""
+  if [[ -n "$PR_TITLE" ]]; then
+    echo "PR #${PR_DISPLAY}: ${PR_TITLE}"
+    echo ""
+  fi
+  summarize "$output"
+  if [[ -n "$PR_URL" ]]; then
+    echo ""
+    echo "$PR_URL"
+  fi
+
+  # Build alert message
+  local passed failed skipping
+  passed=$(count_status "$output" "pass")
+  failed=$(count_status "$output" "fail")
+  skipping=$(count_status "$output" "skipping")
+  if [[ "$failed" -gt 0 ]]; then
+    failed_names=$(echo "$output" | grep "${TAB}fail${TAB}" | awk -F'\t' '{print $1}' | paste -sd', ' -)
+    alert "PR #${PR_DISPLAY} — ${label}" "${PR_TITLE:+${PR_TITLE} — }Passed: $passed, Failed: $failed, Skipped: $skipping -- Failed: $failed_names"
+  else
+    alert "PR #${PR_DISPLAY} — ${label}" "${PR_TITLE:+${PR_TITLE} — }All $passed checks passed! ($skipping skipped)"
+  fi
+}
+
+should_stop() {
+  local output="$1"
+  is_done "$output" && return 0
+  $FAIL_FAST && has_failures "$output" && return 0
+  return 1
+}
+
+if should_stop "$output"; then
+  echo ""
+  if is_done "$output"; then
+    echo "All checks already complete."
+  else
+    echo "Failure detected."
+  fi
+  exit 0
+fi
+
+echo ""
+echo "Watching every ${INTERVAL}s… (Ctrl-C to stop)"
+echo ""
+
+while true; do
+  sleep "$INTERVAL"
+  set_iterm_title "pr-ci #${PR_DISPLAY}"
+  output=$(get_checks)
+  timestamp=$(date '+%H:%M:%S')
+
+  if should_stop "$output"; then
+    if is_done "$output"; then
+      echo "[$timestamp] All checks complete!"
+    else
+      echo "[$timestamp] Failure detected — stopping early."
+    fi
+    report_and_alert "CI Complete" "$output"
+    exit 0
+  fi
+
+  pending=$(count_status "$output" "pending")
+  passed=$(count_status "$output" "pass")
+  failed=$(count_status "$output" "fail")
+  echo "[$timestamp] Pending: $pending  Passed: $passed  Failed: $failed"
+done

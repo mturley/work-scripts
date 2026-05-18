@@ -1,0 +1,1150 @@
+#!/usr/bin/env bash
+# worktree - Manage git worktrees for PRs and branches
+#
+# Usage: worktree [pr-number|pr-url|branch-name|worktree-path] ...
+#
+# With no arguments, lists existing worktrees and prompts to select one.
+# With one or more arguments, opens worktrees in mprocs with a shell pane
+# (requires mprocs).
+
+# Detect if the current directory has been deleted (e.g. after worktree cleanup)
+if ! pwd &>/dev/null; then
+  echo "Your current directory no longer exists (it was probably just removed)."
+  echo "Run: cd ~"
+  exit 1
+fi
+
+set -euo pipefail
+
+SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
+# shellcheck source=../lib/helpers.sh
+source "$SCRIPTS_DIR/helpers.sh"
+
+# --- Parse flags ---
+PERSISTENT="${WORKTREE_PERSISTENT:-true}"
+CLEANUP=false
+CLEANUP_PREFS=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help|-h)
+      cat <<'HELPEOF'
+Usage: worktree [--no-persist] [pr-number|pr-url|branch-name|worktree-path] ...
+       worktree --sessions | --kill-session <name>
+       worktree --cleanup | --cleanup-prefs
+
+Manage git worktrees for PRs and branches.
+
+Arguments:
+  (none)              List existing worktrees and select one to manage.
+                      If run from inside a worktree, opens its REPL directly.
+  <pr-number>         Create or reopen a worktree for the given PR (e.g. 1234).
+  <pr-url>            Same, but with a full GitHub PR URL.
+  <branch-name>       Create or reopen a worktree for the given branch.
+  <worktree-path>     Open an existing worktree by its filesystem path.
+  <arg> <arg> ...     Open multiple worktrees in parallel panes.
+
+Options:
+  --no-persist        Skip tmux wrapping (mprocs only, no persistence).
+                      By default, mprocs runs inside a tmux session for persistence.
+  --sessions          List active persistent (tmux) worktree sessions.
+  --kill-session <n>  Kill a persistent session by name and clean up its temp files.
+  --cleanup           Select worktrees to remove, then clean up stale temp files and preferences.
+  --cleanup-prefs     Clean up saved preferences only (editor, clone/link selections, etc.).
+  -h, --help          Show this help message and exit.
+
+Environment:
+  WORKTREES_BASE            Directory where worktrees are created (default: ~/git/.worktrees).
+                            Worktrees are organized in per-project subdirectories.
+  WORKTREE_SEARCH_ROOTS     Colon-separated directories to search for git repos with
+                            worktrees (default: ~/git). Discovers worktrees created by
+                            any tool (Zed, Claude Code, this script, etc.).
+  WORKTREE_SEARCH_DEPTH     Max find depth when searching for repos (default: 5).
+  WORKTREE_SEARCH_PRUNE     Colon-separated directory names to skip during search
+                            (default: node_modules:.Trash:.cache:.venv:venv).
+  WORKTREE_PERSISTENT       Set to "false" to disable persistence by default.
+  WORKTREE_HIDE_KEYMAP      Hide mprocs keymap pane in persistent mode (default: true).
+
+Examples:
+  worktree                                          # list and select
+  worktree 1234                                     # PR worktree
+  worktree https://github.com/org/repo/pull/1234    # PR worktree from URL
+  worktree my-feature-branch                        # branch worktree
+  worktree 1234 5678 my-branch                      # multiple in mprocs
+  worktree --no-persist 1234                        # skip tmux, mprocs only
+  worktree --sessions                               # list active persistent sessions
+  worktree --kill-session wt-all                     # kill the persistent session
+HELPEOF
+      exit 0
+      ;;
+    --no-persist) PERSISTENT=false; shift ;;
+    --sessions) list_persistent_sessions; exit 0 ;;
+    --kill-session)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "ERROR: --kill-session requires a session name." >&2
+        echo "  Use --sessions to list active sessions." >&2
+        exit 1
+      fi
+      KILL_SESSION="$1"
+      if tmux has-session -t "$KILL_SESSION" 2>/dev/null; then
+        tmux kill-session -t "$KILL_SESSION"
+        rm -f "/tmp/worktree-tmux-${KILL_SESSION}.sock"
+        rm -f "/tmp/worktree-mprocs-${KILL_SESSION}.yaml"
+        rm -f "/tmp/worktree-mprocs-${KILL_SESSION}-count"
+        rm -f "/tmp/worktree-launch-${KILL_SESSION}.sh"
+        echo "Killed session: $KILL_SESSION"
+      else
+        echo "Session not found: $KILL_SESSION" >&2
+        echo "  Use --sessions to list active sessions." >&2
+        exit 1
+      fi
+      exit 0
+      ;;
+    --cleanup) CLEANUP=true; shift ;;
+    --cleanup-prefs) CLEANUP_PREFS=true; shift ;;
+    *) break ;;
+  esac
+done
+
+# Clean up stale mprocs config/count files from dead sessions
+# Files are named worktree-mprocs-<PID>.yaml and worktree-mprocs-<PID>-count
+STALE_MPROCS_CLEANED=0
+while IFS= read -r f; do
+  fname="$(basename "$f")"
+  # Extract PID: strip prefix and known suffixes
+  pid="${fname#worktree-mprocs-}"
+  pid="${pid%.yaml}"
+  pid="${pid%-count}"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$f"
+    STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
+  fi
+done < <(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null)
+# Clean up stale tmux socket files for dead persistent sessions
+while IFS= read -r f; do
+  fname="$(basename "$f" .sock)"
+  session="${fname#worktree-tmux-}"
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    rm -f "$f"
+    # Also clean up associated mprocs and launcher files
+    rm -f "/tmp/worktree-mprocs-${session}.yaml" "/tmp/worktree-mprocs-${session}-count" "/tmp/worktree-launch-${session}.sh"
+    STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
+  fi
+done < <(find /tmp -maxdepth 1 -name "worktree-tmux-*.sock" 2>/dev/null)
+if [ "$STALE_MPROCS_CLEANED" -gt 0 ]; then
+  echo "Cleaned up ${STALE_MPROCS_CLEANED} stale mprocs file(s)."
+fi
+
+# Build flags array for re-exec calls
+REEXEC_FLAGS=()
+$PERSISTENT || REEXEC_FLAGS+=(--no-persist)
+
+CYAN="$(tput setaf 6 2>/dev/null || true)"
+RESET="$(tput sgr0 2>/dev/null || true)"
+
+# --- Helper: generate a pane label from an argument ---
+pane_label() {
+  local arg="$1"
+  local label="$arg"
+  if [[ "$arg" =~ ^[0-9]+$ ]]; then
+    label="PR #$arg"
+  elif [[ "$arg" == *github.com* ]]; then
+    local pr_num
+    pr_num="$(echo "$arg" | grep -o '[0-9]*$')"
+    if [ -n "$pr_num" ]; then
+      label="PR #$pr_num"
+    fi
+  elif [[ "$(basename "$arg")" == pr-* ]]; then
+    local pr_num
+    pr_num="$(basename "$arg" | sed 's/^pr-\([0-9]*\)-.*/\1/')"
+    label="PR #$pr_num"
+  elif [ -d "$arg" ] || [[ "$arg" == "$WORKTREES_BASE"/* ]]; then
+    # Use branch name if this is a git worktree, fall back to directory name
+    local branch_name
+    branch_name="$(git -C "$arg" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [ -n "$branch_name" ] && [ "$branch_name" != "HEAD" ]; then
+      label="$branch_name"
+    else
+      label="$(basename "$arg")"
+    fi
+  fi
+  echo "wt $label"
+}
+
+cleanup_preferences() {
+  echo ""
+  echo "Checking for saved preferences..."
+  pref_files=()
+  pref_labels=()
+  if [ -f /tmp/worktree-editor-preference ]; then
+    pref_files+=("/tmp/worktree-editor-preference")
+    pref_labels+=("Editor preference ($(cat /tmp/worktree-editor-preference))")
+  fi
+  if [ -f /tmp/worktree-zed-window-preference ]; then
+    pref_files+=("/tmp/worktree-zed-window-preference")
+    pref_labels+=("Zed window mode preference ($(cat /tmp/worktree-zed-window-preference))")
+  fi
+  if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
+    pref_files+=("$VSCODE_TASKS_PREF_FILE")
+    pref_labels+=("VS Code auto-REPL preference ($(cat "$VSCODE_TASKS_PREF_FILE"))")
+  fi
+  while IFS= read -r f; do
+    local_name="$(basename "$f")"
+    kind="${local_name#worktree-clone-}"
+    kind="${kind%%-*}"
+    repo="${local_name#worktree-clone-${kind}-}"
+    pref_files+=("$f")
+    pref_labels+=("Clone ${kind} selection for ${repo}")
+  done < <(find /tmp -maxdepth 1 -name "worktree-clone-*" 2>/dev/null | sort)
+  while IFS= read -r f; do
+    local_name="$(basename "$f")"
+    kind="${local_name#worktree-link-}"
+    kind="${kind%%-*}"
+    repo="${local_name#worktree-link-${kind}-}"
+    pref_files+=("$f")
+    pref_labels+=("Link ${kind} selection for ${repo}")
+  done < <(find /tmp -maxdepth 1 -name "worktree-link-*" 2>/dev/null | sort)
+
+  if [ ${#pref_files[@]} -gt 0 ]; then
+    selected_prefs=()
+    while IFS= read -r line; do
+      [ -n "$line" ] && selected_prefs+=("$line")
+    done <<< "$(prompt_multi_select "Remove any saved preferences?" "${pref_labels[@]}")"
+
+    for sel in "${selected_prefs[@]+${selected_prefs[@]}}"; do
+      for i in "${!pref_labels[@]}"; do
+        if [ "${pref_labels[$i]}" = "$sel" ]; then
+          rm -f "${pref_files[$i]}"
+          echo "Removed: ${sel}"
+          break
+        fi
+      done
+    done
+  else
+    echo "No saved preferences found."
+  fi
+}
+
+# --- Cleanup mode ---
+if $CLEANUP; then
+  # Discover all worktrees across search roots
+  discover_all_worktrees
+
+  if [ ${#disc_wt_paths[@]} -eq 0 ]; then
+    echo "No worktrees found (searched: ${WORKTREE_SEARCH_ROOTS})"
+  else
+    # Build labels with repo prefix for the multi-select
+    cleanup_labels=()
+    for i in "${!disc_wt_paths[@]}"; do
+      cleanup_labels+=("${disc_wt_repos[$i]}/${disc_wt_labels[$i]}")
+    done
+
+    selected=()
+    while IFS= read -r line; do
+      [ -n "$line" ] && selected+=("$line")
+    done <<< "$(prompt_multi_select "Which worktrees to remove?" "${cleanup_labels[@]}")"
+
+    if [ ${#selected[@]} -gt 0 ]; then
+      cleanup_repo_roots=()
+      for sel in "${selected[@]}"; do
+        # Find the index matching this label
+        for i in "${!cleanup_labels[@]}"; do
+          if [ "${cleanup_labels[$i]}" = "$sel" ]; then
+            wt_path="${disc_wt_paths[$i]}"
+            wt_repo_root="${disc_wt_repo_roots[$i]}"
+            # Port range key uses path relative to WORKTREES_BASE if applicable
+            if [[ "$wt_path" == "$WORKTREES_BASE"/* ]]; then
+              port_key="${wt_path#"$WORKTREES_BASE"/}"
+              release_port_range "$port_key"
+            fi
+            if [ -n "$wt_repo_root" ]; then
+              cleanup_repo_roots+=("$wt_repo_root")
+            fi
+            if [ "${disc_wt_prunable[$i]}" = "true" ]; then
+              git -C "$wt_repo_root" worktree prune 2>/dev/null || true
+              echo "Pruned ${sel}"
+            else
+              remove_worktree "$wt_path"
+              echo "Removed ${sel}"
+            fi
+            break
+          fi
+        done
+      done
+      git worktree prune 2>/dev/null || true
+      for repo_root in "${cleanup_repo_roots[@]}"; do
+        cleanup_worktree_exclude_if_last "$repo_root"
+      done
+      # Clean up empty project subdirectories under WORKTREES_BASE
+      if [ -d "$WORKTREES_BASE" ]; then
+        while IFS= read -r proj_dir; do
+          if [ -d "$proj_dir" ] && [ -z "$(ls -A "$proj_dir" 2>/dev/null)" ]; then
+            rmdir "$proj_dir" 2>/dev/null || true
+          fi
+        done < <(find "$WORKTREES_BASE" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
+      fi
+    fi
+  fi
+
+  # Check for stale port range entries
+  remaining_wts=()
+  if [ -d "$WORKTREES_BASE" ]; then
+    while IFS= read -r d; do
+      remaining_wts+=("$(basename "$d")")
+    done < <(find "$WORKTREES_BASE" -maxdepth 2 -mindepth 2 -type d 2>/dev/null)
+  fi
+
+  if [ ${#remaining_wts[@]} -eq 0 ] && [ -f "$PORT_RANGE_FILE" ] && [ -s "$PORT_RANGE_FILE" ]; then
+    echo ""
+    echo "All worktrees removed, but port range file still has entries:"
+    while IFS= read -r line; do
+      echo "  $line"
+    done < "$PORT_RANGE_FILE"
+    if prompt_yn "Clean up stale port range entries?"; then
+      : > "$PORT_RANGE_FILE"
+      echo "Port range file cleared."
+    fi
+  fi
+
+  # Offer to kill persistent tmux session if it's running
+  if command -v tmux &>/dev/null && tmux has-session -t "wt-all" 2>/dev/null; then
+    echo ""
+    if prompt_yn "Kill persistent session 'wt-all'?"; then
+      tmux kill-session -t "wt-all"
+      rm -f "/tmp/worktree-tmux-wt-all.sock"
+      rm -f "/tmp/worktree-mprocs-wt-all.yaml"
+      rm -f "/tmp/worktree-mprocs-wt-all-count"
+      rm -f "/tmp/worktree-launch-wt-all.sh"
+      echo "Killed session: wt-all"
+    fi
+  fi
+
+  # Clean up stale mprocs configs (always safe to remove)
+  stale_mprocs=()
+  while IFS= read -r f; do
+    stale_mprocs+=("$f")
+  done < <(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null | sort)
+  if [ ${#stale_mprocs[@]} -gt 0 ]; then
+    for f in "${stale_mprocs[@]}"; do rm -f "$f"; done
+    echo ""
+    echo "Cleaned up ${#stale_mprocs[@]} stale mprocs config file(s)."
+  fi
+
+  cleanup_preferences
+
+  echo ""
+  echo "Done."
+  exit 0
+fi
+
+# --- Cleanup preferences only ---
+if $CLEANUP_PREFS; then
+  cleanup_preferences
+  echo ""
+  echo "Done."
+  exit 0
+fi
+
+# --- Inside mprocs: add pane(s) to the existing session ---
+if [ $# -gt 0 ] && [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
+  SELF="$(readlink -f "$0")"
+  # Track proc count for this mprocs session to enable select-proc after add
+  MPROCS_COUNT_FILE="/tmp/worktree-mprocs-${WORKTREE_MPROCS_PID:-unknown}-count"
+  if [ ! -f "$MPROCS_COUNT_FILE" ]; then
+    # Initialize: count procs from the config file
+    MPROCS_CFG_FILE="/tmp/worktree-mprocs-${WORKTREE_MPROCS_PID:-unknown}.yaml"
+    if [ -f "$MPROCS_CFG_FILE" ]; then
+      PROC_COUNT="$(grep -c '^  "' "$MPROCS_CFG_FILE" 2>/dev/null || echo 2)"
+    else
+      PROC_COUNT=2
+    fi
+    echo "$PROC_COUNT" > "$MPROCS_COUNT_FILE"
+  fi
+  for arg in "$@"; do
+    label="$(pane_label "$arg")"
+    mprocs --server "$MPROCS_SOCKET" --ctl "{c: add-proc, cmd: \"cd $(pwd) && WORKTREE_MPROCS_PANE=1 MPROCS_SOCKET=$MPROCS_SOCKET $SELF $arg\", name: \"$label\"}"
+    # Increment the count
+    CURRENT_COUNT="$(cat "$MPROCS_COUNT_FILE")"
+    echo "$((CURRENT_COUNT + 1))" > "$MPROCS_COUNT_FILE"
+  done
+  # If only one pane was added, switch to it
+  if [ $# -eq 1 ]; then
+    sleep 0.3
+    NEW_INDEX="$(cat "$MPROCS_COUNT_FILE")"
+    mprocs --server "$MPROCS_SOCKET" --ctl "{c: select-proc, index: $((NEW_INDEX - 1))}"
+  fi
+  exit 0
+fi
+
+# --- Multiple arguments ---
+if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE:-}" ] && command -v mprocs &>/dev/null; }; then
+  # Pre-check: ensure we're in a git repo before spawning panes, unless
+  # all args are full GitHub URLs or existing worktree paths (which don't need it)
+  needs_repo=false
+  for arg in "$@"; do
+    # Skip if it's a GitHub URL
+    if [[ "$arg" == *github.com* ]]; then
+      continue
+    fi
+    # Skip if it's an existing worktree path
+    if [ -d "$arg" ] && [ -e "$arg/.git" ]; then
+      continue
+    fi
+    # Otherwise we need to be in a repo
+    needs_repo=true
+    break
+  done
+  if $needs_repo && ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "ERROR: Not in a git repository. Run this from a git repo or workspace." >&2
+    exit 1
+  fi
+
+  SELF="$(readlink -f "$0")"
+
+  if ! command -v mprocs &>/dev/null; then
+    echo "ERROR: Multiple worktrees require mprocs." >&2
+    echo "  Install mprocs: brew install mprocs" >&2
+    exit 1
+  fi
+  if $PERSISTENT; then
+    SESSION_NAME="wt-all"
+    MPROCS_CFG="/tmp/worktree-mprocs-${SESSION_NAME}.yaml"
+    MPROCS_PORT="$(tmux_mprocs_port "$SESSION_NAME")"
+    MPROCS_SOCK="127.0.0.1:${MPROCS_PORT}"
+    MPROCS_COUNT="/tmp/worktree-mprocs-${SESSION_NAME}-count"
+
+    # If session already exists, add new panes and reattach
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+      EXISTING_SOCK="$(tmux_mprocs_socket "$SESSION_NAME")"
+      if [ -n "$EXISTING_SOCK" ]; then
+        if [ ! -f "$MPROCS_COUNT" ]; then
+          PROC_COUNT="$(grep -c '^  "' "$MPROCS_CFG" 2>/dev/null || echo 2)"
+          echo "$PROC_COUNT" > "$MPROCS_COUNT"
+        fi
+        added=0
+        for arg in "$@"; do
+          label="$(pane_label "$arg")"
+          # Skip if a pane with this label already exists in the config
+          if [ -f "$MPROCS_CFG" ] && grep -qF "\"$label\":" "$MPROCS_CFG"; then
+            echo "Already in session: $label"
+            continue
+          fi
+          mprocs --server "$EXISTING_SOCK" --ctl "{c: add-proc, cmd: \"cd $(pwd) && WORKTREE_MPROCS_PANE=1 MPROCS_SOCKET=$EXISTING_SOCK $SELF $arg\", name: \"$label\"}"
+          CURRENT_COUNT="$(cat "$MPROCS_COUNT")"
+          echo "$((CURRENT_COUNT + 1))" > "$MPROCS_COUNT"
+          # Append to config so future dedup checks see this pane
+          echo "  \"$label\":" >> "$MPROCS_CFG"
+          echo "    shell: \"$SELF $arg\"" >> "$MPROCS_CFG"
+          echo "    env:" >> "$MPROCS_CFG"
+          echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
+          echo "      MPROCS_SOCKET: \"$EXISTING_SOCK\"" >> "$MPROCS_CFG"
+          echo "      WORKTREE_TITLE: \"$label\"" >> "$MPROCS_CFG"
+          echo "Added to session: $label"
+          added=$((added + 1))
+        done
+        if [ $added -eq 1 ]; then
+          # Switch to the newly added pane (brief delay for mprocs to register it)
+          sleep 0.3
+          NEW_INDEX="$(cat "$MPROCS_COUNT")"
+          mprocs --server "$EXISTING_SOCK" --ctl "{c: select-proc, index: $((NEW_INDEX - 1))}"
+        fi
+        echo "Reattaching to persistent session: $SESSION_NAME"
+        exec tmux attach-session -t "$SESSION_NAME"
+      fi
+    fi
+
+    # New session: discover all existing worktrees and merge with requested args
+    discover_all_worktrees
+    all_args=()
+    for i in "${!disc_wt_paths[@]}"; do
+      wt="${disc_wt_paths[$i]}"
+      if [ -d "$wt" ] && [ -e "$wt/.git" ] && [ "${disc_wt_prunable[$i]}" != "true" ]; then
+        all_args+=("$wt")
+      fi
+    done
+    # Append requested args, deduplicating by canonical path
+    for arg in "$@"; do
+      is_dup=false
+      # If arg is an existing worktree path, check against discovered paths
+      if [ -d "$arg" ] && [ -e "$arg/.git" ]; then
+        canon_arg="$(cd "$arg" && pwd)"
+        for existing in "${all_args[@]+${all_args[@]}}"; do
+          canon_existing="$(cd "$existing" && pwd)"
+          if [ "$canon_arg" = "$canon_existing" ]; then
+            is_dup=true
+            break
+          fi
+        done
+      fi
+      if ! $is_dup; then
+        all_args+=("$arg")
+      fi
+    done
+    # Replace positional parameters with merged list
+    set -- "${all_args[@]+${all_args[@]}}"
+  else
+    MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
+    MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
+    MPROCS_COUNT="/tmp/worktree-mprocs-$$-count"
+  fi
+  rm -f "$MPROCS_CFG"
+  trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
+  SHELL_LABEL="[$(basename "$SHELL")]"
+  MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
+  if $PERSISTENT; then
+    echo "hide_keymap_window: ${WORKTREE_HIDE_KEYMAP:-true}" > "$MPROCS_CFG"
+    echo "procs:" >> "$MPROCS_CFG"
+  else
+    echo "procs:" > "$MPROCS_CFG"
+  fi
+  echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
+  echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
+  echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
+  echo "    env:" >> "$MPROCS_CFG"
+  echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+  echo "      WORKTREE_MPROCS_PID: \"$$\"" >> "$MPROCS_CFG"
+  for arg in "$@"; do
+    label="$(pane_label "$arg")"
+    echo "  \"$label\":" >> "$MPROCS_CFG"
+    echo "    shell: \"$SELF $arg\"" >> "$MPROCS_CFG"
+    echo "    env:" >> "$MPROCS_CFG"
+    echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
+    echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+    echo "      WORKTREE_TITLE: \"$label\"" >> "$MPROCS_CFG"
+  done
+  if $PERSISTENT; then
+    launch_mprocs_persistent "$SESSION_NAME" "$MPROCS_CFG" "$MPROCS_SOCK" "$MPROCS_COUNT"
+    rc=$?
+    # Returns 2 if user chose to skip persistence (nested tmux)
+    if [ $rc -eq 2 ]; then
+      exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
+    fi
+    # Returns 1 on error (already printed message)
+    exit $rc
+  fi
+  exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
+fi
+
+# --- Single argument: wrap in mprocs with shell + worktree pane ---
+if [ $# -eq 1 ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
+  if ! command -v mprocs &>/dev/null; then
+    echo "mprocs not found, falling back to inline mode." >&2
+  else
+    SELF="$(readlink -f "$0")"
+    MPROCS_CFG="/tmp/worktree-mprocs-$$.yaml"
+    MPROCS_SOCK="127.0.0.1:$((19000 + ($$ % 1000)))"
+    MPROCS_COUNT="/tmp/worktree-mprocs-$$-count"
+    rm -f "$MPROCS_CFG"
+    trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
+    label="$(pane_label "$1")"
+    SHELL_LABEL="[$(basename "$SHELL")]"
+    MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
+    echo "procs:" > "$MPROCS_CFG"
+    echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
+    echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
+    echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
+    echo "    env:" >> "$MPROCS_CFG"
+    echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+    echo "      WORKTREE_MPROCS_PID: \"$$\"" >> "$MPROCS_CFG"
+    echo "  \"$label\":" >> "$MPROCS_CFG"
+    echo "    shell: \"$SELF $1\"" >> "$MPROCS_CFG"
+    echo "    env:" >> "$MPROCS_CFG"
+    echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$MPROCS_CFG"
+    echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
+    echo "      WORKTREE_TITLE: \"$label\"" >> "$MPROCS_CFG"
+    exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
+  fi
+fi
+
+# --- No arguments: list and select (or enter REPL if inside a worktree) ---
+
+if [ $# -eq 0 ]; then
+  # Check if we're already inside any git worktree (not just WORKTREES_BASE)
+  CURRENT_DIR="$(pwd)"
+  if [ -f "$CURRENT_DIR/.git" ]; then
+    # .git is a file → this is a worktree
+    REPO_ROOT="$(git -C "$CURRENT_DIR" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
+    if [ -n "$REPO_ROOT" ]; then
+      worktree_repl "$REPO_ROOT" "$CURRENT_DIR" "$SCRIPTS_DIR"
+      exit 0
+    fi
+  elif [[ "$CURRENT_DIR" == "$WORKTREES_BASE"/* ]]; then
+    # May be in a subdirectory of a worktree under WORKTREES_BASE
+    WT_REL="${CURRENT_DIR#"$WORKTREES_BASE"/}"
+    WT_PROJECT="${WT_REL%%/*}"
+    WT_REST="${WT_REL#*/}"
+    WT_NAME="${WT_REST%%/*}"
+    if [ -n "$WT_PROJECT" ] && [ -n "$WT_NAME" ]; then
+      WT_PATH="${WORKTREES_BASE}/${WT_PROJECT}/${WT_NAME}"
+      if [ -e "$WT_PATH/.git" ]; then
+        REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+        worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
+        exit 0
+      fi
+    fi
+  fi
+
+  # Discover all worktrees across search roots
+  discover_all_worktrees
+
+  if [ ${#disc_wt_paths[@]} -eq 0 ]; then
+    echo "No worktrees found (searched: ${WORKTREE_SEARCH_ROOTS})"
+    exit 0
+  fi
+
+  # In persistent mode, auto-select all usable worktrees (no interactive prompt)
+  if $PERSISTENT; then
+    selected_paths=()
+    for i in "${!disc_wt_paths[@]}"; do
+      wt="${disc_wt_paths[$i]}"
+      if [ -d "$wt" ] && [ -e "$wt/.git" ] && [ "${disc_wt_prunable[$i]}" != "true" ]; then
+        selected_paths+=("$wt")
+      fi
+    done
+    if [ ${#selected_paths[@]} -gt 0 ]; then
+      exec "$0" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "${selected_paths[@]}"
+    fi
+  fi
+
+  # Display worktree list grouped by repo
+  echo ""
+  echo "Select a worktree (comma-separated for multiple, 'all' for all):"
+  for repo in "${disc_repos[@]}"; do
+    echo "  ${COLOR_CYAN}${repo}:${COLOR_RESET}"
+    for i in "${!disc_wt_paths[@]}"; do
+      if [ "${disc_wt_repos[$i]}" = "$repo" ]; then
+        echo "    ${COLOR_BLUE}$((i+1)))${COLOR_RESET} ${disc_wt_labels[$i]}"
+      fi
+    done
+  done
+
+  while true; do
+    printf "Choice [${COLOR_BLUE}1-%d${COLOR_RESET}, or ${COLOR_BLUE}all${COLOR_RESET}]: " "${#disc_wt_paths[@]}"
+    read -r input
+
+    if [ "$input" = "all" ]; then
+      # Collect all usable worktree paths (skip prunable/missing/orphaned)
+      selected_paths=()
+      for i in "${!disc_wt_paths[@]}"; do
+        wt="${disc_wt_paths[$i]}"
+        if [ -d "$wt" ] && [ -e "$wt/.git" ] && [ "${disc_wt_prunable[$i]}" != "true" ]; then
+          selected_paths+=("$wt")
+        fi
+      done
+      if [ ${#selected_paths[@]} -eq 0 ]; then
+        echo "No usable worktrees to open."
+        exit 0
+      fi
+      exec "$0" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "${selected_paths[@]}"
+    fi
+
+    # Parse comma-separated numbers
+    IFS=',' read -ra picks <<< "$input"
+    valid=true
+    selected_indices=()
+    for pick in "${picks[@]}"; do
+      pick="$(echo "$pick" | tr -d '[:space:]')"
+      if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "${#disc_wt_paths[@]}" ]; then
+        selected_indices+=("$((pick-1))")
+      else
+        valid=false
+        break
+      fi
+    done
+
+    if ! $valid || [ ${#selected_indices[@]} -eq 0 ]; then
+      echo "Invalid choice, try again."
+      continue
+    fi
+
+    # Multiple selections: re-exec with all selected paths
+    if [ ${#selected_indices[@]} -gt 1 ]; then
+      selected_paths=()
+      for idx in "${selected_indices[@]}"; do
+        selected_paths+=("${disc_wt_paths[$idx]}")
+      done
+      exec "$0" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "${selected_paths[@]}"
+    fi
+
+    # Single selection: handle inline
+    break
+  done
+
+  WT_PATH="${disc_wt_paths[${selected_indices[0]}]}"
+
+  # Handle problematic worktrees
+  if [ "${disc_wt_prunable[${selected_indices[0]}]}" = "true" ]; then
+    echo ""
+    echo "This worktree is prunable (git reports its gitdir points to a non-existent location)."
+    echo "  $(short_path "$WT_PATH")"
+    if prompt_yn "Prune this worktree?"; then
+      git -C "${disc_wt_repo_roots[${selected_indices[0]}]}" worktree prune 2>/dev/null || true
+      echo "Pruned."
+    fi
+    exit 0
+  fi
+
+  if [ ! -d "$WT_PATH" ] || [ ! -e "$WT_PATH/.git" ]; then
+    echo ""
+    echo "This worktree is orphaned (no .git link — likely left over from a failed cleanup)."
+    echo "  $(short_path "$WT_PATH")"
+    if prompt_yn "Remove this directory?"; then
+      force_rm "$WT_PATH"
+      echo "Removed."
+    fi
+    exit 0
+  fi
+
+  exec "$0" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "$WT_PATH"
+fi
+
+ARG="$1"
+
+is_pr_arg() {
+  [[ "$1" == *github.com* ]] || [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+# --- Phase 0: Check for existing worktree (branch input only) ---
+# PR inputs skip Phase 0 — comprehensive worktree discovery happens in the PR section
+# after we have the PR's head ref and can search for all related worktrees.
+
+if ! is_pr_arg "$ARG" && resolve_worktree "$ARG"; then
+  if ! git -C "$WT_PATH" rev-parse --git-dir &>/dev/null; then
+    echo "Found worktree directory, but it is orphaned (no .git link)."
+    echo "  $(short_path "$WT_PATH")"
+    if prompt_yn "Remove this directory?"; then
+      force_rm "$WT_PATH"
+      echo "Removed."
+    fi
+    exit 0
+  else
+    REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+    if [ "$WT_PATH" = "$REPO_ROOT" ]; then
+      echo "${CYAN}Branch is already checked out in the main worktree:${RESET} $(short_path "$WT_PATH")"
+      WT_BRANCH="$(git -C "$WT_PATH" branch --show-current)"
+      echo "  Branch: ${WT_BRANCH}"
+      echo "  Commit: $(git -C "$WT_PATH" log --oneline -1)"
+      WT_UPSTREAM="$(git -C "$WT_PATH" rev-parse --abbrev-ref "${WT_BRANCH}@{upstream}" 2>/dev/null || true)"
+      if [ -n "$WT_UPSTREAM" ]; then
+        git -C "$WT_PATH" fetch "${WT_UPSTREAM%%/*}" "${WT_UPSTREAM#*/}" 2>/dev/null || true
+        wt_ahead="$(git -C "$WT_PATH" rev-list --count "${WT_UPSTREAM}..HEAD" 2>/dev/null || echo 0)"
+        wt_behind="$(git -C "$WT_PATH" rev-list --count "HEAD..${WT_UPSTREAM}" 2>/dev/null || echo 0)"
+        if [ "$wt_ahead" -eq 0 ] && [ "$wt_behind" -eq 0 ]; then
+          echo "  Status: up to date with ${WT_UPSTREAM}"
+        else
+          wt_parts=""
+          if [ "$wt_ahead" -gt 0 ]; then
+            wt_word="commits"; [ "$wt_ahead" -eq 1 ] && wt_word="commit"
+            wt_parts="${wt_ahead} ${wt_word} ahead"
+          fi
+          if [ "$wt_behind" -gt 0 ]; then
+            wt_word="commits"; [ "$wt_behind" -eq 1 ] && wt_word="commit"
+            [ -n "$wt_parts" ] && wt_parts="${wt_parts}, "
+            wt_parts="${wt_parts}${wt_behind} ${wt_word} behind"
+          fi
+          echo "  Status: ${wt_parts} ${WT_UPSTREAM}"
+        fi
+      fi
+      exit 0
+    else
+      echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
+    fi
+    worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
+    exit 0
+  fi
+fi
+
+# --- Phase 1: Detect argument type and create worktree ---
+
+if is_pr_arg "$ARG"; then
+  # =============================================
+  # PR worktree
+  # =============================================
+
+  TARGET_OWNER=""
+  TARGET_REPO=""
+  PR_REF="$ARG"
+
+  if [[ "$ARG" == *github.com* ]]; then
+    url_path="${ARG#*github.com/}"
+    TARGET_OWNER="$(echo "$url_path" | cut -d/ -f1)"
+    TARGET_REPO="$(echo "$url_path" | cut -d/ -f2)"
+    PR_REF="$(echo "$url_path" | grep -o '[0-9]*$' || true)"
+    if [ -z "$PR_REF" ]; then
+      echo "ERROR: Could not parse PR number from URL: $ARG" >&2
+      exit 1
+    fi
+  fi
+
+  # Find or verify repository
+  if [ -n "$TARGET_OWNER" ] && [ -n "$TARGET_REPO" ]; then
+    FULL_TARGET="${TARGET_OWNER}/${TARGET_REPO}"
+    FOUND=""
+
+    if git rev-parse --is-inside-work-tree &>/dev/null; then
+      toplevel="$(git rev-parse --show-toplevel)"
+      if repo_matches_target "$toplevel" "$FULL_TARGET"; then
+        FOUND="$toplevel"
+      else
+        while IFS= read -r gitdir; do
+          candidate="$(dirname "$gitdir")"
+          [ "$candidate" = "$toplevel" ] && continue
+          if repo_matches_target "$candidate" "$FULL_TARGET"; then
+            FOUND="$candidate"
+            break
+          fi
+        done < <(find "$toplevel" -maxdepth 4 -name .git -not -path "*/.worktrees/*" -not -path "*/node_modules/*" -not -path "*/.claude/*" 2>/dev/null | sort)
+      fi
+    fi
+
+    if [ -z "$FOUND" ]; then
+      echo "Not in the ${FULL_TARGET} repo. Searching for a local clone..."
+      while IFS= read -r candidate; do
+        if repo_matches_target "$candidate" "$FULL_TARGET"; then
+          FOUND="$candidate"
+          break
+        fi
+      done < <(find ~/ -maxdepth 4 -type d -name "$TARGET_REPO" -not -path "*/node_modules/*" -not -path "*/.claude/worktrees/*" -not -path "*/.worktrees/*" 2>/dev/null)
+    fi
+
+    if [ -z "$FOUND" ]; then
+      echo "ERROR: No local clone of ${FULL_TARGET} found." >&2
+      exit 1
+    fi
+    echo "Using repo: $FOUND"
+    cd "$FOUND"
+  else
+    resolve_repo_root || exit 1
+    cd "$REPO_ROOT"
+  fi
+
+  # Get PR info
+  echo "Fetching PR #${PR_REF} info..."
+  PR_JSON="$(gh pr view "$PR_REF" --json number,title,url,headRefName,headRepositoryOwner,author,createdAt,updatedAt)"
+  PR_NUMBER="$(echo "$PR_JSON" | parse_json number)"
+  PR_TITLE="$(echo "$PR_JSON" | parse_json title)"
+  PR_URL="$(echo "$PR_JSON" | parse_json url)"
+  PR_HEAD_REF="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('headRefName',''))")"
+  PR_HEAD_OWNER="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('headRepositoryOwner',{}).get('login',''))")"
+  PR_AUTHOR="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))")"
+  PR_CREATED="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))")"
+  PR_UPDATED="$(echo "$PR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))")"
+
+  # Generate slug from title
+  SLUG="$(echo "$PR_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//' | cut -c1-40 | sed 's/-$//')"
+  WORKTREE_NAME="pr-${PR_NUMBER}-${SLUG}"
+  REPO_ROOT="$(git rev-parse --show-toplevel)"
+  BASE_REPO="$(echo "$PR_URL" | sed 's|https://github.com/||' | sed 's|/pull/.*||')"
+  REPO_NAME="$(basename "$REPO_ROOT")"
+  WORKTREE_ABS="${WORKTREES_BASE}/${REPO_NAME}/${WORKTREE_NAME}"
+
+  # Display PR info with author and dates
+  echo "PR #${PR_NUMBER}: ${PR_TITLE}"
+  if [ -n "$PR_AUTHOR" ]; then
+    echo "  Author: ${PR_AUTHOR}"
+  fi
+  if [ -n "$PR_CREATED" ]; then
+    echo "  Created: $(relative_time "$PR_CREATED")"
+  fi
+  if [ -n "$PR_UPDATED" ]; then
+    echo "  Updated: $(relative_time "$PR_UPDATED")"
+  fi
+
+  mkdir -p "${WORKTREES_BASE}/${REPO_NAME}"
+
+  # Fetch the PR's latest commit into a named ref (avoids FETCH_HEAD race when
+  # multiple worktree processes run in parallel via mprocs).
+  PR_FETCH_REF="refs/pr-review/${PR_NUMBER}"
+  git fetch "https://github.com/${BASE_REPO}.git" "+refs/pull/${PR_NUMBER}/head:${PR_FETCH_REF}" 2>/dev/null
+  PR_REMOTE_HEAD="$(git rev-parse "$PR_FETCH_REF")"
+
+  # Find all worktrees related to this PR (by branch name or review/pr-* branch)
+  RELATED_WTS=()
+  RELATED_BRANCHES=()
+  current_wt=""
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        current_wt="${line#worktree }"
+        ;;
+      "branch refs/heads/"*)
+        current_branch="${line#branch refs/heads/}"
+        if [ "$current_branch" = "$PR_HEAD_REF" ] || [[ "$current_branch" == review/pr-${PR_NUMBER}-* ]]; then
+          RELATED_WTS+=("$current_wt")
+          RELATED_BRANCHES+=("$current_branch")
+        fi
+        ;;
+    esac
+  done < <(git worktree list --porcelain)
+
+  SELECTED_WT=""
+  SELECTED_BRANCH=""
+
+  if [ ${#RELATED_WTS[@]} -eq 1 ]; then
+    SELECTED_WT="${RELATED_WTS[0]}"
+    SELECTED_BRANCH="${RELATED_BRANCHES[0]}"
+    if [ "$SELECTED_WT" = "$REPO_ROOT" ]; then
+      echo "${CYAN}Branch is already checked out in the main worktree:${RESET} $(short_path "$SELECTED_WT")"
+    else
+      echo "${CYAN}Reusing worktree:${RESET} $(short_path "$SELECTED_WT")"
+    fi
+
+  elif [ ${#RELATED_WTS[@]} -gt 1 ]; then
+    # Display worktree choices with commit and ahead/behind info
+    NUM_CHOICES=${#RELATED_WTS[@]}
+    echo "" >&2
+    echo "Found worktrees for this PR:" >&2
+    for i in "${!RELATED_WTS[@]}"; do
+      wt="${RELATED_WTS[$i]}"
+      wt_head="$(git -C "$wt" rev-parse HEAD)"
+      wt_short="${wt_head:0:7}"
+      wt_msg="$(git -C "$wt" log --format=%s -1)"
+
+      ahead="$(git rev-list --count "$PR_REMOTE_HEAD".."$wt_head" 2>/dev/null || echo 0)"
+      behind="$(git rev-list --count "$wt_head".."$PR_REMOTE_HEAD" 2>/dev/null || echo 0)"
+      if [ "$ahead" -eq 0 ] && [ "$behind" -eq 0 ]; then
+        sync_label="up to date"
+      elif [ "$ahead" -gt 0 ] && [ "$behind" -eq 0 ]; then
+        sync_label="${ahead} ahead"
+      elif [ "$ahead" -eq 0 ] && [ "$behind" -gt 0 ]; then
+        sync_label="${behind} behind"
+      else
+        sync_label="${ahead} ahead, ${behind} behind"
+      fi
+
+      label="$(short_path "$wt")"
+      if [ "$wt" = "$REPO_ROOT" ]; then
+        label="$label (main worktree)"
+      fi
+      echo "  ${COLOR_BLUE}$((i+1)))${COLOR_RESET} ${label}" >&2
+      echo "     ${COLOR_GREEN}${RELATED_BRANCHES[$i]}${COLOR_RESET} ${COLOR_YELLOW}${wt_short}${COLOR_RESET} ${wt_msg} (${sync_label})" >&2
+    done
+
+    while true; do
+      printf "Choice [${COLOR_BLUE}1-%d${COLOR_RESET}]: " "$NUM_CHOICES" >&2
+      read -r choice
+      if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$NUM_CHOICES" ]; then
+        break
+      fi
+      echo "Invalid choice, try again." >&2
+    done
+
+    SELECTED_WT="${RELATED_WTS[$((choice-1))]}"
+    SELECTED_BRANCH="${RELATED_BRANCHES[$((choice-1))]}"
+  fi
+
+  if [ -n "$SELECTED_WT" ]; then
+    # Reuse selected worktree
+    WT_PATH="$SELECTED_WT"
+
+    # Check if the worktree is up to date with the PR
+    LOCAL_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)"
+    if [ "$PR_REMOTE_HEAD" != "$LOCAL_HEAD" ]; then
+      ahead="$(git rev-list --count "$PR_REMOTE_HEAD".."$LOCAL_HEAD" 2>/dev/null || echo 0)"
+      behind="$(git rev-list --count "$LOCAL_HEAD".."$PR_REMOTE_HEAD" 2>/dev/null || echo 0)"
+      ahead_word="commits"; [ "$ahead" -eq 1 ] && ahead_word="commit"
+      behind_word="commits"; [ "$behind" -eq 1 ] && behind_word="commit"
+      if [ "$ahead" -gt 0 ] && [ "$behind" -eq 0 ]; then
+        sync_label="${ahead} ${ahead_word} ahead of PR"
+      elif [ "$ahead" -eq 0 ] && [ "$behind" -gt 0 ]; then
+        sync_label="${behind} ${behind_word} behind PR"
+      else
+        sync_label="${ahead} ${ahead_word} ahead, ${behind} behind PR"
+      fi
+      echo "Local branch is not on the same commit as the PR (${sync_label})."
+      echo "  Local:  ${LOCAL_HEAD:0:12}"
+      echo "  Remote: ${PR_REMOTE_HEAD:0:12}"
+      CHOICE="$(prompt_choice "What would you like to do?" "Reset to PR's latest commit" "Keep as-is")"
+      if [ "$CHOICE" = "Reset to PR's latest commit" ]; then
+        git -C "$WT_PATH" reset --hard "$PR_REMOTE_HEAD"
+        echo "Reset to PR's latest commit."
+        # Best-effort backup of the old commit
+        BACKUP_BRANCH="${SELECTED_BRANCH}-${LOCAL_HEAD:0:7}"
+        if git rev-parse --verify "$BACKUP_BRANCH" &>/dev/null; then
+          if [ "$(git rev-parse "$BACKUP_BRANCH")" = "$LOCAL_HEAD" ]; then
+            echo "Previous state already saved in branch '${BACKUP_BRANCH}'."
+          else
+            n=2
+            while git rev-parse --verify "${BACKUP_BRANCH}-${n}" &>/dev/null; do
+              n=$((n + 1))
+            done
+            BACKUP_BRANCH="${BACKUP_BRANCH}-${n}"
+            git branch "$BACKUP_BRANCH" "$LOCAL_HEAD" 2>/dev/null && \
+              echo "Backed up previous state to branch '${BACKUP_BRANCH}'" || true
+          fi
+        else
+          git branch "$BACKUP_BRANCH" "$LOCAL_HEAD" 2>/dev/null && \
+            echo "Backed up previous state to branch '${BACKUP_BRANCH}'" || true
+        fi
+      fi
+    fi
+
+    setup_pr_tracking "$WT_PATH" "$SELECTED_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
+    if [ "$SELECTED_WT" = "$REPO_ROOT" ]; then
+      exit 0
+    fi
+    worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+
+  else
+    # Create new worktree — check if a local branch matching the PR's head ref exists
+    USE_EXISTING_BRANCH=false
+    if git rev-parse --verify "$PR_HEAD_REF" &>/dev/null; then
+      echo "Found existing local branch '${PR_HEAD_REF}' (not checked out in any worktree)."
+      CHOICE="$(prompt_choice "Use this branch or create a new review branch?" "Reuse '${PR_HEAD_REF}'" "Create new 'review/pr-${PR_NUMBER}-${SLUG}'")"
+      if [ "$CHOICE" = "Reuse '${PR_HEAD_REF}'" ]; then
+        USE_EXISTING_BRANCH=true
+      fi
+    fi
+
+    if $USE_EXISTING_BRANCH; then
+      if ! OUTPUT="$(git worktree add "$WORKTREE_ABS" "$PR_HEAD_REF" 2>&1)"; then
+        echo "ERROR: Failed to create worktree with branch '${PR_HEAD_REF}'." >&2
+        echo "  $OUTPUT" >&2
+        exit 1
+      fi
+      WT_PATH="$(cd "$WORKTREE_ABS" && pwd)"
+      echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+
+      setup_pr_tracking "$WT_PATH" "$PR_HEAD_REF" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
+      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+
+    else
+      if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
+        MSG="$(echo "$RESULT" | parse_json message)"
+        echo "ERROR: Failed to create worktree." >&2
+        [ -n "$MSG" ] && echo "  $MSG" >&2
+        exit 1
+      fi
+
+      STATUS="$(echo "$RESULT" | parse_json status)"
+      WT_PATH="$(echo "$RESULT" | parse_json path)"
+
+      if [ -z "$STATUS" ]; then
+        echo "ERROR: Unexpected output from worktree-ensure: $RESULT" >&2
+        exit 1
+      fi
+
+      case "$STATUS" in
+        created)
+          echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+          ;;
+        branch-exists)
+          STALE_BRANCH="$(echo "$RESULT" | parse_json branch)"
+          echo "A local branch '${STALE_BRANCH}' already exists (likely leftover from a previous worktree)."
+          if prompt_yn "Delete the old branch and re-fetch the PR?"; then
+            git branch -D "$STALE_BRANCH"
+            if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
+              MSG="$(echo "$RESULT" | parse_json message)"
+              echo "ERROR: Failed to create worktree after deleting branch." >&2
+              [ -n "$MSG" ] && echo "  $MSG" >&2
+              exit 1
+            fi
+            WT_PATH="$(echo "$RESULT" | parse_json path)"
+            echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+          else
+            echo "Aborted." >&2
+            exit 1
+          fi
+          ;;
+        error)
+          MSG="$(echo "$RESULT" | parse_json message)"
+          echo "ERROR: Failed to create worktree." >&2
+          [ -n "$MSG" ] && echo "  $MSG" >&2
+          exit 1
+          ;;
+        *)
+          echo "ERROR: Unexpected status '${STATUS}' from worktree-ensure." >&2
+          exit 1
+          ;;
+      esac
+
+      # Set up branch tracking
+      PR_LOCAL_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
+      setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
+
+      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+    fi
+  fi
+
+else
+  # =============================================
+  # Branch worktree
+  # =============================================
+
+  BRANCH_NAME="$ARG"
+
+  # Trim whitespace
+  BRANCH_NAME="$(echo "$BRANCH_NAME" | xargs)"
+  if [ -z "$BRANCH_NAME" ]; then
+    echo "ERROR: Please provide a branch name." >&2
+    exit 1
+  fi
+
+  resolve_repo_root || exit 1
+  cd "$REPO_ROOT"
+  REPO_NAME="$(basename "$REPO_ROOT")"
+  DIR_BRANCH="$(echo "$BRANCH_NAME" | tr '/' '-')"
+  WORKTREE_ABS="${WORKTREES_BASE}/${REPO_NAME}/${DIR_BRANCH}"
+
+  mkdir -p "${WORKTREES_BASE}/${REPO_NAME}"
+
+  if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" branch "$WORKTREE_ABS" "$BRANCH_NAME" 2>&1)"; then
+    MSG="$(echo "$RESULT" | parse_json message)"
+    echo "ERROR: Failed to create worktree." >&2
+    [ -n "$MSG" ] && echo "  $MSG" >&2
+    exit 1
+  fi
+
+  STATUS="$(echo "$RESULT" | parse_json status)"
+  WT_PATH="$(echo "$RESULT" | parse_json path)"
+
+  if [ -z "$STATUS" ]; then
+    echo "ERROR: Unexpected output from worktree-ensure: $RESULT" >&2
+    exit 1
+  fi
+
+  case "$STATUS" in
+    created)
+      echo "${CYAN}Created branch:${RESET} ${BRANCH_NAME}"
+      echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+      ;;
+    reused-branch)
+      echo "Branch '${BRANCH_NAME}' already exists."
+      if ! prompt_yn "Reuse existing branch?"; then
+        # Clean up the worktree that was already created by worktree-ensure.sh
+        remove_worktree "$WT_PATH"
+        echo "Aborted." >&2
+        exit 1
+      fi
+      echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
+      echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
+      ;;
+    exists)
+      echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
+      echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
+      if prompt_yn "Recreate worktree from scratch?"; then
+        recreate_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
+      fi
+      ;;
+    exists-elsewhere)
+      echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
+      echo "Already checked out in a worktree at:"
+      echo "  $(short_path "$WT_PATH")"
+      if prompt_yn "Move to new location ($(short_path "$WORKTREE_ABS"))?"; then
+        recreate_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
+      fi
+      ;;
+    error)
+      MSG="$(echo "$RESULT" | parse_json message)"
+      echo "ERROR: Failed to create worktree." >&2
+      [ -n "$MSG" ] && echo "  $MSG" >&2
+      exit 1
+      ;;
+    *)
+      echo "ERROR: Unexpected status '${STATUS}' from worktree-ensure." >&2
+      exit 1
+      ;;
+  esac
+
+  worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+fi
