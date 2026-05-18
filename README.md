@@ -13,6 +13,10 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`eod`](docs/eod.md) — Set up tomorrow's focus by carrying over unchecked items
 - [`enrich-daily-links`](docs/enrich-daily-links.md) — Enrich GitHub/Jira/Slack URLs in today's daily note with descriptive markdown links
 
+**Commands for Claude Code**
+- [`claude-sessions`](docs/claude-sessions.md) — List all Claude Code sessions across projects
+- [`claude-resume`](docs/claude-resume.md) — Resume a Claude Code session from any directory
+
 **Commands for iTerm2**
 - [`iterm-new`](docs/iterm-new.md) — Open a new iTerm2 tab or split pane and run a command
 
@@ -114,6 +118,24 @@ Enrich GitHub PR, Jira, and Slack URLs in today's daily note with descriptive ma
 ```bash
 enrich-daily-links            # enrich links in today's note
 enrich-daily-links --dry-run  # preview changes without modifying
+```
+
+## Commands for Claude Code
+
+### [`claude-sessions`](docs/claude-sessions.md) — Session Browser
+
+List all Claude Code sessions across all projects, most recent first. Shows session ID, working directory, first user message ("name"), and last user message. Pages 5 at a time.
+
+```bash
+claude-sessions        # list sessions, 5 at a time
+```
+
+### [`claude-resume`](docs/claude-resume.md) — Resume From Anywhere
+
+Resume a Claude Code session from any directory. Looks up the session's working directory automatically.
+
+```bash
+claude-resume f5e4d769-7848-4b7b-9e3f-443689550bf3
 ```
 
 ## Commands for iTerm2
