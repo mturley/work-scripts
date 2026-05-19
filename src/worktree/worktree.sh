@@ -16,8 +16,8 @@ fi
 
 set -euo pipefail
 
-SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
-# shellcheck source=../lib/helpers.sh
+SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
+# shellcheck source=../../lib/helpers.sh
 source "$SCRIPTS_DIR/helpers.sh"
 
 # --- Parse flags ---

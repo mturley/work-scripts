@@ -4,10 +4,10 @@
 
 set -euo pipefail
 
-SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib" && pwd)"
-WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
+WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 
-# shellcheck source=../lib/helpers.sh
+# shellcheck source=../../lib/helpers.sh
 source "$SCRIPTS_DIR/helpers.sh"
 
 # ---------------------------------------------------------------------------
