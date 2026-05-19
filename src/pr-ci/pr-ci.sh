@@ -32,9 +32,10 @@ Examples:
   pr-ci 6999                       Watch CI, polling every 120s
   pr-ci 6999 60                    Watch CI, polling every 60s
   pr-ci 6999 --once                Show status once and exit
+  pr-ci --once 6999                Flags can come before or after PR
   pr-ci 6999 --continue-on-fail    Wait for all checks to finish
   pr-ci 6999 --ignore-e2e          Watch, but don't stop on E2E failures
-  pr-ci 6999 --merge               Watch for PR to be merged
+  pr-ci --merge 6999               Watch for PR to be merged
   pr-ci https://github.com/org/repo/pull/6999
 EOF
   exit 1
@@ -42,14 +43,8 @@ EOF
 
 [[ $# -eq 0 ]] && usage
 
-# Handle --help/-h as first argument (before it gets consumed as PR)
-case "$1" in
-  -h|--help) usage ;;
-esac
-
-PR="$1"
-shift
-
+# Parse arguments in any order
+PR=""
 WATCH=true
 INTERVAL=120
 FAIL_FAST=true
@@ -58,6 +53,9 @@ WATCH_MERGE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -h|--help)
+      usage
+      ;;
     --once)
       WATCH=false
       shift
@@ -74,20 +72,32 @@ while [[ $# -gt 0 ]]; do
       WATCH_MERGE=true
       shift
       ;;
-    -h|--help)
+    --*)
+      echo "pr-ci: unknown option: $1" >&2
       usage
       ;;
     *)
+      # Either a PR identifier or interval (number)
       if [[ "$1" =~ ^[0-9]+$ ]]; then
         INTERVAL="$1"
         shift
+      elif [[ -z "$PR" ]]; then
+        # First non-flag, non-number argument is the PR
+        PR="$1"
+        shift
       else
-        echo "pr-ci: unknown option: $1" >&2
+        echo "pr-ci: unexpected argument: $1" >&2
         usage
       fi
       ;;
   esac
 done
+
+# Ensure PR was provided
+if [[ -z "$PR" ]]; then
+  echo "pr-ci: missing PR argument" >&2
+  usage
+fi
 
 # ── iTerm title ────────────────────────────────────────────────────────
 

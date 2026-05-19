@@ -13,11 +13,11 @@ pr-ci <pr>                      # watch CI, alert on first failure or when done
 pr-ci <pr> 60                   # watch CI, polling every 60s
 pr-ci <pr> --continue-on-fail   # wait for all checks even if some fail
 pr-ci <pr> --ignore-e2e         # don't stop on E2E failures
-pr-ci <pr> --merge              # watch for PR to be merged
+pr-ci --merge <pr>              # flags can be before or after PR
 pr-ci <pr> --once               # show current status once and exit
 ```
 
-`<pr>` can be a PR number, URL, or branch name — anything `gh pr checks` accepts.
+`<pr>` can be a PR number, URL, or branch name — anything `gh pr checks` accepts. Flags can appear before or after the PR identifier.
 
 ### Watch mode (default)
 
