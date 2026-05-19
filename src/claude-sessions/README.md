@@ -1,6 +1,6 @@
 # claude-sessions
 
-List all Claude Code sessions across all projects, most recent first. Shows session ID, working directory, first user message ("name"), and last user message. Pages 5 sessions at a time with an interactive prompt.
+List all Claude Code sessions across all projects, most recent first. Shows session ID, working directory, first user message ("name"), and last user message. Pages 5 sessions at a time with an interactive prompt, or search for sessions containing specific text.
 
 ## Prerequisites
 
@@ -10,10 +10,13 @@ List all Claude Code sessions across all projects, most recent first. Shows sess
 ## Usage
 
 ```bash
-claude-sessions        # list sessions, 5 at a time
+claude-sessions            # list sessions, 5 at a time
+claude-sessions "text"     # search for sessions containing text
 ```
 
-Press Enter at the `[Enter for more]` prompt to load the next page, or Ctrl-C to stop.
+**Without arguments:** Pages 5 sessions at a time. Press Enter at the `[Enter for more]` prompt to load the next page, or Ctrl-C to stop.
+
+**With a search term:** Searches through all sessions (most recent first) for messages containing the given text (case-insensitive). Shows a spinner while searching. When a match is found, displays the session and prompts "Enter to keep looking". Press Enter to continue searching or Ctrl-C to stop.
 
 ## Output
 
