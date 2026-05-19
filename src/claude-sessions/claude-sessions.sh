@@ -2,15 +2,23 @@
 # List Claude Code sessions across all projects, most recent first.
 # Shows session ID, working directory, first and last user messages with timestamps.
 # Interactive: pages 5 at a time, press Enter for more.
-# --find "text": Search for sessions containing the given text in messages
+# "text": Search for sessions containing the given text in messages
+# --pick "text": Interactive picker — resume, keep looking, or abort
 
 set -uo pipefail
 
 PAGE_SIZE=5
 sessions_dir="$HOME/.claude/projects"
 
-# If an argument is given, use it as search text
-search_text="${1:-}"
+# Parse arguments
+pick_mode=false
+search_text=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pick) pick_mode=true; shift ;;
+    *) search_text="$1"; shift ;;
+  esac
+done
 
 if [[ ! -d "$sessions_dir" ]]; then
   echo "No Claude sessions found at $sessions_dir"
@@ -89,27 +97,40 @@ print(f'msg_ts={shlex.quote(last_ts)}')
 " 2>/dev/null)" || true
 
     if [[ "$match_found" == "true" ]]; then
+      sid=$(basename "$f" .jsonl)
+
       # Clear spinner line
       printf "\r%*s\r" 50 "" >&2
 
-      sid=$(basename "$f" .jsonl)
       cwd=$(grep -o '"cwd":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)
       cwd="${cwd/#$HOME/~}"
 
-      echo "$sid  $cwd"
-      [[ -n "$name" ]] && echo "  ┌─ Prompt ($name_ts):  $name"
+      echo "$sid  $cwd" >&2
+      [[ -n "$name" ]] && echo "  ┌─ Prompt ($name_ts):  $name" >&2
       if [[ -n "$msg" ]]; then
         if [[ "$msg" != "$name" ]]; then
-          echo "  └─ Latest ($msg_ts):  $msg"
+          echo "  └─ Latest ($msg_ts):  $msg" >&2
         else
-          echo "  └─ (single message)"
+          echo "  └─ (single message)" >&2
         fi
       fi
-      echo
+      echo >&2
 
-      # Check if there are more sessions to search
-      if (( i + 1 < total )); then
-        read -rp "Enter to keep looking " </dev/tty
+      if [[ "$pick_mode" == true ]]; then
+        while true; do
+          read -rp "[r]esume this session / [k]eep looking / [a]bort?" choice </dev/tty
+          case "$choice" in
+            r|R) echo "$sid"; exit 0 ;;
+            k|K) break ;;
+            a|A) exit 1 ;;
+            *) echo "Please enter r, k, or a" >&2 ;;
+          esac
+        done
+      else
+        # Check if there are more sessions to search
+        if (( i + 1 < total )); then
+          read -rp "Enter to keep looking " </dev/tty
+        fi
       fi
     fi
   done
