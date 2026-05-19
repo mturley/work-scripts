@@ -19,18 +19,22 @@ TAB=$'\t'
 
 usage() {
   cat <<'EOF'
-Usage: pr-ci <pr> [SECONDS] [--once] [--continue-on-fail]
+Usage: pr-ci <pr> [SECONDS] [--once] [--continue-on-fail] [--ignore-e2e] [--merge]
 
   <pr>                PR number, URL, or branch name
   [SEC]               Poll interval in seconds (default 120)
   --once              Show current status and exit (no watching)
   --continue-on-fail  Wait for all checks even if some fail
+  --ignore-e2e        Don't stop on E2E failures (continue watching)
+  --merge             Watch for PR to be merged instead of CI checks
 
 Examples:
   pr-ci 6999                       Watch CI, polling every 120s
   pr-ci 6999 60                    Watch CI, polling every 60s
   pr-ci 6999 --once                Show status once and exit
   pr-ci 6999 --continue-on-fail    Wait for all checks to finish
+  pr-ci 6999 --ignore-e2e          Watch, but don't stop on E2E failures
+  pr-ci 6999 --merge               Watch for PR to be merged
   pr-ci https://github.com/org/repo/pull/6999
 EOF
   exit 1
@@ -38,12 +42,19 @@ EOF
 
 [[ $# -eq 0 ]] && usage
 
+# Handle --help/-h as first argument (before it gets consumed as PR)
+case "$1" in
+  -h|--help) usage ;;
+esac
+
 PR="$1"
 shift
 
 WATCH=true
 INTERVAL=120
 FAIL_FAST=true
+IGNORE_E2E=false
+WATCH_MERGE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,6 +64,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --continue-on-fail)
       FAIL_FAST=false
+      shift
+      ;;
+    --ignore-e2e)
+      IGNORE_E2E=true
+      shift
+      ;;
+    --merge)
+      WATCH_MERGE=true
       shift
       ;;
     -h|--help)
@@ -85,8 +104,14 @@ case "$PR" in
   *://*)  PR_DISPLAY="${PR##*/}" ;;
 esac
 
-PR_TITLE=$(gh pr view "$PR" --json title --jq '.title' 2>/dev/null || echo "")
-PR_URL=$(gh pr view "$PR" --json url --jq '.url' 2>/dev/null || echo "")
+# Validate that the PR exists before doing anything else
+pr_json=$(gh pr view "$PR" --json title,url 2>&1) || {
+  echo "pr-ci: not a valid PR: $PR" >&2
+  echo "$pr_json" | head -5 >&2
+  exit 1
+}
+PR_TITLE=$(echo "$pr_json" | jq -r '.title // ""')
+PR_URL=$(echo "$pr_json" | jq -r '.url // ""')
 
 set_iterm_title "pr-ci #${PR_DISPLAY}"
 
@@ -154,9 +179,15 @@ is_done() {
 
 has_failures() {
   local output="$1"
-  local failed
-  failed=$(count_status "$output" "fail")
-  [[ "$failed" -gt 0 ]]
+  local failed_output
+  failed_output=$(echo "$output" | grep "${TAB}fail${TAB}" || true)
+
+  # If --ignore-e2e is set, filter out E2E failures
+  if $IGNORE_E2E; then
+    failed_output=$(echo "$failed_output" | grep -v "^Cypress E2E Tests${TAB}" || true)
+  fi
+
+  [[ -n "$failed_output" ]]
 }
 
 alert() {
@@ -164,6 +195,70 @@ alert() {
   local body="$2"
   osascript -e "display alert \"$title\" message \"$body\" buttons {\"OK\"} default button \"OK\"" 2>/dev/null || true
 }
+
+# ── Main: merge watch mode ─────────────────────────────────────────────
+
+if $WATCH_MERGE; then
+  # Get initial merge state
+  merge_state=$(gh pr view "$PR" --json state,mergedAt --jq '{state: .state, mergedAt: .mergedAt}')
+  state=$(echo "$merge_state" | jq -r '.state')
+  merged_at=$(echo "$merge_state" | jq -r '.mergedAt')
+
+  if [[ -n "$PR_TITLE" ]]; then
+    echo "PR #${PR_DISPLAY}: ${PR_TITLE}"
+  else
+    echo "PR $PR"
+  fi
+  echo ""
+  echo "Merge Status"
+  echo "─────────────────────────────────"
+  echo "State: $state"
+  if [[ -n "$PR_URL" ]]; then
+    echo ""
+    echo "$PR_URL"
+  fi
+
+  if [[ "$state" == "MERGED" ]]; then
+    echo ""
+    echo "PR already merged at: $merged_at"
+    exit 0
+  fi
+
+  if ! $WATCH; then
+    exit 0
+  fi
+
+  echo ""
+  echo "Watching for merge every ${INTERVAL}s… (Ctrl-C to stop)"
+  echo ""
+
+  while true; do
+    sleep "$INTERVAL"
+    set_iterm_title "pr-ci #${PR_DISPLAY}"
+    merge_state=$(gh pr view "$PR" --json state,mergedAt --jq '{state: .state, mergedAt: .mergedAt}')
+    state=$(echo "$merge_state" | jq -r '.state')
+    merged_at=$(echo "$merge_state" | jq -r '.mergedAt')
+    timestamp=$(date '+%H:%M:%S')
+
+    if [[ "$state" == "MERGED" ]]; then
+      echo "[$timestamp] PR merged!"
+      echo ""
+      if [[ -n "$PR_TITLE" ]]; then
+        echo "PR #${PR_DISPLAY}: ${PR_TITLE}"
+        echo ""
+      fi
+      echo "Merged at: $merged_at"
+      if [[ -n "$PR_URL" ]]; then
+        echo ""
+        echo "$PR_URL"
+      fi
+      alert "PR #${PR_DISPLAY} — Merged" "${PR_TITLE:+${PR_TITLE} — }PR has been merged!"
+      exit 0
+    fi
+
+    echo "[$timestamp] State: $state"
+  done
+fi
 
 # ── Main: one-shot ──────────────────────────────────────────────────────
 

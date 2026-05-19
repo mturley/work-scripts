@@ -12,6 +12,8 @@ Check or watch CI status for a GitHub pull request. Shows the PR title and a sum
 pr-ci <pr>                      # watch CI, alert on first failure or when done
 pr-ci <pr> 60                   # watch CI, polling every 60s
 pr-ci <pr> --continue-on-fail   # wait for all checks even if some fail
+pr-ci <pr> --ignore-e2e         # don't stop on E2E failures
+pr-ci <pr> --merge              # watch for PR to be merged
 pr-ci <pr> --once               # show current status once and exit
 ```
 
@@ -83,6 +85,8 @@ When running inside [iTerm2](https://iterm2.com/), `pr-ci` sets the session (tab
 | `[SECONDS]` | Poll interval in seconds (default 120) |
 | `--once` | Show status once and exit (no watching) |
 | `--continue-on-fail` | Wait for all checks even if some fail |
+| `--ignore-e2e` | Don't stop when E2E checks fail (continue watching mock/unit tests) |
+| `--merge` | Watch for PR to be merged instead of watching CI checks |
 | `--help`, `-h` | Show usage |
 
 ## Exit codes
