@@ -3,7 +3,6 @@
 # Shows session ID, working directory, first and last user messages with timestamps.
 # Interactive: pages 5 at a time, press Enter for more.
 # "text": Search for sessions containing the given text in messages
-# --pick "text": Interactive picker — choose a session and output its ID
 
 set -uo pipefail
 
@@ -12,15 +11,7 @@ source "$LIB_DIR/claude-sessions.sh"
 
 PAGE_SIZE=5
 
-# Parse arguments
-pick_mode=false
-search_text=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --pick) pick_mode=true; shift ;;
-    *) search_text="$1"; shift ;;
-  esac
-done
+search_text="${1:-}"
 
 if ! claude_sessions_collect; then
   echo "No Claude sessions found."
@@ -42,22 +33,10 @@ if [[ -n "$search_text" ]]; then
       any_match=true
       printf "\r%*s\r" 50 "" >&2
 
-      claude_session_display "$f" 2
+      claude_session_display "$f"
 
-      if [[ "$pick_mode" == true ]]; then
-        while true; do
-          read -rp "[r]esume this session / [k]eep looking / [a]bort? " choice </dev/tty
-          case "$choice" in
-            r|R) sid=$(basename "$f" .jsonl); echo "$sid"; exit 0 ;;
-            k|K) break ;;
-            a|A) exit 1 ;;
-            *) echo "Please enter r, k, or a" >&2 ;;
-          esac
-        done
-      else
-        if (( i + 1 < total )); then
-          read -rp "Enter to keep looking " </dev/tty
-        fi
+      if (( i + 1 < total )); then
+        read -rp "Enter to keep looking " </dev/tty
       fi
     fi
   done
