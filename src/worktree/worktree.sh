@@ -24,12 +24,13 @@ source "$SCRIPTS_DIR/helpers.sh"
 PERSISTENT="${WORKTREE_PERSISTENT:-true}"
 CLEANUP=false
 CLEANUP_PREFS=false
+NO_OPEN=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<'HELPEOF'
 Usage: worktree [--no-persist] [pr-number|pr-url|branch-name|worktree-path] ...
-       worktree --sessions | --kill-session <name>
+       worktree --ports | --sessions | --kill-session <name>
        worktree --cleanup | --cleanup-prefs
 
 Manage git worktrees for PRs and branches.
@@ -44,6 +45,8 @@ Arguments:
   <arg> <arg> ...     Open multiple worktrees in parallel panes.
 
 Options:
+  --ports             Show port ranges currently allocated to worktrees.
+  --no-open           Skip opening an editor when entering the REPL.
   --no-persist        Skip tmux wrapping (mprocs only, no persistence).
                       By default, mprocs runs inside a tmux session for persistence.
   --sessions          List active persistent (tmux) worktree sessions.
@@ -74,6 +77,21 @@ Examples:
   worktree --sessions                               # list active persistent sessions
   worktree --kill-session wt-all                     # kill the persistent session
 HELPEOF
+      exit 0
+      ;;
+    --no-open) NO_OPEN=true; shift ;;
+    --ports)
+      if [ ! -f "$PORT_RANGE_FILE" ] || [ ! -s "$PORT_RANGE_FILE" ]; then
+        echo "No port ranges allocated."
+      else
+        echo "Allocated port ranges:"
+        while IFS=' ' read -r slot wt_name; do
+          [ -z "$slot" ] && continue
+          start=$((PORT_RANGE_BASE + slot * PORT_RANGE_SIZE))
+          end=$((start + PORT_RANGE_SIZE - 1))
+          echo "  ${start}-${end}  ${wt_name}"
+        done < "$PORT_RANGE_FILE"
+      fi
       exit 0
       ;;
     --no-persist) PERSISTENT=false; shift ;;
@@ -137,6 +155,7 @@ fi
 
 # Build flags array for re-exec calls
 REEXEC_FLAGS=()
+$NO_OPEN && REEXEC_FLAGS+=(--no-open)
 $PERSISTENT || REEXEC_FLAGS+=(--no-persist)
 
 CYAN="$(tput setaf 6 2>/dev/null || true)"
@@ -565,7 +584,7 @@ if [ $# -eq 0 ]; then
     # .git is a file → this is a worktree
     REPO_ROOT="$(git -C "$CURRENT_DIR" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
     if [ -n "$REPO_ROOT" ]; then
-      worktree_repl "$REPO_ROOT" "$CURRENT_DIR" "$SCRIPTS_DIR"
+      worktree_repl "$REPO_ROOT" "$CURRENT_DIR" "$SCRIPTS_DIR" $($NO_OPEN && echo "--no-open")
       exit 0
     fi
   elif [[ "$CURRENT_DIR" == "$WORKTREES_BASE"/* ]]; then
@@ -578,7 +597,7 @@ if [ $# -eq 0 ]; then
       WT_PATH="${WORKTREES_BASE}/${WT_PROJECT}/${WT_NAME}"
       if [ -e "$WT_PATH/.git" ]; then
         REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-        worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
+        worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR" $($NO_OPEN && echo "--no-open")
         exit 0
       fi
     fi
@@ -749,7 +768,7 @@ if ! is_pr_arg "$ARG" && resolve_worktree "$ARG"; then
     else
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
     fi
-    worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR"
+    worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR" $($NO_OPEN && echo "--no-open")
     exit 0
   fi
 fi
