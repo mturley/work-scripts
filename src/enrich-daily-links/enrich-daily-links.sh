@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 
 # ---------------------------------------------------------------------------
 # Help

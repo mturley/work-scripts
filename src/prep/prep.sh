@@ -106,7 +106,7 @@ fi
 
 echo ""
 echo "${COLOR_CYAN}Ensuring eod was run on the previous note...${COLOR_RESET}"
-"$(dirname "$(readlink -f "$0")")/eod" yesterday
+"$(cd "$(dirname "$(readlink -f "$0")")/../eod" && pwd)/eod.sh" yesterday
 
 # ---------------------------------------------------------------------------
 # Step 2: Find the most recent previous daily note
