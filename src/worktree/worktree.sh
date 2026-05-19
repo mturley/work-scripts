@@ -83,14 +83,40 @@ HELPEOF
     --ports)
       if [ ! -f "$PORT_RANGE_FILE" ] || [ ! -s "$PORT_RANGE_FILE" ]; then
         echo "No port ranges allocated."
-      else
-        echo "Allocated port ranges:"
-        while IFS=' ' read -r slot wt_name; do
-          [ -z "$slot" ] && continue
-          start=$((PORT_RANGE_BASE + slot * PORT_RANGE_SIZE))
-          end=$((start + PORT_RANGE_SIZE - 1))
+        exit 0
+      fi
+      echo "Allocated port ranges:"
+      stale_names=()
+      while IFS=' ' read -r slot wt_name; do
+        [ -z "$slot" ] && continue
+        start=$((PORT_RANGE_BASE + slot * PORT_RANGE_SIZE))
+        end=$((start + PORT_RANGE_SIZE - 1))
+        wt_dir="${WORKTREES_BASE}/${wt_name}"
+        if [ -d "$wt_dir" ]; then
           echo "  ${start}-${end}  ${wt_name}"
-        done < "$PORT_RANGE_FILE"
+        else
+          echo "  ${start}-${end}  ${wt_name}  (worktree missing)"
+          stale_names+=("$wt_name")
+        fi
+      done < "$PORT_RANGE_FILE"
+      if [ ${#stale_names[@]} -gt 0 ]; then
+        echo ""
+        stale_labels=()
+        for name in "${stale_names[@]}"; do
+          s=$(awk -v n="$name" '$2 == n {print $1; exit}' "$PORT_RANGE_FILE")
+          ps=$((PORT_RANGE_BASE + s * PORT_RANGE_SIZE))
+          pe=$((ps + PORT_RANGE_SIZE - 1))
+          stale_labels+=("${ps}-${pe}  ${name}")
+        done
+        selected=()
+        while IFS= read -r line; do
+          [ -n "$line" ] && selected+=("$line")
+        done <<< "$(prompt_multi_select "Free port ranges for missing worktrees?" "${stale_labels[@]}")"
+        for sel in "${selected[@]+${selected[@]}}"; do
+          freed_name="${sel#*  }"
+          release_port_range "$freed_name"
+          echo "Freed: ${sel}"
+        done
       fi
       exit 0
       ;;
@@ -1002,7 +1028,7 @@ if is_pr_arg "$ARG"; then
     if [ "$SELECTED_WT" = "$REPO_ROOT" ]; then
       exit 0
     fi
-    worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+    worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($NO_OPEN && echo "--no-open")
 
   else
     # Create new worktree — check if a local branch matching the PR's head ref exists
@@ -1025,7 +1051,7 @@ if is_pr_arg "$ARG"; then
       echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
 
       setup_pr_tracking "$WT_PATH" "$PR_HEAD_REF" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
-      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($NO_OPEN && echo "--no-open")
 
     else
       if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
@@ -1081,7 +1107,7 @@ if is_pr_arg "$ARG"; then
       PR_LOCAL_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
       setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
 
-      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($NO_OPEN && echo "--no-open")
     fi
   fi
 
