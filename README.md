@@ -21,6 +21,9 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 **Commands for iTerm2**
 - [`iterm-new`](src/iterm-new/) — Open a new iTerm2 tab or split pane and run a command
 
+**Commands for mprocs**
+- [`mprocs-new`](src/mprocs-new/) — Add panes to existing mprocs session or start new mprocs
+
 ## Setup
 
 Clone the repo and add its `bin` subdirectory to your PATH:
@@ -158,4 +161,16 @@ iterm-new tab npm run dev            # new tab
 iterm-new split-v npm run dev        # vertical split
 iterm-new split-h npm run dev        # horizontal split
 iterm-new tab -n "my app" npm start  # new tab with custom name
+```
+
+## Commands for mprocs
+
+### [`mprocs-new`](src/mprocs-new/) — Add Panes or Start mprocs
+
+Add panes to an existing mprocs session or start a new mprocs with the specified commands. Detects whether it's running inside mprocs and behaves accordingly.
+
+```bash
+mprocs-new "npm run dev"                    # add pane or start new mprocs
+mprocs-new "npm run dev" "dev server"       # with custom label
+mprocs-new "npm run dev" "npm test"         # add multiple panes
 ```
