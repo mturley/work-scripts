@@ -11,34 +11,66 @@ if [[ $# -lt 1 ]]; then
   exit 1
 fi
 
+LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
+source "$LIB_DIR/claude-sessions.sh"
+
 input="$1"
 shift
-sessions_dir="$HOME/.claude/projects"
 
-# Determine if input is a session ID or a search term
-session_file=""
-sid=""
-
+# Check if input is a session ID
 printf "Looking up session..." >&2
-session_file=$(find "$sessions_dir" -name "$input.jsonl" 2>/dev/null | head -1)
+session_file=$(claude_session_find_file "$input")
 
 if [[ -n "$session_file" ]]; then
   printf "\r%*s\r" 30 "" >&2
   sid="$input"
 else
-  # Not a session ID — treat as search term, let user pick interactively
+  # Not a session ID — search for it
   printf "\r%*s\r" 30 "" >&2
-  sid=$(claude-sessions --pick "$input")
+
+  if ! claude_sessions_collect; then
+    echo "No Claude sessions found."
+    exit 1
+  fi
+
+  total=${#claude_session_files[@]}
+  sid=""
+
+  for (( i = 0; i < total; i++ )); do
+    f="${claude_session_files[$i]}"
+
+    printf "\rSearching... [%d/%d]" $((i + 1)) "$total" >&2
+
+    claude_session_parse_search "$f" "$input"
+
+    if [[ "$cs_match" == "true" ]]; then
+      printf "\r%*s\r" 50 "" >&2
+
+      claude_session_display "$f" 2
+
+      while true; do
+        read -rp "[r]esume this session / [k]eep looking / [a]bort? " choice </dev/tty
+        case "$choice" in
+          r|R) sid=$(basename "$f" .jsonl); break 2 ;;
+          k|K) break ;;
+          a|A) exit 1 ;;
+          *) echo "Please enter r, k, or a" >&2 ;;
+        esac
+      done
+    fi
+  done
+
+  printf "\r%*s\r" 50 "" >&2
 
   if [[ -z "$sid" ]]; then
     echo "No session found matching: $input"
     exit 1
   fi
 
-  session_file=$(find "$sessions_dir" -name "$sid.jsonl" 2>/dev/null | head -1)
+  session_file=$(claude_session_find_file "$sid")
 fi
 
-cwd=$(grep -o '"cwd":"[^"]*"' "$session_file" | head -1 | cut -d'"' -f4)
+cwd=$(claude_session_cwd "$session_file")
 
 if [[ -z "$cwd" ]]; then
   echo "Could not determine working directory for session $sid"

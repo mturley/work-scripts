@@ -3,12 +3,14 @@
 # Shows session ID, working directory, first and last user messages with timestamps.
 # Interactive: pages 5 at a time, press Enter for more.
 # "text": Search for sessions containing the given text in messages
-# --pick "text": Interactive picker — resume, keep looking, or abort
+# --pick "text": Interactive picker — choose a session and output its ID
 
 set -uo pipefail
 
+LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
+source "$LIB_DIR/claude-sessions.sh"
+
 PAGE_SIZE=5
-sessions_dir="$HOME/.claude/projects"
 
 # Parse arguments
 pick_mode=false
@@ -20,114 +22,39 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! -d "$sessions_dir" ]]; then
-  echo "No Claude sessions found at $sessions_dir"
-  exit 1
-fi
-
-# Collect all session files sorted by modification time (most recent first)
-files=()
-while IFS= read -r line; do
-  files+=("$line")
-done < <(ls -t "$sessions_dir"/*/*.jsonl 2>/dev/null)
-
-if [[ ${#files[@]} -eq 0 ]]; then
+if ! claude_sessions_collect; then
   echo "No Claude sessions found."
   exit 0
 fi
 
-total=${#files[@]}
+total=${#claude_session_files[@]}
 
 if [[ -n "$search_text" ]]; then
-  # Find mode: search through sessions for matching text
+  any_match=false
   for (( i = 0; i < total; i++ )); do
-    f="${files[$i]}"
+    f="${claude_session_files[$i]}"
 
-    # Show spinner
     printf "\rSearching... [%d/%d]" $((i + 1)) "$total" >&2
 
-    # Extract messages and check for match
-    match_found=false
-    eval "$(python3 -c "
-import json,re,shlex,sys
-from datetime import datetime,timezone
-search='${search_text}'
-search_lower=search.lower()
-first=''
-first_ts=''
-last=''
-last_ts=''
-match=False
-skip_prefixes=('Set model to','model ','Caveat:','env ')
-for line in open('$f'):
-    try:
-        obj=json.loads(line)
-        if obj.get('isMeta'): continue
-        m=obj.get('message',{})
-        if m.get('role')!='user': continue
-        c=m.get('content','')
-        if isinstance(c,str):
-            t=c.strip()
-        elif isinstance(c,list):
-            t=' '.join(x.get('text','') for x in c if isinstance(x,dict) and x.get('type')=='text').strip()
-        else: continue
-        t=re.sub(r'<[^>]+>','',t).strip()
-        t=' '.join(t.split())
-        if not t or t.startswith('/') or t.startswith('[Request'): continue
-        if any(t.startswith(p) for p in skip_prefixes): continue
-        ts=obj.get('timestamp','')
-        if ts:
-            try:
-                dt=datetime.fromisoformat(ts.replace('Z','+00:00')).astimezone()
-                ts=dt.strftime('%Y-%m-%d %H:%M')
-            except: pass
-        if not first:
-            first=t
-            first_ts=ts
-        last=t
-        last_ts=ts
-        if search_lower in t.lower():
-            match=True
-    except: pass
-print(f'match_found={str(match).lower()}')
-print(f'name={shlex.quote(first[:80])}')
-print(f'name_ts={shlex.quote(first_ts)}')
-print(f'msg={shlex.quote(last[:120])}')
-print(f'msg_ts={shlex.quote(last_ts)}')
-" 2>/dev/null)" || true
+    claude_session_parse_search "$f" "$search_text"
 
-    if [[ "$match_found" == "true" ]]; then
-      sid=$(basename "$f" .jsonl)
-
-      # Clear spinner line
+    if [[ "$cs_match" == "true" ]]; then
+      any_match=true
       printf "\r%*s\r" 50 "" >&2
 
-      cwd=$(grep -o '"cwd":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)
-      cwd="${cwd/#$HOME/~}"
-
-      echo "$sid  $cwd" >&2
-      [[ -n "$name" ]] && echo "  ┌─ Prompt ($name_ts):  $name" >&2
-      if [[ -n "$msg" ]]; then
-        if [[ "$msg" != "$name" ]]; then
-          echo "  └─ Latest ($msg_ts):  $msg" >&2
-        else
-          echo "  └─ (single message)" >&2
-        fi
-      fi
-      echo >&2
+      claude_session_display "$f" 2
 
       if [[ "$pick_mode" == true ]]; then
         while true; do
-          read -rp "[r]esume this session / [k]eep looking / [a]bort?" choice </dev/tty
+          read -rp "[r]esume this session / [k]eep looking / [a]bort? " choice </dev/tty
           case "$choice" in
-            r|R) echo "$sid"; exit 0 ;;
+            r|R) sid=$(basename "$f" .jsonl); echo "$sid"; exit 0 ;;
             k|K) break ;;
             a|A) exit 1 ;;
             *) echo "Please enter r, k, or a" >&2 ;;
           esac
         done
       else
-        # Check if there are more sessions to search
         if (( i + 1 < total )); then
           read -rp "Enter to keep looking " </dev/tty
         fi
@@ -135,15 +62,13 @@ print(f'msg_ts={shlex.quote(last_ts)}')
     fi
   done
 
-  # Clear spinner line
   printf "\r%*s\r" 50 "" >&2
 
-  # If we got here without finding anything, all sessions were checked
-  if [[ "$match_found" != "true" ]]; then
-    echo "No matches found"
+  if [[ "$any_match" != "true" ]]; then
+    echo "No matches found" >&2
+    exit 1
   fi
 else
-  # Normal mode: page through sessions
   offset=0
 
   while (( offset < total )); do
@@ -153,67 +78,9 @@ else
     fi
 
     for (( i = offset; i < end; i++ )); do
-      f="${files[$i]}"
-      sid=$(basename "$f" .jsonl)
-      cwd=$(grep -o '"cwd":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)
-      cwd="${cwd/#$HOME/~}"
-
-      name=""
-      name_ts=""
-      msg=""
-      msg_ts=""
-      eval "$(python3 -c "
-import json,re,shlex
-from datetime import datetime,timezone
-first=''
-first_ts=''
-last=''
-last_ts=''
-skip_prefixes=('Set model to','model ','Caveat:','env ')
-for line in open('$f'):
-    try:
-        obj=json.loads(line)
-        if obj.get('isMeta'): continue
-        m=obj.get('message',{})
-        if m.get('role')!='user': continue
-        c=m.get('content','')
-        if isinstance(c,str):
-            t=c.strip()
-        elif isinstance(c,list):
-            t=' '.join(x.get('text','') for x in c if isinstance(x,dict) and x.get('type')=='text').strip()
-        else: continue
-        t=re.sub(r'<[^>]+>','',t).strip()
-        t=' '.join(t.split())
-        if not t or t.startswith('/') or t.startswith('[Request'): continue
-        if any(t.startswith(p) for p in skip_prefixes): continue
-        ts=obj.get('timestamp','')
-        if ts:
-            try:
-                dt=datetime.fromisoformat(ts.replace('Z','+00:00')).astimezone()
-                ts=dt.strftime('%Y-%m-%d %H:%M')
-            except: pass
-        if not first:
-            first=t
-            first_ts=ts
-        last=t
-        last_ts=ts
-    except: pass
-print(f'name={shlex.quote(first[:80])}')
-print(f'name_ts={shlex.quote(first_ts)}')
-print(f'msg={shlex.quote(last[:120])}')
-print(f'msg_ts={shlex.quote(last_ts)}')
-" 2>/dev/null)" || true
-
-      echo "$sid  $cwd"
-      [[ -n "$name" ]] && echo "  ┌─ Prompt ($name_ts):  $name"
-      if [[ -n "$msg" ]]; then
-        if [[ "$msg" != "$name" ]]; then
-          echo "  └─ Latest ($msg_ts):  $msg"
-        else
-          echo "  └─ (single message)"
-        fi
-      fi
-      echo
+      f="${claude_session_files[$i]}"
+      claude_session_parse "$f"
+      claude_session_display "$f"
     done
 
     offset=$end
