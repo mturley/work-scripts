@@ -4,7 +4,7 @@
 #
 # Usage: claude-resume <session-id-or-search-term> [claude args...]
 
-set -euo pipefail
+set -uo pipefail
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: claude-resume <session-id-or-search-term> [claude args...]"
@@ -49,7 +49,9 @@ else
       claude_session_display "$f" 2
 
       while true; do
-        read -rp "[r]esume this session / [k]eep looking / [a]bort? " choice </dev/tty
+        if ! read -rp "[r]esume this session / [k]eep looking / [a]bort? " choice </dev/tty; then
+          exit 1
+        fi
         case "$choice" in
           r|R) sid=$(basename "$f" .jsonl); break 2 ;;
           k|K) break ;;
