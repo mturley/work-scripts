@@ -830,13 +830,13 @@ open_editor() {
   esac
 }
 
-# worktree_repl <repo-root> <worktree-path> [scripts-dir] [--no-open]
+# worktree_repl <repo-root> <worktree-path> [scripts-dir] [--open]
 # Interactive loop offering shell, open, cleanup, and exit commands.
 worktree_repl() {
   local repo_root="$1" wt_path="$2" scripts_dir="${3:-}"
-  local no_open=false
-  if [ "${4:-}" = "--no-open" ]; then
-    no_open=true
+  local open_editor=false
+  if [ "${4:-}" = "--open" ]; then
+    open_editor=true
   fi
   local wt_name wt_port_key branch tracking pr_num pr_url
   wt_name="$(basename "$wt_path")"
@@ -879,7 +879,7 @@ worktree_repl() {
 
   # --- Open editor (detects editor and sets up auto-REPL task internally) ---
   echo ""
-  if ! $no_open; then
+  if $open_editor; then
     open_editor "$wt_path" "$repo_root"
   fi
 
@@ -1099,7 +1099,7 @@ parse_json() {
   python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',''))" 2>/dev/null
 }
 
-# worktree_post_setup <scripts-dir> <repo-root> <worktree-path> [--no-open]
+# worktree_post_setup <scripts-dir> <repo-root> <worktree-path> [--open]
 # Handles starting the REPL after initial worktree creation.
 worktree_post_setup() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"

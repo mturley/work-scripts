@@ -24,7 +24,7 @@ source "$SCRIPTS_DIR/helpers.sh"
 PERSISTENT="${WORKTREE_PERSISTENT:-true}"
 CLEANUP=false
 CLEANUP_PREFS=false
-NO_OPEN=false
+OPEN_EDITOR=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
@@ -46,7 +46,7 @@ Arguments:
 
 Options:
   --ports             Show port ranges currently allocated to worktrees.
-  --no-open           Skip opening an editor when entering the REPL.
+  --open              Open an editor when entering the REPL.
   --no-persist        Skip tmux wrapping (mprocs only, no persistence).
                       By default, mprocs runs inside a tmux session for persistence.
   --sessions          List active persistent (tmux) worktree sessions.
@@ -73,13 +73,15 @@ Examples:
   worktree https://github.com/org/repo/pull/1234    # PR worktree from URL
   worktree my-feature-branch                        # branch worktree
   worktree 1234 5678 my-branch                      # multiple in mprocs
+  worktree --open 1234                               # auto-open editor on REPL entry
   worktree --no-persist 1234                        # skip tmux, mprocs only
+  worktree --ports                                  # show allocated port ranges
   worktree --sessions                               # list active persistent sessions
   worktree --kill-session wt-all                     # kill the persistent session
 HELPEOF
       exit 0
       ;;
-    --no-open) NO_OPEN=true; shift ;;
+    --open) OPEN_EDITOR=true; shift ;;
     --ports)
       if [ ! -f "$PORT_RANGE_FILE" ] || [ ! -s "$PORT_RANGE_FILE" ]; then
         echo "No port ranges allocated."
@@ -181,7 +183,7 @@ fi
 
 # Build flags array for re-exec calls
 REEXEC_FLAGS=()
-$NO_OPEN && REEXEC_FLAGS+=(--no-open)
+$OPEN_EDITOR && REEXEC_FLAGS+=(--open)
 $PERSISTENT || REEXEC_FLAGS+=(--no-persist)
 
 CYAN="$(tput setaf 6 2>/dev/null || true)"
@@ -610,7 +612,7 @@ if [ $# -eq 0 ]; then
     # .git is a file → this is a worktree
     REPO_ROOT="$(git -C "$CURRENT_DIR" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
     if [ -n "$REPO_ROOT" ]; then
-      worktree_repl "$REPO_ROOT" "$CURRENT_DIR" "$SCRIPTS_DIR" $($NO_OPEN && echo "--no-open")
+      worktree_repl "$REPO_ROOT" "$CURRENT_DIR" "$SCRIPTS_DIR" $($OPEN_EDITOR && echo "--open")
       exit 0
     fi
   elif [[ "$CURRENT_DIR" == "$WORKTREES_BASE"/* ]]; then
@@ -623,7 +625,7 @@ if [ $# -eq 0 ]; then
       WT_PATH="${WORKTREES_BASE}/${WT_PROJECT}/${WT_NAME}"
       if [ -e "$WT_PATH/.git" ]; then
         REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-        worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR" $($NO_OPEN && echo "--no-open")
+        worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR" $($OPEN_EDITOR && echo "--open")
         exit 0
       fi
     fi
@@ -794,7 +796,7 @@ if ! is_pr_arg "$ARG" && resolve_worktree "$ARG"; then
     else
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
     fi
-    worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR" $($NO_OPEN && echo "--no-open")
+    worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR" $($OPEN_EDITOR && echo "--open")
     exit 0
   fi
 fi
@@ -1028,7 +1030,7 @@ if is_pr_arg "$ARG"; then
     if [ "$SELECTED_WT" = "$REPO_ROOT" ]; then
       exit 0
     fi
-    worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($NO_OPEN && echo "--no-open")
+    worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
 
   else
     # Create new worktree — check if a local branch matching the PR's head ref exists
@@ -1051,7 +1053,7 @@ if is_pr_arg "$ARG"; then
       echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
 
       setup_pr_tracking "$WT_PATH" "$PR_HEAD_REF" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
-      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($NO_OPEN && echo "--no-open")
+      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
 
     else
       if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
@@ -1107,7 +1109,7 @@ if is_pr_arg "$ARG"; then
       PR_LOCAL_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
       setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
 
-      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($NO_OPEN && echo "--no-open")
+      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
     fi
   fi
 
