@@ -854,17 +854,18 @@ worktree_repl() {
     fi
   fi
 
-  # If no PR was found from the worktree name, check if the branch has an open PR.
+  # If no PR was found from the worktree name, check if the branch has a PR.
+  # Uses gh pr list (not gh pr view) so --state all can find closed/merged PRs.
   # Try the default repo first, then the upstream remote (for fork workflows where
   # the PR lives in the upstream repo, not the fork).
   if [ -z "$pr_url" ] && [ "$branch" != "unknown" ]; then
     local detected_pr_url
-    detected_pr_url="$(gh pr view "$branch" --json url --jq '.url' 2>/dev/null || true)"
+    detected_pr_url="$(gh pr list --head "$branch" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
     if [ -z "$detected_pr_url" ]; then
       local upstream_repo
       upstream_repo="$(git -C "$wt_path" remote get-url upstream 2>/dev/null | sed 's/\.git$//' | sed 's|.*github\.com[:/]||' || true)"
       if [ -n "$upstream_repo" ]; then
-        detected_pr_url="$(gh pr view "$branch" --repo "$upstream_repo" --json url --jq '.url' 2>/dev/null || true)"
+        detected_pr_url="$(gh pr list --head "$branch" --repo "$upstream_repo" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
       fi
     fi
     if [ -n "$detected_pr_url" ]; then
