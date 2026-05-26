@@ -885,17 +885,8 @@ if is_pr_arg "$ARG"; then
   REPO_NAME="$(basename "$REPO_ROOT")"
   WORKTREE_ABS="${WORKTREES_BASE}/${REPO_NAME}/${WORKTREE_NAME}"
 
-  # Display PR info with author and dates
+  # PR metadata is displayed by the REPL's info output, so just show a brief line here.
   echo "PR #${PR_NUMBER}: ${PR_TITLE}"
-  if [ -n "$PR_AUTHOR" ]; then
-    echo "  Author: ${PR_AUTHOR}"
-  fi
-  if [ -n "$PR_CREATED" ]; then
-    echo "  Created: $(relative_time "$PR_CREATED")"
-  fi
-  if [ -n "$PR_UPDATED" ]; then
-    echo "  Updated: $(relative_time "$PR_UPDATED")"
-  fi
 
   mkdir -p "${WORKTREES_BASE}/${REPO_NAME}"
 
