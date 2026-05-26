@@ -874,14 +874,15 @@ worktree_repl() {
     fi
   fi
 
-  # Fetch PR details (title, author, created date, last updated) if we have a PR
-  local pr_title pr_author pr_created pr_updated
+  # Fetch PR details (title, author, state, created date, last updated) if we have a PR
+  local pr_title pr_author pr_state pr_created pr_updated
   if [ -n "$pr_url" ]; then
     local pr_details
-    pr_details="$(gh pr view "$pr_url" --json title,author,createdAt,updatedAt 2>/dev/null || true)"
+    pr_details="$(gh pr view "$pr_url" --json title,author,state,createdAt,updatedAt 2>/dev/null || true)"
     if [ -n "$pr_details" ]; then
       pr_title="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('title',''))" 2>/dev/null || true)"
       pr_author="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))" 2>/dev/null || true)"
+      pr_state="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true)"
       pr_created="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))" 2>/dev/null || true)"
       pr_updated="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))" 2>/dev/null || true)"
     fi
@@ -893,10 +894,11 @@ worktree_repl() {
     open_editor "$wt_path" "$repo_root"
   fi
 
-  local blue cyan green red reset
+  local blue cyan green magenta red reset
   blue="$(tput setaf 12 2>/dev/null || true)"
   cyan="$(tput setaf 6 2>/dev/null || true)"
   green="$(tput setaf 2 2>/dev/null || true)"
+  magenta="$(tput setaf 5 2>/dev/null || true)"
   red="$(tput setaf 1 2>/dev/null || true)"
   reset="$(tput sgr0 2>/dev/null || true)"
 
@@ -908,7 +910,13 @@ worktree_repl() {
     echo "${cyan}Branch:${reset} ${branch}"
     if [ -n "${pr_num:-}" ]; then
       echo ""
-      echo "${cyan}PR #${pr_num}${reset}${pr_title:+: ${pr_title}}"
+      local state_display=""
+      case "${pr_state:-}" in
+        OPEN)   state_display=" ${green}(open)${reset}" ;;
+        MERGED) state_display=" ${magenta}(merged)${reset}" ;;
+        CLOSED) state_display=" ${red}(closed)${reset}" ;;
+      esac
+      echo "${cyan}PR #${pr_num}${reset}${state_display}${pr_title:+: ${pr_title}}"
       if [ -n "${pr_author:-}" ]; then
         echo "  ${cyan}Author:${reset} ${pr_author}"
       fi
