@@ -48,7 +48,7 @@ By default, every worktree session launches in [mprocs](https://github.com/pvolo
 
 ### Opening Editors
 
-After creating a worktree, the script **detects your editor** (VS Code or Cursor) or uses a cached preference (in `/tmp`), and opens an editor window (or focuses an existing one).
+By default, the REPL does not automatically open an editor. Use the `--open` flag to detect your editor (VS Code or Cursor) or use a cached preference (in `/tmp`) and open a window (or focus an existing one). The REPL's `[o]pen` command is always available to open an editor on demand.
 
 ### VS Code Auto-REPL
 
@@ -102,7 +102,9 @@ By default, mprocs sessions run inside a tmux session that survives terminal dis
 ```bash
 worktree 1234                      # persistent session (default)
 worktree 1234 5678                 # persistent multi-worktree session
+worktree --open 1234               # auto-open editor on REPL entry
 worktree --no-persist 1234         # skip tmux, mprocs only
+worktree --ports                   # show allocated port ranges
 worktree --sessions                # list active persistent sessions
 worktree --kill-session wt-all     # kill the persistent session
 ```
@@ -121,6 +123,10 @@ export WORKTREE_PERSISTENT=false
 - When adding to an existing session, new worktrees are added as panes (duplicates are skipped)
 - Reattach by running `worktree` with any arguments, or `tmux attach -t wt-all`
 - Running `worktree` with no arguments in persistent mode auto-selects all discovered worktrees
+
+### Port Ranges
+
+Each worktree is automatically assigned a unique port range (starting at 4020, 10 ports per worktree) so dev servers in different worktrees don't collide. The `WORKTREE_PORTS` environment variable is set in the worktree's shell with the assigned range. Use `worktree --ports` to view allocated ranges and free stale entries for removed worktrees.
 
 ### Renaming Panes
 
