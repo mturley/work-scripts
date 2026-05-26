@@ -71,5 +71,5 @@ Links that already have descriptive (non-URL, non-bare-key) link text are left u
 ## Setup
 
 1. Enable the Obsidian CLI: Obsidian -> Settings -> General -> Advanced
-2. Set `OBSIDIAN_VAULT` in your `.env` file (see [worklog setup](worklog.md#setup))
-3. For Jira enrichment, also set `JIRA_HOST`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` in `.env` (without credentials, Jira links are formatted with just the issue key)
+2. Set `OBSIDIAN_VAULT` in your `.env` file (see [worklog setup](../worklog/#setup))
+3. For Jira enrichment, set `JIRA_SECRETS_ENV` in `.env` to point to a file that exports `JIRA_HOST`, `JIRA_EMAIL`, and `JIRA_TOKEN` (see `jira.env.example`). Without credentials, Jira links are formatted with just the issue key.

@@ -16,9 +16,9 @@
 
 set -euo pipefail
 
-SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 # shellcheck source=helpers.sh
-source "$SCRIPTS_DIR/helpers.sh"
+source "$LIB_DIR/helpers.sh"
 
 MODE="${1:?Usage: worktree-ensure.sh <branch|pr> ...}"
 WORKTREE_PATH="${2:?Missing worktree path}"

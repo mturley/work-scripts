@@ -16,9 +16,9 @@ fi
 
 set -euo pipefail
 
-SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
+LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
 # shellcheck source=../../lib/helpers.sh
-source "$SCRIPTS_DIR/helpers.sh"
+source "$LIB_DIR/helpers.sh"
 
 # --- Parse flags ---
 PERSISTENT="${WORKTREE_PERSISTENT:-true}"
@@ -537,7 +537,7 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
   rm -f "$MPROCS_CFG"
   trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
   SHELL_LABEL="[$(basename "$SHELL")]"
-  MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
+  MOTD="$LIB_DIR/mprocs-motd.sh"
   if $PERSISTENT; then
     echo "hide_keymap_window: ${WORKTREE_HIDE_KEYMAP:-true}" > "$MPROCS_CFG"
     echo "procs:" >> "$MPROCS_CFG"
@@ -585,7 +585,7 @@ if [ $# -eq 1 ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
     trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
     label="$(pane_label "$1")"
     SHELL_LABEL="[$(basename "$SHELL")]"
-    MOTD="$SCRIPTS_DIR/mprocs-motd.sh"
+    MOTD="$LIB_DIR/mprocs-motd.sh"
     echo "procs:" > "$MPROCS_CFG"
     echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
     echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
@@ -612,7 +612,7 @@ if [ $# -eq 0 ]; then
     # .git is a file → this is a worktree
     REPO_ROOT="$(git -C "$CURRENT_DIR" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
     if [ -n "$REPO_ROOT" ]; then
-      worktree_repl "$REPO_ROOT" "$CURRENT_DIR" "$SCRIPTS_DIR" $($OPEN_EDITOR && echo "--open")
+      worktree_repl "$REPO_ROOT" "$CURRENT_DIR" "$LIB_DIR" $($OPEN_EDITOR && echo "--open")
       exit 0
     fi
   elif [[ "$CURRENT_DIR" == "$WORKTREES_BASE"/* ]]; then
@@ -625,7 +625,7 @@ if [ $# -eq 0 ]; then
       WT_PATH="${WORKTREES_BASE}/${WT_PROJECT}/${WT_NAME}"
       if [ -e "$WT_PATH/.git" ]; then
         REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
-        worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR" $($OPEN_EDITOR && echo "--open")
+        worktree_repl "$REPO_ROOT" "$WT_PATH" "$LIB_DIR" $($OPEN_EDITOR && echo "--open")
         exit 0
       fi
     fi
@@ -796,7 +796,7 @@ if ! is_pr_arg "$ARG" && resolve_worktree "$ARG"; then
     else
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
     fi
-    worktree_repl "$REPO_ROOT" "$WT_PATH" "$SCRIPTS_DIR" $($OPEN_EDITOR && echo "--open")
+    worktree_repl "$REPO_ROOT" "$WT_PATH" "$LIB_DIR" $($OPEN_EDITOR && echo "--open")
     exit 0
   fi
 fi
@@ -1030,7 +1030,7 @@ if is_pr_arg "$ARG"; then
     if [ "$SELECTED_WT" = "$REPO_ROOT" ]; then
       exit 0
     fi
-    worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
+    worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
 
   else
     # Create new worktree — check if a local branch matching the PR's head ref exists
@@ -1053,10 +1053,10 @@ if is_pr_arg "$ARG"; then
       echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
 
       setup_pr_tracking "$WT_PATH" "$PR_HEAD_REF" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
-      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
+      worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
 
     else
-      if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
+      if ! RESULT="$("$LIB_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
         MSG="$(echo "$RESULT" | parse_json message)"
         echo "ERROR: Failed to create worktree." >&2
         [ -n "$MSG" ] && echo "  $MSG" >&2
@@ -1080,7 +1080,7 @@ if is_pr_arg "$ARG"; then
           echo "A local branch '${STALE_BRANCH}' already exists (likely leftover from a previous worktree)."
           if prompt_yn "Delete the old branch and re-fetch the PR?"; then
             git branch -D "$STALE_BRANCH"
-            if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
+            if ! RESULT="$("$LIB_DIR/worktree-ensure.sh" pr "$WORKTREE_ABS" "$PR_NUMBER" "$SLUG" "$BASE_REPO" 2>&1)"; then
               MSG="$(echo "$RESULT" | parse_json message)"
               echo "ERROR: Failed to create worktree after deleting branch." >&2
               [ -n "$MSG" ] && echo "  $MSG" >&2
@@ -1109,7 +1109,7 @@ if is_pr_arg "$ARG"; then
       PR_LOCAL_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
       setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
 
-      worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
+      worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
     fi
   fi
 
@@ -1135,7 +1135,7 @@ else
 
   mkdir -p "${WORKTREES_BASE}/${REPO_NAME}"
 
-  if ! RESULT="$("$SCRIPTS_DIR/worktree-ensure.sh" branch "$WORKTREE_ABS" "$BRANCH_NAME" 2>&1)"; then
+  if ! RESULT="$("$LIB_DIR/worktree-ensure.sh" branch "$WORKTREE_ABS" "$BRANCH_NAME" 2>&1)"; then
     MSG="$(echo "$RESULT" | parse_json message)"
     echo "ERROR: Failed to create worktree." >&2
     [ -n "$MSG" ] && echo "  $MSG" >&2
@@ -1170,7 +1170,7 @@ else
       echo "${CYAN}Reusing branch:${RESET} ${BRANCH_NAME}"
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
       if prompt_yn "Recreate worktree from scratch?"; then
-        recreate_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
+        recreate_worktree "$LIB_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
       fi
       ;;
     exists-elsewhere)
@@ -1178,7 +1178,7 @@ else
       echo "Already checked out in a worktree at:"
       echo "  $(short_path "$WT_PATH")"
       if prompt_yn "Move to new location ($(short_path "$WORKTREE_ABS"))?"; then
-        recreate_worktree "$SCRIPTS_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
+        recreate_worktree "$LIB_DIR" "$WORKTREE_ABS" "$BRANCH_NAME" "$WT_PATH" || exit 1
       fi
       ;;
     error)
@@ -1193,5 +1193,5 @@ else
       ;;
   esac
 
-  worktree_post_setup "$SCRIPTS_DIR" "$REPO_ROOT" "$WT_PATH"
+  worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH"
 fi

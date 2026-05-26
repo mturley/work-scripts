@@ -103,6 +103,12 @@ Each entry is a block of plain markdown appended to the daily note, separated by
 2. Create a `.env` file in the work-scripts directory:
    ```bash
    cp .env.example .env
-   # Fill in OBSIDIAN_VAULT, JIRA_HOST, JIRA_EMAIL, and JIRA_API_TOKEN
-   # Generate a Jira token at: https://id.atlassian.com/manage-profile/security/api-tokens
+   # Fill in OBSIDIAN_VAULT
    ```
+3. Create a Jira secrets file and point to it from `.env`:
+   ```bash
+   cp jira.env.example ~/secrets/jira.env
+   # Fill in JIRA_HOST, JIRA_EMAIL, and JIRA_TOKEN
+   # Generate a token at: https://id.atlassian.com/manage-profile/security/api-tokens
+   ```
+   Then set `JIRA_SECRETS_ENV=~/secrets/jira.env` in your `.env` (already set in `.env.example`).

@@ -7,6 +7,7 @@
 
 set -euo pipefail
 
+LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
 WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 
 # ---------------------------------------------------------------------------
@@ -38,7 +39,8 @@ Transformations:
     [KEY-123 (Bug): Title](url)                ->  no change
     [Slack thread](url)                        ->  no change
 
-Jira enrichment requires JIRA_HOST, JIRA_EMAIL, and JIRA_API_TOKEN in .env.
+Jira enrichment requires JIRA_SECRETS_ENV in .env, pointing to a file that
+exports JIRA_HOST, JIRA_EMAIL, and JIRA_TOKEN (see jira.env.example).
 Without credentials, Jira links are formatted with just the issue key.
 
 Options:
@@ -65,19 +67,11 @@ if ! command -v obsidian >/dev/null 2>&1; then
   exit 1
 fi
 
-# Load .env
-env_file="$WORK_SCRIPTS_DIR/.env"
-if [ ! -f "$env_file" ]; then
-  echo "ERROR: .env file not found at $env_file" >&2
-  exit 1
-fi
-set -a
-# shellcheck disable=SC1090
-source "$env_file"
-set +a
+# shellcheck source=../../lib/load-env.sh
+source "$LIB_DIR/load-env.sh"
 
-if [ -z "$OBSIDIAN_VAULT" ]; then
-  echo "ERROR: OBSIDIAN_VAULT not set in .env" >&2
+if [ -z "${OBSIDIAN_VAULT:-}" ]; then
+  echo "ERROR: OBSIDIAN_VAULT is required. Set it in .env and retry." >&2
   exit 1
 fi
 
@@ -401,4 +395,4 @@ else:
     with open(filepath, 'w') as f:
         f.write(content)
     print('Daily note updated.')
-" "$daily_note" "$DRY_RUN" "$JIRA_HOST" "$JIRA_EMAIL" "$JIRA_API_TOKEN"
+" "$daily_note" "$DRY_RUN" "$JIRA_HOST" "$JIRA_EMAIL" "$JIRA_TOKEN"

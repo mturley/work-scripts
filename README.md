@@ -99,7 +99,7 @@ worklog combine                          # consolidate duplicate entries
 worklog undo                             # remove the last activity log entry
 ```
 
-Requires the [Obsidian CLI](https://obsidian.md/) and a `.env` file for Jira integration (see [docs](src/worklog/#setup)).
+Requires the [Obsidian CLI](https://obsidian.md/) and a `.env` file. Jira integration requires an external secrets file (see [setup](src/worklog/#setup)).
 
 ### [`prep`](src/prep/) — Morning Prep
 

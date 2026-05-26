@@ -4,11 +4,11 @@
 
 set -euo pipefail
 
-SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
+LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
 WORK_SCRIPTS_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 
 # shellcheck source=../../lib/helpers.sh
-source "$SCRIPTS_DIR/helpers.sh"
+source "$LIB_DIR/helpers.sh"
 
 # ---------------------------------------------------------------------------
 # Help / usage
@@ -140,33 +140,18 @@ check_already_seen() {
 # .env loading
 # ---------------------------------------------------------------------------
 
-JIRA_LOADED=false
-
-load_env() {
-  local env_file="$WORK_SCRIPTS_DIR/.env"
-  if [ ! -f "$env_file" ]; then
-    return 1
-  fi
-  set -a
-  # shellcheck disable=SC1090
-  source "$env_file"
-  set +a
-  if [ -n "$JIRA_HOST" ] && [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ]; then
-    JIRA_LOADED=true
-    return 0
-  fi
-  return 1
-}
+# shellcheck source=../../lib/load-env.sh
+source "$LIB_DIR/load-env.sh"
 
 require_jira_env() {
   if [ "$JIRA_LOADED" = true ]; then
     return 0
   fi
   echo "ERROR: Jira credentials not configured." >&2
-  echo "Create a .env file in $(short_path "$WORK_SCRIPTS_DIR"):" >&2
-  echo "  cp .env.example .env" >&2
-  echo "  # Then fill in JIRA_HOST, JIRA_EMAIL, and JIRA_API_TOKEN" >&2
-  echo "  # Generate a token at: https://id.atlassian.com/manage-profile/security/api-tokens" >&2
+  echo "Set JIRA_SECRETS_ENV in $(short_path "$WORK_SCRIPTS_DIR")/.env" >&2
+  echo "to point to a file that exports JIRA_HOST, JIRA_EMAIL, and JIRA_TOKEN." >&2
+  echo "  See jira.env.example for the expected format." >&2
+  echo "  Generate a token at: https://id.atlassian.com/manage-profile/security/api-tokens" >&2
   exit 1
 }
 
@@ -286,7 +271,7 @@ except (KeyError, IndexError, TypeError):
 
 jira_api() {
   local endpoint="$1"
-  curl -s -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+  curl -s -u "${JIRA_EMAIL}:${JIRA_TOKEN}" \
     -H "Content-Type: application/json" \
     "https://${JIRA_HOST}/rest/api/2/${endpoint}" 2>/dev/null
 }
@@ -1222,9 +1207,6 @@ case "${1:-}" in
 esac
 
 require_obsidian
-
-# Load .env early (non-fatal — needed for test mode and Jira commands)
-load_env || true
 
 # Open daily note shorthand
 if [ "${1:-}" = "open" ]; then
