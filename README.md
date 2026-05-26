@@ -122,7 +122,7 @@ eod "Apr 3"        # process a specific date
 
 ### [`enrich-daily-links`](src/enrich-daily-links/) — Daily Note Link Enricher
 
-Enrich GitHub PR, Jira, and Slack URLs in today's daily note with descriptive markdown links. Jira links include the issue type and title fetched from the Jira API. Slack links are labeled "Slack thread". Handles bare URLs, markdown links with URL as text, HTML links, and existing Jira links with just the key as text.
+Enrich GitHub PR, Jira, and Slack URLs in today's daily note with descriptive markdown links. GitHub PR links include the PR title fetched via the `gh` CLI. Jira links include the issue type and title fetched from the Jira API. Slack links are labeled "Slack thread". Handles bare URLs, markdown links with URL as text, HTML links, and existing links with just `repo#number` or a Jira key as text.
 
 ```bash
 enrich-daily-links            # enrich links in today's note

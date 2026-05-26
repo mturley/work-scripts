@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # enrich-daily-links - Enrich links in today's Obsidian daily note.
 # Replaces bare GitHub PR, Jira, and Slack URLs (and links using the URL as
-# link text) with short formatted markdown links. Jira links are enriched with
-# issue type and title via the Jira API. Slack links are labeled "Slack thread".
+# link text) with short formatted markdown links. GitHub PR links are enriched
+# with the PR title via `gh api`. Jira links are enriched with issue type and
+# title via the Jira API. Slack links are labeled "Slack thread".
 # Usage: enrich-daily-links [--dry-run]
 
 set -euo pipefail
@@ -23,7 +24,7 @@ short markdown links.
 
 Transformations:
   Bare URLs:
-    https://github.com/org/repo/pull/123      ->  [repo#123](url)
+    https://github.com/org/repo/pull/123      ->  [repo#123: PR title by author](url)
     https://your-org.atlassian.net/browse/KEY  ->  [KEY (Type): Title](url)
     https://team.slack.com/archives/...        ->  [Slack thread](url)
 
@@ -31,13 +32,17 @@ Transformations:
     [https://...](https://...)                 ->  [short](url)
     <a href="url">url</a>                     ->  [short](url)
 
-  Jira links with just the key as link text:
+  Links with just a key/short ref as link text:
     [KEY-123](url)                             ->  [KEY-123 (Type): Title](url)
+    [repo#123](url)                            ->  [repo#123: PR title by author](url)
 
   Already-formatted links are left unchanged:
-    [repo#123](url)                            ->  no change
+    [repo#123: PR title by author](url)        ->  no change
     [KEY-123 (Bug): Title](url)                ->  no change
     [Slack thread](url)                        ->  no change
+
+GitHub PR enrichment requires the gh CLI to be installed and authenticated.
+Without it, PR links are formatted with just repo#number.
 
 Jira enrichment requires JIRA_SECRETS_ENV in .env, pointing to a file that
 exports JIRA_HOST, JIRA_EMAIL, and JIRA_TOKEN (see jira.env.example).
@@ -140,6 +145,33 @@ def lookup_jira(key):
         jira_cache[key] = None
         return None
 
+# --- GitHub API lookup ---
+
+gh_pr_cache = {}  # (owner, repo, number) -> (title, author) or None
+
+def lookup_github_pr(owner, repo, number):
+    cache_key = (owner, repo, number)
+    if cache_key in gh_pr_cache:
+        return gh_pr_cache[cache_key]
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['gh', 'api', f'repos/{owner}/{repo}/pulls/{number}',
+             '--jq', '[.title, .user.login] | @tsv'],
+            capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip())
+        parts = result.stdout.strip().split('\t')
+        title = parts[0] if parts else ''
+        author = parts[1] if len(parts) > 1 else ''
+        info = (title, author) if title else None
+        gh_pr_cache[cache_key] = info
+        return info
+    except Exception as e:
+        print(f'  (warning: could not fetch {repo}#{number}: {e})', file=sys.stderr)
+        gh_pr_cache[cache_key] = None
+        return None
+
 # --- URL shortening helpers ---
 
 TITLE_MAX_LEN = 60
@@ -220,12 +252,28 @@ def format_jira_label(key, issue_type, summary):
         return f'{key} ({issue_type})'
     return key
 
-def shorten_github_pr(url):
-    \"\"\"Extract repo#number from a GitHub PR URL.\"\"\"
-    m = re.match(r'https?://github\.com/[^/]+/([^/]+)/pull/(\d+)', url)
-    if m:
-        return m.group(1) + '#' + m.group(2)
-    return None
+def format_github_pr_label(repo, number, title, author):
+    \"\"\"Build enriched link text for a GitHub PR.\"\"\"
+    short = repo + '#' + number
+    label = short
+    if title:
+        label += ': ' + escape_md_link_text(truncate(title))
+    if author:
+        label += ' by ' + author
+    return label
+
+def shorten_github_pr(url, skip_enrich=False):
+    \"\"\"Extract repo#number from a GitHub PR URL, with optional title and author.\"\"\"
+    m = re.match(r'https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)', url)
+    if not m:
+        return None
+    owner, repo, number = m.group(1), m.group(2), m.group(3)
+    if skip_enrich:
+        return repo + '#' + number
+    info = lookup_github_pr(owner, repo, number)
+    if info:
+        return format_github_pr_label(repo, number, *info)
+    return repo + '#' + number
 
 def shorten_jira(url, skip_enrich=False):
     \"\"\"Extract issue key from a Jira URL and look up metadata.\"\"\"
@@ -248,7 +296,7 @@ def shorten_slack(url):
 
 def shorten_url(url, skip_enrich=False):
     \"\"\"Return a short label for a URL, or None if not a recognized type.\"\"\"
-    return shorten_github_pr(url) or shorten_jira(url, skip_enrich=skip_enrich) or shorten_slack(url)
+    return shorten_github_pr(url, skip_enrich=skip_enrich) or shorten_jira(url, skip_enrich=skip_enrich) or shorten_slack(url)
 
 def is_bare_url(text):
     \"\"\"Check if text is just a URL (possibly with trailing whitespace/punctuation stripped).\"\"\"
@@ -257,8 +305,8 @@ def is_bare_url(text):
 
 changes = []
 
-# --- Pass 1: Markdown links with URL as link text or bare Jira key ---
-# Match [text](url) where the link text is a URL or just a Jira key
+# --- Pass 1: Markdown links with URL as link text, bare Jira key, or bare repo#number ---
+# Match [text](url) where the link text is a URL, a Jira key, or a repo#number
 # We iterate manually instead of using re.sub so we can track positions
 # accurately even as we modify the content.
 md_link_re = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
@@ -287,6 +335,20 @@ for m in list(md_link_re.finditer(content)):
                     if short != jira_key:
                         changes.append(('enrich', url, short))
                         replacement = '[' + short + '](' + url + ')'
+    elif re.match(r'^[A-Za-z0-9._-]+#\d+$', text.strip()):
+        # Link text is just repo#number — enrich with PR title
+        if not skip:
+            pr_m = re.match(r'https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)', url)
+            if pr_m:
+                owner, repo, number = pr_m.group(1), pr_m.group(2), pr_m.group(3)
+                expected_short = repo + '#' + number
+                if text.strip() == expected_short:
+                    info = lookup_github_pr(owner, repo, number)
+                    if info:
+                        short = format_github_pr_label(repo, number, *info)
+                        if short != expected_short:
+                            changes.append(('enrich', url, short))
+                            replacement = '[' + short + '](' + url + ')'
     if replacement:
         content = content[:start] + replacement + content[end:]
         offset += len(replacement) - (m.end() - m.start())
