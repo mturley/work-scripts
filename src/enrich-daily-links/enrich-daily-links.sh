@@ -66,24 +66,15 @@ if ! command -v obsidian >/dev/null 2>&1; then
 fi
 
 # Load .env
-OBSIDIAN_VAULT=""
-JIRA_HOST=""
-JIRA_EMAIL=""
-JIRA_API_TOKEN=""
 env_file="$WORK_SCRIPTS_DIR/.env"
-if [ -f "$env_file" ]; then
-  while IFS='=' read -r key value; do
-    case "$key" in \#*|"") continue ;; esac
-    key="$(echo "$key" | tr -d '[:space:]')"
-    value="$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    case "$key" in
-      OBSIDIAN_VAULT) OBSIDIAN_VAULT="$value" ;;
-      JIRA_HOST) JIRA_HOST="$value" ;;
-      JIRA_EMAIL) JIRA_EMAIL="$value" ;;
-      JIRA_API_TOKEN) JIRA_API_TOKEN="$value" ;;
-    esac
-  done < "$env_file"
+if [ ! -f "$env_file" ]; then
+  echo "ERROR: .env file not found at $env_file" >&2
+  exit 1
 fi
+set -a
+# shellcheck disable=SC1090
+source "$env_file"
+set +a
 
 if [ -z "$OBSIDIAN_VAULT" ]; then
   echo "ERROR: OBSIDIAN_VAULT not set in .env" >&2

@@ -140,10 +140,6 @@ check_already_seen() {
 # .env loading
 # ---------------------------------------------------------------------------
 
-OBSIDIAN_VAULT=""
-JIRA_HOST=""
-JIRA_EMAIL=""
-JIRA_API_TOKEN=""
 JIRA_LOADED=false
 
 load_env() {
@@ -151,21 +147,10 @@ load_env() {
   if [ ! -f "$env_file" ]; then
     return 1
   fi
-  while IFS='=' read -r key value; do
-    # Skip comments and blank lines
-    case "$key" in
-      \#*|"") continue ;;
-    esac
-    # Strip surrounding whitespace
-    key="$(echo "$key" | tr -d '[:space:]')"
-    value="$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    case "$key" in
-      OBSIDIAN_VAULT) OBSIDIAN_VAULT="$value" ;;
-      JIRA_HOST) JIRA_HOST="$value" ;;
-      JIRA_EMAIL) JIRA_EMAIL="$value" ;;
-      JIRA_API_TOKEN) JIRA_API_TOKEN="$value" ;;
-    esac
-  done < "$env_file"
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
   if [ -n "$JIRA_HOST" ] && [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ]; then
     JIRA_LOADED=true
     return 0
