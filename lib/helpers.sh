@@ -856,16 +856,39 @@ worktree_repl() {
 
   # If no PR was found from the worktree name, check if the branch has a PR.
   # Uses gh pr list (not gh pr view) so --state all can find closed/merged PRs.
-  # Try the default repo first, then the upstream remote (for fork workflows where
-  # the PR lives in the upstream repo, not the fork).
+  # Try the local branch name first, then the tracking branch name (for cases
+  # where the local branch has a different name than the PR's head ref), then
+  # the upstream remote repo.
   if [ -z "$pr_url" ] && [ "$branch" != "unknown" ]; then
     local detected_pr_url
-    detected_pr_url="$(gh pr list --head "$branch" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
+    # Derive the search branch: prefer the tracking branch name if it differs
+    # from the local branch (e.g. local "review/pr-7239-..." tracks
+    # "Philip-Carneiro/fix/..." — the PR head is "fix/...").
+    local search_branch="$branch"
+    local search_head_owner=""
+    if [ -n "$tracking" ]; then
+      local tracking_remote="${tracking%%/*}"
+      local tracking_branch="${tracking#*/}"
+      if [ "$tracking_branch" != "$branch" ]; then
+        search_branch="$tracking_branch"
+        # The remote name is often the fork owner's GitHub username
+        if [ "$tracking_remote" != "origin" ] && [ "$tracking_remote" != "upstream" ]; then
+          search_head_owner="$tracking_remote"
+        fi
+      fi
+    fi
+
+    local head_filter="$search_branch"
+    if [ -n "$search_head_owner" ]; then
+      head_filter="${search_head_owner}:${search_branch}"
+    fi
+
+    detected_pr_url="$(gh pr list --head "$head_filter" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
     if [ -z "$detected_pr_url" ]; then
       local upstream_repo
       upstream_repo="$(git -C "$wt_path" remote get-url upstream 2>/dev/null | sed 's/\.git$//' | sed 's|.*github\.com[:/]||' || true)"
       if [ -n "$upstream_repo" ]; then
-        detected_pr_url="$(gh pr list --head "$branch" --repo "$upstream_repo" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
+        detected_pr_url="$(gh pr list --head "$head_filter" --repo "$upstream_repo" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
       fi
     fi
     if [ -n "$detected_pr_url" ]; then
