@@ -166,6 +166,19 @@ while IFS= read -r f; do
     STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
   fi
 done < <(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null)
+# Clean up stale shell-mprocs config/count files from dead sessions
+# IDs are PID-TIMESTAMP; extract the PID portion for liveness check
+while IFS= read -r f; do
+  fname="$(basename "$f")"
+  id="${fname#worktree-shell-mprocs-}"
+  id="${id%.yaml}"
+  id="${id%-count}"
+  pid="${id%%-*}"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$f"
+    STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
+  fi
+done < <(find /tmp -maxdepth 1 -name "worktree-shell-mprocs-*" -not -name "*preference" 2>/dev/null)
 # Clean up stale tmux socket files for dead persistent sessions
 while IFS= read -r f; do
   fname="$(basename "$f" .sock)"
@@ -234,6 +247,10 @@ cleanup_preferences() {
   if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
     pref_files+=("$VSCODE_TASKS_PREF_FILE")
     pref_labels+=("VS Code auto-REPL preference ($(cat "$VSCODE_TASKS_PREF_FILE"))")
+  fi
+  if [ -f "$SHELL_MPROCS_PREF_FILE" ]; then
+    pref_files+=("$SHELL_MPROCS_PREF_FILE")
+    pref_labels+=("Shell mprocs preference ($(cat "$SHELL_MPROCS_PREF_FILE"))")
   fi
   while IFS= read -r f; do
     local_name="$(basename "$f")"
@@ -370,7 +387,7 @@ if $CLEANUP; then
   stale_mprocs=()
   while IFS= read -r f; do
     stale_mprocs+=("$f")
-  done < <(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null | sort)
+  done < <(find /tmp -maxdepth 1 \( -name "worktree-mprocs-*" -o -name "worktree-shell-mprocs-*" \) -not -name "*preference" 2>/dev/null | sort)
   if [ ${#stale_mprocs[@]} -gt 0 ]; then
     for f in "${stale_mprocs[@]}"; do rm -f "$f"; done
     echo ""

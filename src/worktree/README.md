@@ -83,7 +83,7 @@ worktree> help
   open     (o)  Open worktree in your editor (focuses existing window if already open)
   pr       (p)  Open the pull request page on GitHub (if applicable)
   clone    (c)  Clone gitignored files (dotfiles, dependencies) from the main repo
-  shell    (s)  Start a nested shell in the worktree directory; exit to return to REPL
+  shell    (s)  Start a shell in the worktree (mprocs with worktree REPL + shell pane)
   remove   (r)  Remove the worktree and its branch
   exit     (e)  Exit the REPL
   help     (h)  Show this help
@@ -93,7 +93,7 @@ Commands: [i]nfo, [l]og, [n]ame, [o]pen, [p]r, [c]lone files, [s]hell, [r]emove,
 worktree [my-branch...origin/my-branch]>
 ```
 
-I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it. If you want to run a dev environment in the worktree, you can use the `[s]hell` command and run it from within the nested shell.
+I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it. If you want to run a dev environment in the worktree, you can use the `[s]hell` command — it starts a nested mprocs session with a `[worktree]` pane (running the REPL) and a shell pane. Running `[s]hell` again from the nested worktree REPL adds another shell pane to the same session instead of nesting further.
 
 ### Persistent Sessions
 

@@ -613,6 +613,7 @@ recreate_worktree() {
 
 WORKTREE_EXCLUDE_MARKER="worktree-script-managed"
 VSCODE_TASKS_PREF_FILE="/tmp/worktree-vscode-tasks-preference"
+SHELL_MPROCS_PREF_FILE="/tmp/worktree-shell-mprocs-preference"
 
 # add_worktree_git_exclude <repo-root>
 # Adds .vscode/ to .git/info/exclude with markers if not already present.
@@ -1016,7 +1017,7 @@ worktree_repl() {
     if [ -n "$scripts_dir" ]; then
       echo "  ${blue}clone${reset}    (c)  Clone gitignored files (dotfiles, dependencies) from the main repo"
     fi
-    echo "  ${blue}shell${reset}    (s)  Start a nested shell in the worktree directory; exit to return to REPL"
+    echo "  ${blue}shell${reset}    (s)  Start a shell in the worktree (mprocs with worktree REPL + shell pane)"
     echo "  ${blue}remove${reset}   (r)  Remove the worktree and its branch"
     echo "  ${blue}exit${reset}     (e)  Exit the REPL"
   }
@@ -1071,15 +1072,106 @@ worktree_repl() {
         fi
         ;;
       shell|s)
-        echo "Starting shell in $(short_path "$wt_path")"
-        echo "Exit the shell to return to this REPL."
-        (cd "$wt_path" && WORKTREE_PORTS="$worktree_ports" WORKTREE_TITLE="$worktree_title" "$SHELL")
-        echo ""
-        echo "Back in worktree REPL."
-        if [ -n "$iterm_label" ]; then
-          printf '\033]1;%s\007' "$iterm_label"
+        local shell_name
+        shell_name="$(basename "$SHELL")"
+
+        # If inside a shell-command mprocs, add a new shell pane
+        if [ -n "${WORKTREE_SHELL_MPROCS_SOCK:-}" ]; then
+          local shell_count_file="/tmp/worktree-shell-mprocs-${WORKTREE_SHELL_MPROCS_PID:-unknown}-count"
+          if [ ! -f "$shell_count_file" ]; then
+            echo 2 > "$shell_count_file"
+          fi
+          local motd="$scripts_dir/mprocs-motd.sh"
+          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"$motd && cd '$wt_path' && WORKTREE_PORTS='$worktree_ports' WORKTREE_TITLE='$worktree_title' WORKTREE_SHELL_MPROCS_SOCK='$WORKTREE_SHELL_MPROCS_SOCK' WORKTREE_SHELL_MPROCS_PID='${WORKTREE_SHELL_MPROCS_PID:-}' exec $SHELL\", name: \"[$shell_name]\"}"
+          local current_count
+          current_count="$(cat "$shell_count_file")"
+          echo "$((current_count + 1))" > "$shell_count_file"
+          sleep 0.3
+          local new_idx
+          new_idx="$(cat "$shell_count_file")"
+          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: select-proc, index: $((new_idx - 1))}"
+          echo "Added [$shell_name] pane."
+        elif command -v mprocs &>/dev/null; then
+          # Check preference for nested mprocs
+          local use_mprocs=""
+          if [ -f "$SHELL_MPROCS_PREF_FILE" ]; then
+            use_mprocs="$(cat "$SHELL_MPROCS_PREF_FILE")"
+          else
+            echo ""
+            echo "The shell command can start a nested mprocs session with a [worktree] pane"
+            echo "(running this REPL) and a [$shell_name] pane. You can add more shell panes later."
+            if prompt_yn "Use nested mprocs for shell sessions?"; then
+              use_mprocs="yes"
+            else
+              use_mprocs="no"
+            fi
+            echo "$use_mprocs" > "$SHELL_MPROCS_PREF_FILE"
+          fi
+
+          if [ "$use_mprocs" = "yes" ]; then
+            local shell_mprocs_id="$$-$(date +%s)"
+            local shell_mprocs_cfg="/tmp/worktree-shell-mprocs-${shell_mprocs_id}.yaml"
+            local shell_mprocs_port
+            shell_mprocs_port=$((19200 + (RANDOM % 800)))
+            while lsof -i ":${shell_mprocs_port}" &>/dev/null; do
+              shell_mprocs_port=$((19200 + (RANDOM % 800)))
+            done
+            local shell_mprocs_sock="127.0.0.1:${shell_mprocs_port}"
+            local shell_mprocs_count="/tmp/worktree-shell-mprocs-${shell_mprocs_id}-count"
+            local self_cmd
+            self_cmd="$(command -v worktree)"
+            local motd="$scripts_dir/mprocs-motd.sh"
+            rm -f "$shell_mprocs_cfg" "$shell_mprocs_count"
+            echo 2 > "$shell_mprocs_count"
+            echo "hide_keymap_window: true" > "$shell_mprocs_cfg"
+            echo "proc_list_title: \"$worktree_title\"" >> "$shell_mprocs_cfg"
+            echo "procs:" >> "$shell_mprocs_cfg"
+            echo "  \"[worktree]\":" >> "$shell_mprocs_cfg"
+            echo "    shell: \"$self_cmd '$wt_path'\"" >> "$shell_mprocs_cfg"
+            echo "    env:" >> "$shell_mprocs_cfg"
+            echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$shell_mprocs_cfg"
+            echo "      MPROCS_SOCKET: \"$shell_mprocs_sock\"" >> "$shell_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$shell_mprocs_sock\"" >> "$shell_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\"" >> "$shell_mprocs_cfg"
+            echo "  \"[$shell_name]\":" >> "$shell_mprocs_cfg"
+            echo "    shell: \"$motd && exec $SHELL\"" >> "$shell_mprocs_cfg"
+            echo "    cwd: \"$wt_path\"" >> "$shell_mprocs_cfg"
+            echo "    env:" >> "$shell_mprocs_cfg"
+            echo "      WORKTREE_PORTS: \"$worktree_ports\"" >> "$shell_mprocs_cfg"
+            echo "      WORKTREE_TITLE: \"$worktree_title\"" >> "$shell_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$shell_mprocs_sock\"" >> "$shell_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\"" >> "$shell_mprocs_cfg"
+            echo "Starting mprocs shell session..."
+            mprocs --config "$shell_mprocs_cfg" --server "$shell_mprocs_sock" --on-init="{c: select-proc, index: 1}" || true
+            rm -f "$shell_mprocs_cfg" "$shell_mprocs_count"
+            echo ""
+            echo "Back in worktree REPL."
+            if [ -n "$iterm_label" ]; then
+              printf '\033]1;%s\007' "$iterm_label"
+            fi
+            _worktree_info
+          else
+            echo "Starting shell in $(short_path "$wt_path")"
+            echo "Exit the shell to return to this REPL."
+            (cd "$wt_path" && WORKTREE_PORTS="$worktree_ports" WORKTREE_TITLE="$worktree_title" "$SHELL")
+            echo ""
+            echo "Back in worktree REPL."
+            if [ -n "$iterm_label" ]; then
+              printf '\033]1;%s\007' "$iterm_label"
+            fi
+            _worktree_info
+          fi
+        else
+          echo "Starting shell in $(short_path "$wt_path")"
+          echo "Exit the shell to return to this REPL."
+          (cd "$wt_path" && WORKTREE_PORTS="$worktree_ports" WORKTREE_TITLE="$worktree_title" "$SHELL")
+          echo ""
+          echo "Back in worktree REPL."
+          if [ -n "$iterm_label" ]; then
+            printf '\033]1;%s\007' "$iterm_label"
+          fi
+          _worktree_info
         fi
-        _worktree_info
         ;;
       clone|c)
         if [ -n "$scripts_dir" ]; then
