@@ -871,10 +871,14 @@ worktree_repl() {
       local tracking_branch="${tracking#*/}"
       if [ "$tracking_branch" != "$branch" ]; then
         search_branch="$tracking_branch"
-        # The remote name is often the fork owner's GitHub username
-        if [ "$tracking_remote" != "origin" ] && [ "$tracking_remote" != "upstream" ]; then
-          search_head_owner="$tracking_remote"
-        fi
+      fi
+      # Derive the fork owner from the tracking remote's URL (works for both
+      # SSH and HTTPS URLs). This is more reliable than assuming the remote
+      # name matches the GitHub username.
+      local tracking_remote_url
+      tracking_remote_url="$(git -C "$wt_path" remote get-url "$tracking_remote" 2>/dev/null || true)"
+      if [ -n "$tracking_remote_url" ]; then
+        search_head_owner="$(echo "$tracking_remote_url" | sed 's/\.git$//' | sed 's|.*github\.com[:/]||' | cut -d/ -f1)"
       fi
     fi
 
