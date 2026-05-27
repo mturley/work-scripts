@@ -430,11 +430,13 @@ if [ $# -gt 0 ] && [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-
     label="$(pane_label "$arg")"
     mprocs --server "$MPROCS_SOCKET" --ctl "{c: add-proc, cmd: \"cd $(pwd) && WORKTREE_MPROCS_PANE=1 MPROCS_SOCKET=$MPROCS_SOCKET $SELF $arg\", name: \"$label\"}"
     # Increment the count
-    CURRENT_COUNT="$(cat "$MPROCS_COUNT_FILE")"
-    echo "$((CURRENT_COUNT + 1))" > "$MPROCS_COUNT_FILE"
+    if [ -f "$MPROCS_COUNT_FILE" ]; then
+      CURRENT_COUNT="$(cat "$MPROCS_COUNT_FILE")"
+      echo "$((CURRENT_COUNT + 1))" > "$MPROCS_COUNT_FILE"
+    fi
   done
   # If only one pane was added, switch to it
-  if [ $# -eq 1 ]; then
+  if [ $# -eq 1 ] && [ -f "$MPROCS_COUNT_FILE" ]; then
     sleep 0.3
     NEW_INDEX="$(cat "$MPROCS_COUNT_FILE")"
     mprocs --server "$MPROCS_SOCKET" --ctl "{c: select-proc, index: $((NEW_INDEX - 1))}"
@@ -496,8 +498,10 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
             continue
           fi
           mprocs --server "$EXISTING_SOCK" --ctl "{c: add-proc, cmd: \"cd $(pwd) && WORKTREE_MPROCS_PANE=1 MPROCS_SOCKET=$EXISTING_SOCK $SELF $arg\", name: \"$label\"}"
-          CURRENT_COUNT="$(cat "$MPROCS_COUNT")"
-          echo "$((CURRENT_COUNT + 1))" > "$MPROCS_COUNT"
+          if [ -f "$MPROCS_COUNT" ]; then
+            CURRENT_COUNT="$(cat "$MPROCS_COUNT")"
+            echo "$((CURRENT_COUNT + 1))" > "$MPROCS_COUNT"
+          fi
           # Append to config so future dedup checks see this pane
           echo "  \"$label\":" >> "$MPROCS_CFG"
           echo "    shell: \"$SELF $arg\"" >> "$MPROCS_CFG"
@@ -508,7 +512,7 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
           echo "Added to session: $label"
           added=$((added + 1))
         done
-        if [ $added -eq 1 ]; then
+        if [ $added -eq 1 ] && [ -f "$MPROCS_COUNT" ]; then
           # Switch to the newly added pane (brief delay for mprocs to register it)
           sleep 0.3
           NEW_INDEX="$(cat "$MPROCS_COUNT")"
