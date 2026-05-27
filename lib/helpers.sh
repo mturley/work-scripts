@@ -57,17 +57,44 @@ release_port_range() {
   fi
 }
 
-# --- Persistent session (tmux) helpers ---
+# --- Persistent session (screen) helpers ---
 
-# tmux_session_name <arg1> [arg2 ...]
-# Derives a stable, human-readable tmux session name from worktree arguments.
+# require_screen_5
+# Checks that GNU Screen >= 5.0 is installed and on PATH.
+# Prints an error and returns 1 if the version is too old or screen is missing.
+require_screen_5() {
+  if ! command -v screen &>/dev/null; then
+    echo "ERROR: --persistent requires GNU Screen >= 5.0." >&2
+    echo "  Install screen: brew install screen" >&2
+    return 1
+  fi
+  local version_output
+  version_output="$(screen --version 2>&1 || true)"
+  local major=""
+  major="$(echo "$version_output" | sed -n 's/.*Screen version \([0-9]*\)\..*/\1/p')"
+  if [ -z "$major" ]; then
+    major="$(echo "$version_output" | sed -n 's/.*version \([0-9]*\)\..*/\1/p')"
+  fi
+  if [ -z "$major" ] || [ "$major" -lt 5 ] 2>/dev/null; then
+    local found_ver
+    found_ver="$(echo "$version_output" | head -1)"
+    echo "ERROR: GNU Screen >= 5.0 required." >&2
+    echo "  Found: $found_ver" >&2
+    echo "  Install with: brew install screen" >&2
+    echo "  Ensure Homebrew's screen is on PATH before /usr/bin/screen." >&2
+    return 1
+  fi
+}
+
+# screen_session_name <arg1> [arg2 ...]
+# Derives a stable, human-readable screen session name from worktree arguments.
 # Single arg: wt-<sanitized-label>
 # Multiple args: wt-multi-<8-char-hash>
-tmux_session_name() {
+screen_session_name() {
   if [ $# -eq 1 ]; then
     local sanitized
     sanitized="$(echo "$1" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')"
-    # tmux session names have practical length limits
+    # screen session names have practical length limits
     sanitized="${sanitized:0:48}"
     echo "wt-${sanitized}"
   else
@@ -88,10 +115,10 @@ tmux_session_name() {
   fi
 }
 
-# tmux_mprocs_port <session-name>
-# Derives a deterministic mprocs server port from a tmux session name.
+# screen_mprocs_port <session-name>
+# Derives a deterministic mprocs server port from a screen session name.
 # Port range: 19000-19999.
-tmux_mprocs_port() {
+screen_mprocs_port() {
   local name="$1"
   local hash
   if command -v cksum &>/dev/null; then
@@ -102,42 +129,50 @@ tmux_mprocs_port() {
   echo $((19000 + (hash % 1000)))
 }
 
-# tmux_mprocs_socket <session-name>
+# screen_mprocs_socket <session-name>
 # Reads the mprocs socket address for a persistent session from its socket file.
 # Returns empty string if the file doesn't exist.
-tmux_mprocs_socket() {
+screen_mprocs_socket() {
   local session_name="$1"
-  local sock_file="/tmp/worktree-tmux-${session_name}.sock"
+  local sock_file="/tmp/worktree-screen-${session_name}.sock"
   if [ -f "$sock_file" ]; then
     cat "$sock_file"
   fi
 }
 
+# screen_has_session <session-name>
+# Returns 0 if a screen session with the given name exists.
+screen_has_session() {
+  screen -ls 2>/dev/null | grep -q "[0-9]*\.${1}[[:space:]]"
+}
+
+# screen_kill_session <session-name>
+# Kills a screen session by name.
+screen_kill_session() {
+  screen -S "$1" -X quit 2>/dev/null
+}
+
 # launch_mprocs_persistent <session_name> <mprocs_cfg> <mprocs_sock> <mprocs_count>
-# Launches mprocs inside a tmux session, or reattaches to an existing one.
+# Launches mprocs inside a screen session, or reattaches to an existing one.
 launch_mprocs_persistent() {
   local session_name="$1" mprocs_cfg="$2" mprocs_sock="$3" mprocs_count="$4"
 
-  if ! command -v tmux &>/dev/null; then
-    echo "ERROR: --persistent requires tmux." >&2
-    echo "  Install tmux: brew install tmux" >&2
-    return 1
-  fi
+  require_screen_5 || return 1
 
-  # Warn about nested tmux
-  if [ -n "${TMUX:-}" ]; then
-    echo "Already inside a tmux session."
-    echo "Attaching will create a nested tmux session (use Ctrl+b b d to detach inner session)."
+  # Warn about nested screen
+  if [ -n "${STY:-}" ]; then
+    echo "Already inside a screen session."
+    echo "Attaching will create a nested screen session."
     if ! prompt_yn "Attach anyway?"; then
       return 2
     fi
   fi
 
-  local sock_file="/tmp/worktree-tmux-${session_name}.sock"
+  local sock_file="/tmp/worktree-screen-${session_name}.sock"
 
-  if tmux has-session -t "$session_name" 2>/dev/null; then
+  if screen_has_session "$session_name"; then
     echo "Reattaching to persistent session: $session_name"
-    exec tmux attach-session -t "$session_name"
+    exec screen -r "$session_name"
   fi
 
   # New session — disable cleanup trap (mprocs will run beyond this script)
@@ -145,44 +180,52 @@ launch_mprocs_persistent() {
 
   echo "$mprocs_sock" > "$sock_file"
 
-  # Launch mprocs inside tmux via a wrapper script that traps EXIT to ensure
+  # Write a minimal screenrc for this session
+  local screenrc="/tmp/worktree-screenrc-${session_name}"
+  cat > "$screenrc" <<SCREENRC_EOF
+startup_message off
+mousetrack on
+hardstatus off
+caption splitonly
+truecolor on
+term xterm-256color
+SCREENRC_EOF
+
+  # Launch mprocs inside screen via a wrapper script that traps EXIT to ensure
   # cleanup happens even if mprocs is force-quit (signal death skips ;-chained commands)
   local wrapper="/tmp/worktree-launch-${session_name}.sh"
   cat > "$wrapper" <<WRAPPER_EOF
 #!/usr/bin/env bash
-cleanup() { rm -f '$mprocs_cfg' '$mprocs_count' '$sock_file' '$wrapper'; tmux kill-session -t '$session_name' 2>/dev/null; }
+cleanup() { rm -f '$mprocs_cfg' '$mprocs_count' '$sock_file' '$wrapper' '$screenrc'; screen -S '$session_name' -X quit 2>/dev/null; }
 trap cleanup EXIT
 mprocs --config '$mprocs_cfg' --server '$mprocs_sock'
 WRAPPER_EOF
   chmod +x "$wrapper"
-  tmux -f /dev/null new-session -d -s "$session_name" "$wrapper"
-  tmux set-option -t "$session_name" mouse on
-  tmux set-option -t "$session_name" status off
-  exec tmux attach-session -t "$session_name"
+  screen -c "$screenrc" -dmS "$session_name" "$wrapper"
+  exec screen -r "$session_name"
 }
 
 # list_persistent_sessions
-# Lists all active worktree tmux sessions with their attached/detached status.
+# Lists all active worktree screen sessions with their attached/detached status.
 list_persistent_sessions() {
-  if ! command -v tmux &>/dev/null; then
-    echo "tmux is not installed." >&2
+  if ! command -v screen &>/dev/null; then
+    echo "screen is not installed." >&2
     return 1
   fi
   local found=false
   while IFS= read -r line; do
+    # screen -ls lines look like: "	12345.wt-all	(Detached)" or "(Attached)"
     local session_name
-    session_name="$(echo "$line" | awk -F: '{print $1}')"
-    case "$session_name" in
-      wt-*)
-        local attached=""
-        if echo "$line" | grep -q "(attached)"; then
-          attached=" (attached)"
-        fi
-        echo "  ${session_name}${attached}"
-        found=true
-        ;;
-    esac
-  done < <(tmux list-sessions 2>/dev/null || true)
+    session_name="$(echo "$line" | sed -n 's/.*[0-9]*\.\(wt-[^[:space:]]*\).*/\1/p')"
+    if [ -n "$session_name" ]; then
+      local status_label=""
+      if echo "$line" | grep -qi "attached"; then
+        status_label=" (attached)"
+      fi
+      echo "  ${session_name}${status_label}"
+      found=true
+    fi
+  done < <(screen -ls 2>/dev/null || true)
   if ! $found; then
     echo "  (none)"
   fi
@@ -991,19 +1034,29 @@ worktree_repl() {
   }
 
   _worktree_commands() {
-    local name_cmd="" pr_cmd="" clone_cmd=""
+    local W=10 line1 line2 line3
+    line1="$(printf "%-${W}s %-${W}s " "[h]elp" "[i]nfo")"
     if [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
-      name_cmd=" [n]ame,"
+      line1+="$(printf "%-${W}s " "[n]ame")"
     fi
-    if [ -n "${pr_url:-}" ]; then
-      pr_cmd=" [p]r,"
-    fi
+    line1+="[q]uit"
+
+    line2="$(printf "%-${W}s " "[l]og")"
     if [ -n "$scripts_dir" ]; then
-      clone_cmd=" [f]iles,"
+      line2+="$(printf "%-${W}s " "[f]iles")"
     fi
-    echo "${blue}      REPL: [h]elp, [i]nfo,${name_cmd} [q]uit${reset}"
-    echo "${blue}  Worktree: [l]og,${clone_cmd} [d]elete${reset}"
-    echo "${blue}     Tools: [e]ditor,${pr_cmd} [s]hell, [c]laude${reset}"
+    line2+="[d]elete"
+
+    line3="$(printf "%-${W}s " "[e]ditor")"
+    if [ -n "${pr_url:-}" ]; then
+      line3+="$(printf "%-${W}s " "[p]r")"
+    fi
+    line3+="$(printf "%-${W}s " "[s]hell")"
+    line3+="[c]laude"
+
+    echo "${blue}${line1}${reset}"
+    echo "${blue}${line2}${reset}"
+    echo "${blue}${line3}${reset}"
   }
 
   _worktree_help() {
@@ -1161,7 +1214,7 @@ worktree_repl() {
             echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
             echo "Starting mprocs session with Claude..."
             sleep 0.1
-            mprocs --on-init="{c: select-proc, index: 1}" --config "$claude_mprocs_cfg" --server "$claude_mprocs_sock" || true
+            env -u MPROCS_SOCKET mprocs --on-init="{c: select-proc, index: 1}" --config "$claude_mprocs_cfg" --server "$claude_mprocs_sock" || true
             rm -f "$claude_mprocs_cfg" "$claude_mprocs_count"
             echo ""
             echo "Back in worktree REPL."
@@ -1203,13 +1256,7 @@ worktree_repl() {
             echo 2 > "$shell_count_file"
           fi
           local motd="$scripts_dir/mprocs-motd.sh"
-          local shell_proxy
-          shell_proxy="$(command -v mprocs-title-proxy 2>/dev/null || true)"
-          local shell_exec="exec $SHELL"
-          if [ -n "$shell_proxy" ]; then
-            shell_exec="exec '$shell_proxy' $SHELL"
-          fi
-          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"$motd && cd '$wt_path' && WORKTREE_PORTS='$worktree_ports' WORKTREE_TITLE='$worktree_title' WORKTREE_SHELL_MPROCS_SOCK='$WORKTREE_SHELL_MPROCS_SOCK' WORKTREE_SHELL_MPROCS_PID='${WORKTREE_SHELL_MPROCS_PID:-}' $shell_exec\", name: \"[$shell_name]\"}"
+          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"$motd && cd '$wt_path' && WORKTREE_PORTS='$worktree_ports' WORKTREE_TITLE='$worktree_title' WORKTREE_SHELL_MPROCS_SOCK='$WORKTREE_SHELL_MPROCS_SOCK' WORKTREE_SHELL_MPROCS_PID='${WORKTREE_SHELL_MPROCS_PID:-}' exec $SHELL\", name: \"[$shell_name]\"}"
           local current_count
           current_count="$(cat "$shell_count_file")"
           echo "$((current_count + 1))" > "$shell_count_file"
@@ -1248,12 +1295,6 @@ worktree_repl() {
             local self_cmd
             self_cmd="$(command -v worktree)"
             local motd="$scripts_dir/mprocs-motd.sh"
-            local shell_proxy
-            shell_proxy="$(command -v mprocs-title-proxy 2>/dev/null || true)"
-            local shell_exec="exec $SHELL"
-            if [ -n "$shell_proxy" ]; then
-              shell_exec="exec '$shell_proxy' $SHELL"
-            fi
             rm -f "$shell_mprocs_cfg" "$shell_mprocs_count"
             echo 2 > "$shell_mprocs_count"
             echo "hide_keymap_window: true" > "$shell_mprocs_cfg"
@@ -1267,7 +1308,7 @@ worktree_repl() {
             echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$shell_mprocs_sock\"" >> "$shell_mprocs_cfg"
             echo "      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\"" >> "$shell_mprocs_cfg"
             echo "  \"[$shell_name]\":" >> "$shell_mprocs_cfg"
-            echo "    shell: \"$motd && $shell_exec\"" >> "$shell_mprocs_cfg"
+            echo "    shell: \"$motd && exec $SHELL\"" >> "$shell_mprocs_cfg"
             echo "    cwd: \"$wt_path\"" >> "$shell_mprocs_cfg"
             echo "    env:" >> "$shell_mprocs_cfg"
             echo "      WORKTREE_PORTS: \"$worktree_ports\"" >> "$shell_mprocs_cfg"
@@ -1276,7 +1317,7 @@ worktree_repl() {
             echo "      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\"" >> "$shell_mprocs_cfg"
             echo "Starting mprocs shell session..."
             sleep 0.1
-            mprocs --on-init="{c: select-proc, index: 1}" --config "$shell_mprocs_cfg" --server "$shell_mprocs_sock" || true
+            env -u MPROCS_SOCKET mprocs --on-init="{c: select-proc, index: 1}" --config "$shell_mprocs_cfg" --server "$shell_mprocs_sock" || true
             rm -f "$shell_mprocs_cfg" "$shell_mprocs_count"
             echo ""
             echo "Back in worktree REPL."

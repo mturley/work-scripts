@@ -56,12 +56,12 @@ worktree 1234                        # create or reopen a worktree for PR #1234
 worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
 worktree 1234 5678 my-branch         # open multiple worktrees in mprocs
-worktree --no-persist 1234           # skip tmux, mprocs only
+worktree --no-persist 1234           # skip screen, mprocs only
 worktree --sessions                  # list active persistent sessions
 worktree --help                      # show usage help
 ```
 
-Sessions are persistent by default (mprocs runs inside tmux for detach/reattach). Use `--no-persist` to skip tmux. Ideal for [remote access from a phone](src/worktree/remote-access.md) via SSH.
+Sessions are persistent by default (mprocs runs inside GNU Screen 5.0+ for detach/reattach). Use `--no-persist` to skip screen. Ideal for [remote access from a phone](src/worktree/remote-access.md) via SSH.
 
 ```
 [h]elp     [i]nfo     [n]ame     [q]uit

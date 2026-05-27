@@ -47,9 +47,9 @@ Arguments:
 Options:
   --ports             Show port ranges currently allocated to worktrees.
   --open              Open an editor when entering the REPL.
-  --no-persist        Skip tmux wrapping (mprocs only, no persistence).
-                      By default, mprocs runs inside a tmux session for persistence.
-  --sessions          List active persistent (tmux) worktree sessions.
+  --no-persist        Skip screen wrapping (mprocs only, no persistence).
+                      By default, mprocs runs inside a screen session for persistence.
+  --sessions          List active persistent (screen) worktree sessions.
   --kill-session <n>  Kill a persistent session by name and clean up its temp files.
   --cleanup           Select worktrees to remove, then clean up stale temp files and preferences.
   --cleanup-prefs     Clean up saved preferences only (editor, clone/link selections, etc.).
@@ -74,7 +74,7 @@ Examples:
   worktree my-feature-branch                        # branch worktree
   worktree 1234 5678 my-branch                      # multiple in mprocs
   worktree --open 1234                               # auto-open editor on REPL entry
-  worktree --no-persist 1234                        # skip tmux, mprocs only
+  worktree --no-persist 1234                        # skip screen, mprocs only
   worktree --ports                                  # show allocated port ranges
   worktree --sessions                               # list active persistent sessions
   worktree --kill-session wt-all                     # kill the persistent session
@@ -132,9 +132,10 @@ HELPEOF
         exit 1
       fi
       KILL_SESSION="$1"
-      if tmux has-session -t "$KILL_SESSION" 2>/dev/null; then
-        tmux kill-session -t "$KILL_SESSION"
-        rm -f "/tmp/worktree-tmux-${KILL_SESSION}.sock"
+      if screen_has_session "$KILL_SESSION"; then
+        screen_kill_session "$KILL_SESSION"
+        rm -f "/tmp/worktree-screen-${KILL_SESSION}.sock"
+        rm -f "/tmp/worktree-screenrc-${KILL_SESSION}"
         rm -f "/tmp/worktree-mprocs-${KILL_SESSION}.yaml"
         rm -f "/tmp/worktree-mprocs-${KILL_SESSION}-count"
         rm -f "/tmp/worktree-launch-${KILL_SESSION}.sh"
@@ -179,17 +180,17 @@ while IFS= read -r f; do
     STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
   fi
 done < <(find /tmp -maxdepth 1 -name "worktree-shell-mprocs-*" -not -name "*preference" 2>/dev/null)
-# Clean up stale tmux socket files for dead persistent sessions
+# Clean up stale screen socket files for dead persistent sessions
 while IFS= read -r f; do
   fname="$(basename "$f" .sock)"
-  session="${fname#worktree-tmux-}"
-  if ! tmux has-session -t "$session" 2>/dev/null; then
+  session="${fname#worktree-screen-}"
+  if ! screen_has_session "$session"; then
     rm -f "$f"
-    # Also clean up associated mprocs and launcher files
-    rm -f "/tmp/worktree-mprocs-${session}.yaml" "/tmp/worktree-mprocs-${session}-count" "/tmp/worktree-launch-${session}.sh"
+    # Also clean up associated mprocs, launcher, and screenrc files
+    rm -f "/tmp/worktree-mprocs-${session}.yaml" "/tmp/worktree-mprocs-${session}-count" "/tmp/worktree-launch-${session}.sh" "/tmp/worktree-screenrc-${session}"
     STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
   fi
-done < <(find /tmp -maxdepth 1 -name "worktree-tmux-*.sock" 2>/dev/null)
+done < <(find /tmp -maxdepth 1 -name "worktree-screen-*.sock" 2>/dev/null)
 if [ "$STALE_MPROCS_CLEANED" -gt 0 ]; then
   echo "Cleaned up ${STALE_MPROCS_CLEANED} stale mprocs file(s)."
 fi
@@ -370,12 +371,13 @@ if $CLEANUP; then
     fi
   fi
 
-  # Offer to kill persistent tmux session if it's running
-  if command -v tmux &>/dev/null && tmux has-session -t "wt-all" 2>/dev/null; then
+  # Offer to kill persistent screen session if it's running
+  if command -v screen &>/dev/null && screen_has_session "wt-all"; then
     echo ""
     if prompt_yn "Kill persistent session 'wt-all'?"; then
-      tmux kill-session -t "wt-all"
-      rm -f "/tmp/worktree-tmux-wt-all.sock"
+      screen_kill_session "wt-all"
+      rm -f "/tmp/worktree-screen-wt-all.sock"
+      rm -f "/tmp/worktree-screenrc-wt-all"
       rm -f "/tmp/worktree-mprocs-wt-all.yaml"
       rm -f "/tmp/worktree-mprocs-wt-all-count"
       rm -f "/tmp/worktree-launch-wt-all.sh"
@@ -473,13 +475,13 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
   if $PERSISTENT; then
     SESSION_NAME="wt-all"
     MPROCS_CFG="/tmp/worktree-mprocs-${SESSION_NAME}.yaml"
-    MPROCS_PORT="$(tmux_mprocs_port "$SESSION_NAME")"
+    MPROCS_PORT="$(screen_mprocs_port "$SESSION_NAME")"
     MPROCS_SOCK="127.0.0.1:${MPROCS_PORT}"
     MPROCS_COUNT="/tmp/worktree-mprocs-${SESSION_NAME}-count"
 
     # If session already exists, add new panes and reattach
-    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-      EXISTING_SOCK="$(tmux_mprocs_socket "$SESSION_NAME")"
+    if screen_has_session "$SESSION_NAME"; then
+      EXISTING_SOCK="$(screen_mprocs_socket "$SESSION_NAME")"
       if [ -n "$EXISTING_SOCK" ]; then
         if [ ! -f "$MPROCS_COUNT" ]; then
           PROC_COUNT="$(grep -c '^  "' "$MPROCS_CFG" 2>/dev/null || echo 2)"
@@ -513,7 +515,7 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
           mprocs --server "$EXISTING_SOCK" --ctl "{c: select-proc, index: $((NEW_INDEX - 1))}"
         fi
         echo "Reattaching to persistent session: $SESSION_NAME"
-        exec tmux attach-session -t "$SESSION_NAME"
+        exec screen -r "$SESSION_NAME"
       fi
     fi
 
@@ -555,11 +557,6 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
   trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
   SHELL_LABEL="[$(basename "$SHELL")]"
   MOTD="$LIB_DIR/mprocs-motd.sh"
-  TITLE_PROXY="$(command -v mprocs-title-proxy 2>/dev/null || true)"
-  SHELL_EXEC="exec $SHELL"
-  if [ -n "$TITLE_PROXY" ]; then
-    SHELL_EXEC="exec '$TITLE_PROXY' $SHELL"
-  fi
   if $PERSISTENT; then
     echo "hide_keymap_window: ${WORKTREE_HIDE_KEYMAP:-true}" > "$MPROCS_CFG"
     echo "procs:" >> "$MPROCS_CFG"
@@ -567,7 +564,7 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
     echo "procs:" > "$MPROCS_CFG"
   fi
   echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
-  echo "    shell: \"$MOTD && $SHELL_EXEC\"" >> "$MPROCS_CFG"
+  echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
   echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
   echo "    env:" >> "$MPROCS_CFG"
   echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
@@ -584,7 +581,7 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
   if $PERSISTENT; then
     launch_mprocs_persistent "$SESSION_NAME" "$MPROCS_CFG" "$MPROCS_SOCK" "$MPROCS_COUNT"
     rc=$?
-    # Returns 2 if user chose to skip persistence (nested tmux)
+    # Returns 2 if user chose to skip persistence (nested screen)
     if [ $rc -eq 2 ]; then
       exec mprocs --config "$MPROCS_CFG" --server "$MPROCS_SOCK"
     fi
@@ -608,14 +605,9 @@ if [ $# -eq 1 ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
     label="$(pane_label "$1")"
     SHELL_LABEL="[$(basename "$SHELL")]"
     MOTD="$LIB_DIR/mprocs-motd.sh"
-    TITLE_PROXY="$(command -v mprocs-title-proxy 2>/dev/null || true)"
-    SHELL_EXEC="exec $SHELL"
-    if [ -n "$TITLE_PROXY" ]; then
-      SHELL_EXEC="exec '$TITLE_PROXY' $SHELL"
-    fi
     echo "procs:" > "$MPROCS_CFG"
     echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
-    echo "    shell: \"$MOTD && $SHELL_EXEC\"" >> "$MPROCS_CFG"
+    echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
     echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
     echo "    env:" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"

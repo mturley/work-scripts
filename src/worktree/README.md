@@ -94,9 +94,9 @@ worktree> h
     s  shell     Start a shell in the worktree (mprocs with worktree REPL + shell pane)
     c  claude    Start Claude Code in the worktree (adds pane to mprocs session)
 
-      REPL: [h]elp, [i]nfo, [n]ame, [q]uit
-  Worktree: [l]og, [f]iles, [d]elete
-     Tools: [e]ditor, [p]r, [s]hell, [c]laude
+[h]elp     [i]nfo     [n]ame     [q]uit
+[l]og      [f]iles    [d]elete
+[e]ditor   [p]r       [s]hell    [c]laude
 
 worktree [my-branch...origin/my-branch]>
 ```
@@ -105,13 +105,15 @@ I leave the REPL open in multiple terminals for quick cleanup of each one, but y
 
 ### Persistent Sessions
 
-By default, mprocs sessions run inside a tmux session that survives terminal disconnects and can be reattached later. Use `--no-persist` to skip tmux wrapping.
+By default, mprocs sessions run inside a GNU Screen session that survives terminal disconnects and can be reattached later. Use `--no-persist` to skip screen wrapping.
+
+**Requires GNU Screen >= 5.0** (macOS ships 4.0 which lacks mouse support). Install with `brew install screen` and ensure Homebrew's screen is on PATH before `/usr/bin/screen`.
 
 ```bash
 worktree 1234                      # persistent session (default)
 worktree 1234 5678                 # persistent multi-worktree session
 worktree --open 1234               # auto-open editor on REPL entry
-worktree --no-persist 1234         # skip tmux, mprocs only
+worktree --no-persist 1234         # skip screen, mprocs only
 worktree --ports                   # show allocated port ranges
 worktree --sessions                # list active persistent sessions
 worktree --kill-session wt-all     # kill the persistent session
@@ -123,13 +125,13 @@ export WORKTREE_PERSISTENT=false
 ```
 
 **How it works:**
-- All persistent sessions use a single canonical tmux session named `wt-all`
-- mprocs runs inside tmux, which provides detach/reattach capability
-- Detach with `Ctrl+b d` — the session keeps running in the background
-- Quitting mprocs (`q` or `Q`) automatically exits the tmux session
+- All persistent sessions use a single canonical screen session named `wt-all`
+- mprocs runs inside screen, which provides detach/reattach capability
+- Detach with `Ctrl+a d` — the session keeps running in the background
+- Quitting mprocs (`q` or `Q`) automatically exits the screen session
 - When creating a new session, all existing worktrees are automatically included alongside the requested ones
 - When adding to an existing session, new worktrees are added as panes (duplicates are skipped)
-- Reattach by running `worktree` with any arguments, or `tmux attach -t wt-all`
+- Reattach by running `worktree` with any arguments, or `screen -r wt-all`
 - Running `worktree` with no arguments in persistent mode auto-selects all discovered worktrees
 
 ### Port Ranges
