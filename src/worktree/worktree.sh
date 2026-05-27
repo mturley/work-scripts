@@ -166,7 +166,7 @@ while IFS= read -r f; do
     rm -f "$f"
     STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
   fi
-done < <(find /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null)
+done < <(find -L /tmp -maxdepth 1 -name "worktree-mprocs-*" 2>/dev/null)
 # Clean up stale shell-mprocs config/count files from dead sessions
 # IDs are PID-TIMESTAMP; extract the PID portion for liveness check
 while IFS= read -r f; do
@@ -179,7 +179,7 @@ while IFS= read -r f; do
     rm -f "$f"
     STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
   fi
-done < <(find /tmp -maxdepth 1 -name "worktree-shell-mprocs-*" -not -name "*preference" 2>/dev/null)
+done < <(find -L /tmp -maxdepth 1 -name "worktree-shell-mprocs-*" -not -name "*preference" 2>/dev/null)
 # Clean up stale screen socket files for dead persistent sessions
 while IFS= read -r f; do
   fname="$(basename "$f" .sock)"
@@ -190,7 +190,7 @@ while IFS= read -r f; do
     rm -f "/tmp/worktree-mprocs-${session}.yaml" "/tmp/worktree-mprocs-${session}-count" "/tmp/worktree-launch-${session}.sh" "/tmp/worktree-screenrc-${session}"
     STALE_MPROCS_CLEANED=$((STALE_MPROCS_CLEANED + 1))
   fi
-done < <(find /tmp -maxdepth 1 -name "worktree-screen-*.sock" 2>/dev/null)
+done < <(find -L /tmp -maxdepth 1 -name "worktree-screen-*.sock" 2>/dev/null)
 if [ "$STALE_MPROCS_CLEANED" -gt 0 ]; then
   echo "Cleaned up ${STALE_MPROCS_CLEANED} stale mprocs file(s)."
 fi
@@ -260,7 +260,7 @@ cleanup_preferences() {
     repo="${local_name#worktree-clone-${kind}-}"
     pref_files+=("$f")
     pref_labels+=("Clone ${kind} selection for ${repo}")
-  done < <(find /tmp -maxdepth 1 -name "worktree-clone-*" 2>/dev/null | sort)
+  done < <(find -L /tmp -maxdepth 1 -name "worktree-clone-*" 2>/dev/null | sort)
   while IFS= read -r f; do
     local_name="$(basename "$f")"
     kind="${local_name#worktree-link-}"
@@ -268,7 +268,7 @@ cleanup_preferences() {
     repo="${local_name#worktree-link-${kind}-}"
     pref_files+=("$f")
     pref_labels+=("Link ${kind} selection for ${repo}")
-  done < <(find /tmp -maxdepth 1 -name "worktree-link-*" 2>/dev/null | sort)
+  done < <(find -L /tmp -maxdepth 1 -name "worktree-link-*" 2>/dev/null | sort)
 
   if [ ${#pref_files[@]} -gt 0 ]; then
     selected_prefs=()
@@ -389,7 +389,7 @@ if $CLEANUP; then
   stale_mprocs=()
   while IFS= read -r f; do
     stale_mprocs+=("$f")
-  done < <(find /tmp -maxdepth 1 \( -name "worktree-mprocs-*" -o -name "worktree-shell-mprocs-*" \) -not -name "*preference" 2>/dev/null | sort)
+  done < <(find -L /tmp -maxdepth 1 \( -name "worktree-mprocs-*" -o -name "worktree-shell-mprocs-*" \) -not -name "*preference" 2>/dev/null | sort)
   if [ ${#stale_mprocs[@]} -gt 0 ]; then
     for f in "${stale_mprocs[@]}"; do rm -f "$f"; done
     echo ""
