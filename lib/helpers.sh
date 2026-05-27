@@ -146,10 +146,45 @@ screen_has_session() {
   screen -ls 2>/dev/null | grep -q "[0-9]*\.${1}[[:space:]]"
 }
 
+# screen_session_is_attached <session-name>
+# Returns 0 if the session exists and is currently attached.
+screen_session_is_attached() {
+  screen -ls 2>/dev/null | grep "[0-9]*\.${1}[[:space:]]" | grep -qi "attached"
+}
+
 # screen_kill_session <session-name>
 # Kills a screen session by name.
 screen_kill_session() {
   screen -S "$1" -X quit 2>/dev/null
+}
+
+# screen_attach <session-name>
+# Attaches to a screen session. If the session is already attached elsewhere,
+# prompts the user to detach+reattach, multi-attach, or abort.
+# Uses exec to replace the current process.
+screen_attach() {
+  local session_name="$1"
+  if screen_session_is_attached "$session_name"; then
+    echo "Session '$session_name' is attached in another terminal."
+    local choice
+    choice="$(prompt_choice "How to proceed?" \
+      "Detach other and attach here" \
+      "Multi-attach (shared session)" \
+      "Abort")"
+    case "$choice" in
+      "Detach other and attach here")
+        exec screen -d -r "$session_name"
+        ;;
+      "Multi-attach (shared session)")
+        exec screen -x "$session_name"
+        ;;
+      "Abort")
+        return 1
+        ;;
+    esac
+  else
+    exec screen -r "$session_name"
+  fi
 }
 
 # launch_mprocs_persistent <session_name> <mprocs_cfg> <mprocs_sock> <mprocs_count>
@@ -172,7 +207,8 @@ launch_mprocs_persistent() {
 
   if screen_has_session "$session_name"; then
     echo "Reattaching to persistent session: $session_name"
-    exec screen -r "$session_name"
+    screen_attach "$session_name"
+    return $?
   fi
 
   # New session — disable cleanup trap (mprocs will run beyond this script)

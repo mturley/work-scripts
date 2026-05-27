@@ -515,7 +515,8 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
           mprocs --server "$EXISTING_SOCK" --ctl "{c: select-proc, index: $((NEW_INDEX - 1))}"
         fi
         echo "Reattaching to persistent session: $SESSION_NAME"
-        exec screen -r "$SESSION_NAME"
+        screen_attach "$SESSION_NAME"
+        exit $?
       fi
     fi
 
