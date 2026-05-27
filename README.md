@@ -176,7 +176,7 @@ mprocs-title-proxy claude       # Claude's status updates rename the pane
 mprocs-title-proxy vim          # any program that sets terminal title
 ```
 
-Requires `MPROCS_SOCKET` or `WORKTREE_SHELL_MPROCS_SOCK` to be set. Falls back to running the command directly if neither is available. Used automatically by `worktree`'s `[s]hell` and `[c]laude` commands.
+Requires `MPROCS_SOCKET` or `WORKTREE_SHELL_MPROCS_SOCK` to be set. Falls back to running the command directly if neither is available. Used automatically by `worktree`'s `[c]laude` command.
 
 ## Commands for iTerm2
 
