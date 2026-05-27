@@ -1191,30 +1191,31 @@ worktree_repl() {
             claude_self_cmd="$(command -v worktree)"
             rm -f "$claude_mprocs_cfg" "$claude_mprocs_count"
             echo 2 > "$claude_mprocs_count"
-            echo "hide_keymap_window: true" > "$claude_mprocs_cfg"
-            echo "proc_list_title: \"$worktree_title\"" >> "$claude_mprocs_cfg"
-            echo "procs:" >> "$claude_mprocs_cfg"
-            echo "  \"[worktree]\":" >> "$claude_mprocs_cfg"
-            echo "    shell: \"$claude_self_cmd '$wt_path'\"" >> "$claude_mprocs_cfg"
-            echo "    env:" >> "$claude_mprocs_cfg"
-            echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$claude_mprocs_cfg"
-            echo "      MPROCS_SOCKET: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
             local claude_proxy_cmd="claude"
             local claude_proxy_path
             claude_proxy_path="$(command -v mprocs-title-proxy 2>/dev/null || true)"
             if [ -n "$claude_proxy_path" ]; then
               claude_proxy_cmd="'$claude_proxy_path' claude"
             fi
-            echo "  \"[claude]\":" >> "$claude_mprocs_cfg"
-            echo "    shell: \"cd '$wt_path' && $claude_proxy_cmd\"" >> "$claude_mprocs_cfg"
-            echo "    env:" >> "$claude_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
+            local claude_cfg_content
+            claude_cfg_content="hide_keymap_window: true
+proc_list_title: \"$worktree_title\"
+procs:
+  \"[worktree]\":
+    shell: \"(sleep 0.5 && mprocs --server '$claude_mprocs_sock' --ctl '{c: select-proc, index: 1}') & $claude_self_cmd '$wt_path'\"
+    env:
+      WORKTREE_MPROCS_PANE: \"1\"
+      MPROCS_SOCKET: \"$claude_mprocs_sock\"
+      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"
+      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"
+  \"[claude]\":
+    shell: \"cd '$wt_path' && $claude_proxy_cmd\"
+    env:
+      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"
+      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\""
+            echo "$claude_cfg_content" > "$claude_mprocs_cfg"
             echo "Starting mprocs session with Claude..."
-            sleep 0.1
-            env -u MPROCS_SOCKET mprocs --on-init="{c: select-proc, index: 1}" --config "$claude_mprocs_cfg" --server "$claude_mprocs_sock" || true
+            env -u MPROCS_SOCKET mprocs --config "$claude_mprocs_cfg" --server "$claude_mprocs_sock" || true
             rm -f "$claude_mprocs_cfg" "$claude_mprocs_count"
             echo ""
             echo "Back in worktree REPL."
@@ -1297,27 +1298,28 @@ worktree_repl() {
             local motd="$scripts_dir/mprocs-motd.sh"
             rm -f "$shell_mprocs_cfg" "$shell_mprocs_count"
             echo 2 > "$shell_mprocs_count"
-            echo "hide_keymap_window: true" > "$shell_mprocs_cfg"
-            echo "proc_list_title: \"$worktree_title\"" >> "$shell_mprocs_cfg"
-            echo "procs:" >> "$shell_mprocs_cfg"
-            echo "  \"[worktree]\":" >> "$shell_mprocs_cfg"
-            echo "    shell: \"$self_cmd '$wt_path'\"" >> "$shell_mprocs_cfg"
-            echo "    env:" >> "$shell_mprocs_cfg"
-            echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$shell_mprocs_cfg"
-            echo "      MPROCS_SOCKET: \"$shell_mprocs_sock\"" >> "$shell_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$shell_mprocs_sock\"" >> "$shell_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\"" >> "$shell_mprocs_cfg"
-            echo "  \"[$shell_name]\":" >> "$shell_mprocs_cfg"
-            echo "    shell: \"$motd && exec $SHELL\"" >> "$shell_mprocs_cfg"
-            echo "    cwd: \"$wt_path\"" >> "$shell_mprocs_cfg"
-            echo "    env:" >> "$shell_mprocs_cfg"
-            echo "      WORKTREE_PORTS: \"$worktree_ports\"" >> "$shell_mprocs_cfg"
-            echo "      WORKTREE_TITLE: \"$worktree_title\"" >> "$shell_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$shell_mprocs_sock\"" >> "$shell_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\"" >> "$shell_mprocs_cfg"
+            local shell_cfg_content
+            shell_cfg_content="hide_keymap_window: true
+proc_list_title: \"$worktree_title\"
+procs:
+  \"[worktree]\":
+    shell: \"(sleep 0.5 && mprocs --server '$shell_mprocs_sock' --ctl '{c: select-proc, index: 1}') & $self_cmd '$wt_path'\"
+    env:
+      WORKTREE_MPROCS_PANE: \"1\"
+      MPROCS_SOCKET: \"$shell_mprocs_sock\"
+      WORKTREE_SHELL_MPROCS_SOCK: \"$shell_mprocs_sock\"
+      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\"
+  \"[$shell_name]\":
+    shell: \"$motd && exec $SHELL\"
+    cwd: \"$wt_path\"
+    env:
+      WORKTREE_PORTS: \"$worktree_ports\"
+      WORKTREE_TITLE: \"$worktree_title\"
+      WORKTREE_SHELL_MPROCS_SOCK: \"$shell_mprocs_sock\"
+      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\""
+            echo "$shell_cfg_content" > "$shell_mprocs_cfg"
             echo "Starting mprocs shell session..."
-            sleep 0.1
-            env -u MPROCS_SOCKET mprocs --on-init="{c: select-proc, index: 1}" --config "$shell_mprocs_cfg" --server "$shell_mprocs_sock" || true
+            env -u MPROCS_SOCKET mprocs --config "$shell_mprocs_cfg" --server "$shell_mprocs_sock" || true
             rm -f "$shell_mprocs_cfg" "$shell_mprocs_count"
             echo ""
             echo "Back in worktree REPL."
