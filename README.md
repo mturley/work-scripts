@@ -19,9 +19,6 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`claude-sessions`](src/claude-sessions/) — List all Claude Code sessions across projects
 - [`claude-resume`](src/claude-resume/) — Resume a Claude Code session from any directory
 
-**Commands for mprocs**
-- [`mprocs-title-proxy`](src/mprocs-title-proxy/) — PTY proxy that renames mprocs panes from terminal title escape sequences
-
 **Commands for iTerm2**
 - [`iterm-new`](src/iterm-new/) — Open a new iTerm2 tab or split pane and run a command
 
@@ -164,19 +161,6 @@ Resume a Claude Code session from any directory. Looks up the session's working 
 ```bash
 claude-resume f5e4d769-7848-4b7b-9e3f-443689550bf3
 ```
-
-## Commands for mprocs
-
-### [`mprocs-title-proxy`](src/mprocs-title-proxy/) — Terminal Title to Pane Name
-
-A PTY proxy that intercepts terminal title escape sequences (OSC 0/2) and renames the corresponding [mprocs](https://github.com/pvolok/mprocs) pane. Programs like Claude Code that update the terminal title will have their status reflected in the mprocs sidebar.
-
-```bash
-mprocs-title-proxy claude       # Claude's status updates rename the pane
-mprocs-title-proxy vim          # any program that sets terminal title
-```
-
-Requires `MPROCS_SOCKET` or `WORKTREE_SHELL_MPROCS_SOCK` to be set. Falls back to running the command directly if neither is available. Used automatically by `worktree`'s `[c]laude` command.
 
 ## Commands for iTerm2
 

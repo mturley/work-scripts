@@ -1182,13 +1182,7 @@ worktree_repl() {
           if [ ! -f "$claude_count_file" ]; then
             echo 2 > "$claude_count_file"
           fi
-          local claude_proxy
-          claude_proxy="$(command -v mprocs-title-proxy 2>/dev/null || true)"
-          if [ -n "$claude_proxy" ]; then
-            mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"cd '$wt_path' && WORKTREE_SHELL_MPROCS_SOCK='$WORKTREE_SHELL_MPROCS_SOCK' MPROCS_SOCKET='$WORKTREE_SHELL_MPROCS_SOCK' '$claude_proxy' claude\", name: \"[claude]\"}"
-          else
-            mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"cd '$wt_path' && claude\", name: \"[claude]\"}"
-          fi
+          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"cd '$wt_path' && claude\", name: \"[claude]\"}"
           local claude_current
           claude_current="$(cat "$claude_count_file")"
           echo "$((claude_current + 1))" > "$claude_count_file"
@@ -1227,12 +1221,6 @@ worktree_repl() {
             claude_self_cmd="$(command -v worktree)"
             rm -f "$claude_mprocs_cfg" "$claude_mprocs_count"
             echo 2 > "$claude_mprocs_count"
-            local claude_proxy_cmd="claude"
-            local claude_proxy_path
-            claude_proxy_path="$(command -v mprocs-title-proxy 2>/dev/null || true)"
-            if [ -n "$claude_proxy_path" ]; then
-              claude_proxy_cmd="'$claude_proxy_path' claude"
-            fi
             local claude_cfg_content
             claude_cfg_content="hide_keymap_window: true
 proc_list_title: \"$worktree_title\"
@@ -1245,7 +1233,7 @@ procs:
       WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"
       WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"
   \"[claude]\":
-    shell: \"cd '$wt_path' && $claude_proxy_cmd\"
+    shell: \"cd '$wt_path' && claude\"
     env:
       WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"
       WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\""
