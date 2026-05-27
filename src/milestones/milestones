@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# milestones - Show upcoming RHOAI release milestones via Claude Code
+# Usage: milestones [args...]
+
+set -euo pipefail
+
+exec claude --model default -p "/milestones $*"

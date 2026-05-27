@@ -1,0 +1,52 @@
+- generic [ref=e4]:
+  - img [ref=e5]
+  - main [ref=e6]:
+    - group [ref=e8]:
+      - generic [ref=e9]:
+        - paragraph [ref=e11]: Welcome to Smartsheet
+        - generic [ref=e12]:
+          - generic [ref=e13]:
+            - button [ref=e14]:
+              - generic [ref=e15]: MT
+            - generic [ref=e16]:
+              - generic [ref=e17]: mturley@redhat.com
+              - link "Change email address" [ref=e18] [cursor=pointer]:
+                - generic [ref=e19]: Change
+          - generic [ref=e20]:
+            - button "Sign in with company account" [ref=e21] [cursor=pointer]:
+              - generic [ref=e23]:
+                - generic [ref=e24]:
+                  - img
+                - text: Sign in with company account
+            - generic [ref=e25]: Or
+            - generic [ref=e26]:
+              - button "Sign in with Google" [ref=e27] [cursor=pointer]:
+                - generic [ref=e29]:
+                  - generic [ref=e30]:
+                    - img
+                  - text: Sign in with Google
+              - button "Send me a code" [ref=e31] [cursor=pointer]:
+                - generic [ref=e33]:
+                  - generic [ref=e34]:
+                    - img
+                  - text: Send me a code
+          - link "Try another way" [ref=e35] [cursor=pointer]:
+            - generic [ref=e36]: Try another way
+          - generic [ref=e37]:
+            - generic [ref=e38]: "Select Smartsheet data region:"
+            - button "Select data region" [ref=e39] [cursor=pointer]:
+              - generic [ref=e40]: North America
+              - generic [ref=e42]:
+                - img
+            - button "Learn more about Smartsheet data regions" [ref=e43]:
+              - img
+    - link "Download the desktop app" [ref=e44] [cursor=pointer]:
+      - generic [ref=e46]:
+        - img
+      - generic [ref=e47]: Download the desktop app
+  - generic [ref=e48]:
+    - link "Privacy Notice" [ref=e49] [cursor=pointer]:
+      - generic [ref=e50]: Privacy Notice
+    - generic [ref=e51]: •
+    - link "Patent Information" [ref=e52] [cursor=pointer]:
+      - generic [ref=e53]: Patent Information

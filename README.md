@@ -15,6 +15,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`enrich-daily-links`](src/enrich-daily-links/) — Enrich GitHub/Jira/Slack URLs in today's daily note with descriptive markdown links
 
 **Commands for Claude Code**
+- [`milestones`](src/milestones/) — Show upcoming RHOAI release milestones via Claude Code
 - [`claude-sessions`](src/claude-sessions/) — List all Claude Code sessions across projects
 - [`claude-resume`](src/claude-resume/) — Resume a Claude Code session from any directory
 
@@ -130,6 +131,18 @@ enrich-daily-links --dry-run  # preview changes without modifying
 ```
 
 ## Commands for Claude Code
+
+### [`milestones`](src/milestones/) — RHOAI Release Milestones
+
+Show upcoming RHOAI release milestones from Product Pages. Runs the `/milestones` Claude Code skill with the default model.
+
+```bash
+milestones                     # major releases, next 3 months
+milestones 6 months            # major releases, next 6 months
+milestones 3.5                 # all 3.5 milestones (EA1, EA2, GA)
+milestones through 3.6         # major milestones through 3.6 GA
+milestones all                 # all releases including patches, next 3 months
+```
 
 ### [`claude-sessions`](src/claude-sessions/) — Session Browser
 

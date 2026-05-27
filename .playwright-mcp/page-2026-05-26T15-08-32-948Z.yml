@@ -1,0 +1,13 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - img [ref=e6]
+    - img [ref=e8]
+  - generic:
+    - generic [ref=e10]: Please stand by while Smartsheet is loading.
+    - generic [ref=e11]:
+      - text: Due to network connectivity or feature updates, Smartsheet is experiencing slow loading times.
+      - generic [ref=e12]:
+        - text: Please refresh your browser to reload. If the problem continues, contact us at
+        - link "www.smartsheet.com/gethelp" [ref=e13] [cursor=pointer]:
+          - /url: http://www.smartsheet.com/gethelp?ss_lc=en_US&source=apphelpicon
+        - text: .

@@ -1,0 +1,37 @@
+- generic [ref=e4]:
+  - img [ref=e5]
+  - main [ref=e6]:
+    - group [ref=e8]:
+      - generic [ref=e9]:
+        - generic [ref=e10]:
+          - paragraph [ref=e11]: Welcome to Smartsheet
+          - generic [ref=e12]:
+            - generic [ref=e13]: Don't have an account?
+            - link "Create an new Smartsheet account" [ref=e14] [cursor=pointer]:
+              - generic [ref=e15]: Create one
+        - generic [ref=e16]:
+          - generic [ref=e17]:
+            - generic [ref=e18]: Work email
+            - textbox "Work email" [ref=e22]:
+              - /placeholder: name@company.com
+            - alert
+          - button "Continue" [ref=e23] [cursor=pointer]:
+            - generic [ref=e24]: Continue
+          - generic [ref=e25]:
+            - generic [ref=e26]: "Select Smartsheet data region:"
+            - button "Select data region" [ref=e27] [cursor=pointer]:
+              - generic [ref=e28]: North America
+              - generic [ref=e30]:
+                - img
+            - button "Learn more about Smartsheet data regions" [ref=e31]:
+              - img
+    - link "Download the desktop app" [ref=e32] [cursor=pointer]:
+      - generic [ref=e34]:
+        - img
+      - generic [ref=e35]: Download the desktop app
+  - generic [ref=e36]:
+    - link "Privacy Notice" [ref=e37] [cursor=pointer]:
+      - generic [ref=e38]: Privacy Notice
+    - generic [ref=e39]: •
+    - link "Patent Information" [ref=e40] [cursor=pointer]:
+      - generic [ref=e41]: Patent Information
