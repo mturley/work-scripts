@@ -1097,8 +1097,8 @@ worktree_repl() {
             use_mprocs_c="$(cat "$SHELL_MPROCS_PREF_FILE")"
           else
             echo ""
-            echo "The claude command can start a nested mprocs session with a [worktree] pane,"
-            echo "a [$shell_name_c] pane, and a [claude] pane."
+            echo "The claude command can start a nested mprocs session with a [worktree] pane"
+            echo "and a [claude] pane. You can add more panes later with [s]hell."
             if prompt_yn "Use nested mprocs for shell sessions?"; then
               use_mprocs_c="yes"
             else
@@ -1119,9 +1119,8 @@ worktree_repl() {
             local claude_mprocs_count="/tmp/worktree-shell-mprocs-${claude_mprocs_id}-count"
             local claude_self_cmd
             claude_self_cmd="$(command -v worktree)"
-            local claude_motd="$scripts_dir/mprocs-motd.sh"
             rm -f "$claude_mprocs_cfg" "$claude_mprocs_count"
-            echo 3 > "$claude_mprocs_count"
+            echo 2 > "$claude_mprocs_count"
             echo "hide_keymap_window: true" > "$claude_mprocs_cfg"
             echo "proc_list_title: \"$worktree_title\"" >> "$claude_mprocs_cfg"
             echo "procs:" >> "$claude_mprocs_cfg"
@@ -1132,14 +1131,6 @@ worktree_repl() {
             echo "      MPROCS_SOCKET: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
             echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
             echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
-            echo "  \"[$shell_name_c]\":" >> "$claude_mprocs_cfg"
-            echo "    shell: \"$claude_motd && exec $SHELL\"" >> "$claude_mprocs_cfg"
-            echo "    cwd: \"$wt_path\"" >> "$claude_mprocs_cfg"
-            echo "    env:" >> "$claude_mprocs_cfg"
-            echo "      WORKTREE_PORTS: \"$worktree_ports\"" >> "$claude_mprocs_cfg"
-            echo "      WORKTREE_TITLE: \"$worktree_title\"" >> "$claude_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
-            echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
             echo "  \"[claude]\":" >> "$claude_mprocs_cfg"
             echo "    shell: \"cd '$wt_path' && claude\"" >> "$claude_mprocs_cfg"
             echo "    env:" >> "$claude_mprocs_cfg"
@@ -1147,7 +1138,7 @@ worktree_repl() {
             echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
             echo "Starting mprocs session with Claude..."
             sleep 0.1
-            mprocs --on-init="{c: select-proc, index: 2}" --config "$claude_mprocs_cfg" --server "$claude_mprocs_sock" || true
+            mprocs --on-init="{c: select-proc, index: 1}" --config "$claude_mprocs_cfg" --server "$claude_mprocs_sock" || true
             rm -f "$claude_mprocs_cfg" "$claude_mprocs_count"
             echo ""
             echo "Back in worktree REPL."
