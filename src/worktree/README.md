@@ -82,13 +82,14 @@ worktree> help
   name     (n)  Rename this mprocs pane (no arg resets to default; only in mprocs)
   open     (o)  Open worktree in your editor (focuses existing window if already open)
   pr       (p)  Open the pull request page on GitHub (if applicable)
-  clone    (c)  Clone gitignored files (dotfiles, dependencies) from the main repo
+  clone    (f)  Clone gitignored files (dotfiles, dependencies) from the main repo
   shell    (s)  Start a shell in the worktree (mprocs with worktree REPL + shell pane)
+  claude   (c)  Start Claude Code in the worktree (adds pane to mprocs session)
   remove   (r)  Remove the worktree and its branch
   exit     (e)  Exit the REPL
   help     (h)  Show this help
 
-Commands: [i]nfo, [l]og, [n]ame, [o]pen, [p]r, [c]lone files, [s]hell, [r]emove, [e]xit, [h]elp
+Commands: [i]nfo, [l]og, [n]ame, [o]pen, [p]r, clone [f]iles, [s]hell, [c]laude, [r]emove, [e]xit, [h]elp
 
 worktree [my-branch...origin/my-branch]>
 ```

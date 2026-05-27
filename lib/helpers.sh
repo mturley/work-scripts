@@ -996,12 +996,12 @@ worktree_repl() {
       pr_cmd="[p]r, "
     fi
     if [ -n "$scripts_dir" ]; then
-      clone_cmd="[c]lone files, "
+      clone_cmd="clone [f]iles, "
     fi
     if [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
       name_cmd="[n]ame, "
     fi
-    echo "${blue}Commands: [h]elp, [i]nfo, [l]og, ${name_cmd}[o]pen, ${pr_cmd}${clone_cmd}[s]hell, [r]emove, [e]xit${reset}"
+    echo "${blue}Commands: [h]elp, [i]nfo, [l]og, ${name_cmd}[o]pen, ${pr_cmd}${clone_cmd}[s]hell, [c]laude, [r]emove, [e]xit${reset}"
   }
 
   _worktree_help() {
@@ -1015,9 +1015,10 @@ worktree_repl() {
     echo "  ${blue}open${reset}     (o)  Open worktree in your editor (focuses existing window if already open)"
     echo "  ${blue}pr${reset}       (p)  Open the pull request page on GitHub (if applicable)"
     if [ -n "$scripts_dir" ]; then
-      echo "  ${blue}clone${reset}    (c)  Clone gitignored files (dotfiles, dependencies) from the main repo"
+      echo "  ${blue}clone${reset}    (f)  Clone gitignored files (dotfiles, dependencies) from the main repo"
     fi
     echo "  ${blue}shell${reset}    (s)  Start a shell in the worktree (mprocs with worktree REPL + shell pane)"
+    echo "  ${blue}claude${reset}   (c)  Start Claude Code in the worktree (adds pane to mprocs session)"
     echo "  ${blue}remove${reset}   (r)  Remove the worktree and its branch"
     echo "  ${blue}exit${reset}     (e)  Exit the REPL"
   }
@@ -1069,6 +1070,112 @@ worktree_repl() {
           open "$pr_url"
         else
           echo "No open pull request found for this branch."
+        fi
+        ;;
+      claude|c)
+        local shell_name_c
+        shell_name_c="$(basename "$SHELL")"
+
+        # If inside a shell-command mprocs, add a claude pane
+        if [ -n "${WORKTREE_SHELL_MPROCS_SOCK:-}" ]; then
+          local claude_count_file="/tmp/worktree-shell-mprocs-${WORKTREE_SHELL_MPROCS_PID:-unknown}-count"
+          if [ ! -f "$claude_count_file" ]; then
+            echo 2 > "$claude_count_file"
+          fi
+          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"cd '$wt_path' && claude\", name: \"[claude]\"}"
+          local claude_current
+          claude_current="$(cat "$claude_count_file")"
+          echo "$((claude_current + 1))" > "$claude_count_file"
+          sleep 0.3
+          local claude_new_idx
+          claude_new_idx="$(cat "$claude_count_file")"
+          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: select-proc, index: $((claude_new_idx - 1))}"
+          echo "Added [claude] pane."
+        elif command -v mprocs &>/dev/null; then
+          local use_mprocs_c=""
+          if [ -f "$SHELL_MPROCS_PREF_FILE" ]; then
+            use_mprocs_c="$(cat "$SHELL_MPROCS_PREF_FILE")"
+          else
+            echo ""
+            echo "The claude command can start a nested mprocs session with a [worktree] pane,"
+            echo "a [$shell_name_c] pane, and a [claude] pane."
+            if prompt_yn "Use nested mprocs for shell sessions?"; then
+              use_mprocs_c="yes"
+            else
+              use_mprocs_c="no"
+            fi
+            echo "$use_mprocs_c" > "$SHELL_MPROCS_PREF_FILE"
+          fi
+
+          if [ "$use_mprocs_c" = "yes" ]; then
+            local claude_mprocs_id="$$-$(date +%s)"
+            local claude_mprocs_cfg="/tmp/worktree-shell-mprocs-${claude_mprocs_id}.yaml"
+            local claude_mprocs_port
+            claude_mprocs_port=$((19200 + (RANDOM % 800)))
+            while lsof -i ":${claude_mprocs_port}" &>/dev/null; do
+              claude_mprocs_port=$((19200 + (RANDOM % 800)))
+            done
+            local claude_mprocs_sock="127.0.0.1:${claude_mprocs_port}"
+            local claude_mprocs_count="/tmp/worktree-shell-mprocs-${claude_mprocs_id}-count"
+            local claude_self_cmd
+            claude_self_cmd="$(command -v worktree)"
+            local claude_motd="$scripts_dir/mprocs-motd.sh"
+            rm -f "$claude_mprocs_cfg" "$claude_mprocs_count"
+            echo 3 > "$claude_mprocs_count"
+            echo "hide_keymap_window: true" > "$claude_mprocs_cfg"
+            echo "proc_list_title: \"$worktree_title\"" >> "$claude_mprocs_cfg"
+            echo "procs:" >> "$claude_mprocs_cfg"
+            echo "  \"[worktree]\":" >> "$claude_mprocs_cfg"
+            echo "    shell: \"$claude_self_cmd '$wt_path'\"" >> "$claude_mprocs_cfg"
+            echo "    env:" >> "$claude_mprocs_cfg"
+            echo "      WORKTREE_MPROCS_PANE: \"1\"" >> "$claude_mprocs_cfg"
+            echo "      MPROCS_SOCKET: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
+            echo "  \"[$shell_name_c]\":" >> "$claude_mprocs_cfg"
+            echo "    shell: \"$claude_motd && exec $SHELL\"" >> "$claude_mprocs_cfg"
+            echo "    cwd: \"$wt_path\"" >> "$claude_mprocs_cfg"
+            echo "    env:" >> "$claude_mprocs_cfg"
+            echo "      WORKTREE_PORTS: \"$worktree_ports\"" >> "$claude_mprocs_cfg"
+            echo "      WORKTREE_TITLE: \"$worktree_title\"" >> "$claude_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
+            echo "  \"[claude]\":" >> "$claude_mprocs_cfg"
+            echo "    shell: \"cd '$wt_path' && claude\"" >> "$claude_mprocs_cfg"
+            echo "    env:" >> "$claude_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
+            echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
+            echo "Starting mprocs session with Claude..."
+            sleep 0.1
+            mprocs --on-init="{c: select-proc, index: 2}" --config "$claude_mprocs_cfg" --server "$claude_mprocs_sock" || true
+            rm -f "$claude_mprocs_cfg" "$claude_mprocs_count"
+            echo ""
+            echo "Back in worktree REPL."
+            if [ -n "$iterm_label" ]; then
+              printf '\033]1;%s\007' "$iterm_label"
+            fi
+            _worktree_info
+          else
+            echo "Starting Claude in $(short_path "$wt_path")"
+            echo "Exit Claude to return to this REPL."
+            (cd "$wt_path" && claude)
+            echo ""
+            echo "Back in worktree REPL."
+            if [ -n "$iterm_label" ]; then
+              printf '\033]1;%s\007' "$iterm_label"
+            fi
+            _worktree_info
+          fi
+        else
+          echo "Starting Claude in $(short_path "$wt_path")"
+          echo "Exit Claude to return to this REPL."
+          (cd "$wt_path" && claude)
+          echo ""
+          echo "Back in worktree REPL."
+          if [ -n "$iterm_label" ]; then
+            printf '\033]1;%s\007' "$iterm_label"
+          fi
+          _worktree_info
         fi
         ;;
       shell|s)
@@ -1142,7 +1249,8 @@ worktree_repl() {
             echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$shell_mprocs_sock\"" >> "$shell_mprocs_cfg"
             echo "      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\"" >> "$shell_mprocs_cfg"
             echo "Starting mprocs shell session..."
-            mprocs --config "$shell_mprocs_cfg" --server "$shell_mprocs_sock" --on-init="{c: select-proc, index: 1}" || true
+            sleep 0.1
+            mprocs --on-init="{c: select-proc, index: 1}" --config "$shell_mprocs_cfg" --server "$shell_mprocs_sock" || true
             rm -f "$shell_mprocs_cfg" "$shell_mprocs_count"
             echo ""
             echo "Back in worktree REPL."
@@ -1173,7 +1281,7 @@ worktree_repl() {
           _worktree_info
         fi
         ;;
-      clone|c)
+      clone|f)
         if [ -n "$scripts_dir" ]; then
           clone_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
         else
