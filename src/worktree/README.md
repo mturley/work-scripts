@@ -48,7 +48,7 @@ By default, every worktree session launches in [mprocs](https://github.com/pvolo
 
 ### Opening Editors
 
-By default, the REPL does not automatically open an editor. Use the `--open` flag to detect your editor (VS Code or Cursor) or use a cached preference (in `/tmp`) and open a window (or focus an existing one). The REPL's `[o]pen` command is always available to open an editor on demand.
+By default, the REPL does not automatically open an editor. Use the `--open` flag to detect your editor (VS Code or Cursor) or use a cached preference (in `/tmp`) and open a window (or focus an existing one). The REPL's `[e]ditor` command is always available to open an editor on demand.
 
 ### VS Code Auto-REPL
 
@@ -60,7 +60,7 @@ If auto-REPL is enabled, the terminal session that launched the editor exits (wi
 
 ### Cross-Worktree Dependency Cloning
 
-The `[c]lone files` REPL command lets you share files from the main working tree with a worktree:
+The `[f]iles` REPL command lets you clone files from the main working tree into a worktree:
 
 - **`1` — Dotfiles, dependencies and build artifacts** — clones dotfiles plus `node_modules`, `dist/`, `bin/`, etc.
 - **`2` — Config only** — clones top-level dotfiles (`.env.local`, `.husky`, etc.). You'll need to install dependencies and build yourself.
@@ -72,29 +72,36 @@ For each category you choose, you can select which specific files to include. Se
 
 ### Interactive REPL
 
-Once a worktree is ready, all usage paths above end here (unless VS Code auto-REPL is enabled, in which case the REPL starts in VS Code's terminal instead). On entry, a tip is shown reminding you to use `[c]lone files` to reuse installed dependencies from the main repo. Before each prompt, the available commands are shown:
+Once a worktree is ready, all usage paths above end here (unless VS Code auto-REPL is enabled, in which case the REPL starts in VS Code's terminal instead). On entry, a tip is shown reminding you to press `[f]iles` to clone installed dependencies from the main repo. Commands are single-keystroke — just press the highlighted letter:
 
 ```
-worktree> help
+worktree> h
 
-  info     (i)  Show PR info with author and dates (if applicable), worktree path, tracking status, and git status
-  log      (l)  Show git log
-  name     (n)  Rename this mprocs pane (no arg resets to default; only in mprocs)
-  open     (o)  Open worktree in your editor (focuses existing window if already open)
-  pr       (p)  Open the pull request page on GitHub (if applicable)
-  clone    (f)  Clone gitignored files (dotfiles, dependencies) from the main repo
-  shell    (s)  Start a shell in the worktree (mprocs with worktree REPL + shell pane)
-  claude   (c)  Start Claude Code in the worktree (adds pane to mprocs session)
-  remove   (r)  Remove the worktree and its branch
-  exit     (e)  Exit the REPL
-  help     (h)  Show this help
+  REPL
+    h  help      Show this help
+    i  info      Show PR info with author and dates (if applicable), worktree path, tracking status, and git status
+    n  name      Rename this mprocs pane (only in mprocs)
+    q  quit      Exit the REPL
 
-Commands: [i]nfo, [l]og, [n]ame, [o]pen, [p]r, clone [f]iles, [s]hell, [c]laude, [r]emove, [e]xit, [h]elp
+  Worktree
+    l  log       Show git log
+    f  files     Clone gitignored files (dotfiles, dependencies) from the main worktree
+    d  delete    Remove the worktree and its branch
+
+  Tools
+    e  editor    Open worktree in your editor (focuses existing window if already open)
+    p  pr        Open the pull request page on GitHub (if applicable)
+    s  shell     Start a shell in the worktree (mprocs with worktree REPL + shell pane)
+    c  claude    Start Claude Code in the worktree (adds pane to mprocs session)
+
+      REPL: [h]elp, [i]nfo, [n]ame, [q]uit
+  Worktree: [l]og, [f]iles, [d]elete
+     Tools: [e]ditor, [p]r, [s]hell, [c]laude
 
 worktree [my-branch...origin/my-branch]>
 ```
 
-I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it. If you want to run a dev environment in the worktree, you can use the `[s]hell` command — it starts a nested mprocs session with a `[worktree]` pane (running the REPL) and a shell pane. Running `[s]hell` again from the nested worktree REPL adds another shell pane to the same session instead of nesting further.
+I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it. If you want to run a dev environment in the worktree, you can use `s` — it starts a nested mprocs session with a `[worktree]` pane (running the REPL) and a shell pane. Pressing `s` again from the nested worktree REPL adds another shell pane to the same session instead of nesting further.
 
 ### Persistent Sessions
 

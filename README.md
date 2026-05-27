@@ -61,7 +61,9 @@ worktree --help                      # show usage help
 Sessions are persistent by default (mprocs runs inside tmux for detach/reattach). Use `--no-persist` to skip tmux. Ideal for [remote access from a phone](src/worktree/remote-access.md) via SSH.
 
 ```
-Commands: [h]elp, [i]nfo, [l]og, [n]ame, [o]pen, [p]r, [c]lone files, [s]hell, [r]emove, [e]xit
+      REPL: [h]elp, [i]nfo, [n]ame, [q]uit
+  Worktree: [l]og, [f]iles, [d]elete
+     Tools: [e]ditor, [p]r, [s]hell, [c]laude
 
 worktree [my-branch...origin/my-branch]>
 ```

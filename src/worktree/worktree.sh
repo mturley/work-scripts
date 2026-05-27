@@ -555,6 +555,11 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
   trap "rm -f '$MPROCS_CFG' '$MPROCS_COUNT'" EXIT
   SHELL_LABEL="[$(basename "$SHELL")]"
   MOTD="$LIB_DIR/mprocs-motd.sh"
+  TITLE_PROXY="$(command -v mprocs-title-proxy 2>/dev/null || true)"
+  SHELL_EXEC="exec $SHELL"
+  if [ -n "$TITLE_PROXY" ]; then
+    SHELL_EXEC="exec '$TITLE_PROXY' $SHELL"
+  fi
   if $PERSISTENT; then
     echo "hide_keymap_window: ${WORKTREE_HIDE_KEYMAP:-true}" > "$MPROCS_CFG"
     echo "procs:" >> "$MPROCS_CFG"
@@ -562,7 +567,7 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
     echo "procs:" > "$MPROCS_CFG"
   fi
   echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
-  echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
+  echo "    shell: \"$MOTD && $SHELL_EXEC\"" >> "$MPROCS_CFG"
   echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
   echo "    env:" >> "$MPROCS_CFG"
   echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"
@@ -603,9 +608,14 @@ if [ $# -eq 1 ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
     label="$(pane_label "$1")"
     SHELL_LABEL="[$(basename "$SHELL")]"
     MOTD="$LIB_DIR/mprocs-motd.sh"
+    TITLE_PROXY="$(command -v mprocs-title-proxy 2>/dev/null || true)"
+    SHELL_EXEC="exec $SHELL"
+    if [ -n "$TITLE_PROXY" ]; then
+      SHELL_EXEC="exec '$TITLE_PROXY' $SHELL"
+    fi
     echo "procs:" > "$MPROCS_CFG"
     echo "  \"$SHELL_LABEL\":" >> "$MPROCS_CFG"
-    echo "    shell: \"$MOTD && exec $SHELL\"" >> "$MPROCS_CFG"
+    echo "    shell: \"$MOTD && $SHELL_EXEC\"" >> "$MPROCS_CFG"
     echo "    cwd: \"$(pwd)\"" >> "$MPROCS_CFG"
     echo "    env:" >> "$MPROCS_CFG"
     echo "      MPROCS_SOCKET: \"$MPROCS_SOCK\"" >> "$MPROCS_CFG"

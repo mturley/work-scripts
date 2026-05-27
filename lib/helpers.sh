@@ -991,36 +991,45 @@ worktree_repl() {
   }
 
   _worktree_commands() {
-    local pr_cmd="" clone_cmd="" name_cmd=""
+    local name_cmd="" pr_cmd="" clone_cmd=""
+    if [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
+      name_cmd=" [n]ame,"
+    fi
     if [ -n "${pr_url:-}" ]; then
-      pr_cmd="[p]r, "
+      pr_cmd=" [p]r,"
     fi
     if [ -n "$scripts_dir" ]; then
-      clone_cmd="clone [f]iles, "
+      clone_cmd=" [f]iles,"
     fi
-    if [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
-      name_cmd="[n]ame, "
-    fi
-    echo "${blue}Commands: [h]elp, [i]nfo, [l]og, ${name_cmd}[o]pen, ${pr_cmd}${clone_cmd}[s]hell, [c]laude, [r]emove, [e]xit${reset}"
+    echo "${blue}      REPL: [h]elp, [i]nfo,${name_cmd} [q]uit${reset}"
+    echo "${blue}  Worktree: [l]og,${clone_cmd} [d]elete${reset}"
+    echo "${blue}     Tools: [e]ditor,${pr_cmd} [s]hell, [c]laude${reset}"
   }
 
   _worktree_help() {
     echo ""
-    echo "  ${blue}help${reset}     (h)  Show this help"
-    echo "  ${blue}info${reset}     (i)  Show PR URL (if applicable), worktree path, and git status"
-    echo "  ${blue}log${reset}      (l)  Show git log"
+    echo "  ${blue}REPL${reset}"
+    echo "    ${blue}h${reset}  help      Show this help"
+    echo "    ${blue}i${reset}  info      Show PR URL (if applicable), worktree path, and git status"
     if [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
-      echo "  ${blue}name${reset}     (n)  Rename this mprocs pane (no arg resets to default)"
+      echo "    ${blue}n${reset}  name      Rename this mprocs pane"
     fi
-    echo "  ${blue}open${reset}     (o)  Open worktree in your editor (focuses existing window if already open)"
-    echo "  ${blue}pr${reset}       (p)  Open the pull request page on GitHub (if applicable)"
+    echo "    ${blue}q${reset}  quit      Exit the REPL"
+    echo ""
+    echo "  ${blue}Worktree${reset}"
+    echo "    ${blue}l${reset}  log       Show git log"
     if [ -n "$scripts_dir" ]; then
-      echo "  ${blue}clone${reset}    (f)  Clone gitignored files (dotfiles, dependencies) from the main repo"
+      echo "    ${blue}f${reset}  files     Clone gitignored files (dotfiles, dependencies) from the main worktree"
     fi
-    echo "  ${blue}shell${reset}    (s)  Start a shell in the worktree (mprocs with worktree REPL + shell pane)"
-    echo "  ${blue}claude${reset}   (c)  Start Claude Code in the worktree (adds pane to mprocs session)"
-    echo "  ${blue}remove${reset}   (r)  Remove the worktree and its branch"
-    echo "  ${blue}exit${reset}     (e)  Exit the REPL"
+    echo "    ${blue}d${reset}  delete    Remove the worktree and its branch"
+    echo ""
+    echo "  ${blue}Tools${reset}"
+    echo "    ${blue}e${reset}  editor    Open worktree in your editor (focuses existing window if already open)"
+    if [ -n "${pr_url:-}" ]; then
+      echo "    ${blue}p${reset}  pr        Open the pull request page on GitHub"
+    fi
+    echo "    ${blue}s${reset}  shell     Start a shell in the worktree (mprocs with worktree REPL + shell pane)"
+    echo "    ${blue}c${reset}  claude    Start Claude Code in the worktree (adds pane to mprocs session)"
   }
 
   # Assign port range for this worktree
@@ -1042,7 +1051,7 @@ worktree_repl() {
   _worktree_info false
   if [ -n "$scripts_dir" ]; then
     echo ""
-    echo "Tip: use [c]lone files to reuse installed dependencies and configuration from the main repo"
+    echo "Tip: press [f]iles to clone installed dependencies and configuration from the main repo"
   fi
   while true; do
     echo ""
@@ -1052,19 +1061,21 @@ worktree_repl() {
     else
       printf "\nworktree [${green}%s${reset}]> " "$branch"
     fi
-    read -r cmd
+    read -r -n 1 cmd
+    # Print a newline after the single character (read -n 1 doesn't echo one)
+    [ -n "$cmd" ] && echo
     case "$cmd" in
-      info|i)
+      i)
         echo ""
         _worktree_info
         ;;
-      log|l)
+      l)
         git -C "$wt_path" log --oneline --graph --decorate || true
         ;;
-      open|o)
+      e)
         open_editor "$wt_path" "$repo_root"
         ;;
-      pr|p)
+      p)
         if [ -n "${pr_url:-}" ]; then
           echo "Opening ${pr_url}"
           open "$pr_url"
@@ -1072,7 +1083,7 @@ worktree_repl() {
           echo "No open pull request found for this branch."
         fi
         ;;
-      claude|c)
+      c)
         local shell_name_c
         shell_name_c="$(basename "$SHELL")"
 
@@ -1082,7 +1093,13 @@ worktree_repl() {
           if [ ! -f "$claude_count_file" ]; then
             echo 2 > "$claude_count_file"
           fi
-          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"cd '$wt_path' && claude\", name: \"[claude]\"}"
+          local claude_proxy
+          claude_proxy="$(command -v mprocs-title-proxy 2>/dev/null || true)"
+          if [ -n "$claude_proxy" ]; then
+            mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"cd '$wt_path' && WORKTREE_SHELL_MPROCS_SOCK='$WORKTREE_SHELL_MPROCS_SOCK' MPROCS_SOCKET='$WORKTREE_SHELL_MPROCS_SOCK' '$claude_proxy' claude\", name: \"[claude]\"}"
+          else
+            mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"cd '$wt_path' && claude\", name: \"[claude]\"}"
+          fi
           local claude_current
           claude_current="$(cat "$claude_count_file")"
           echo "$((claude_current + 1))" > "$claude_count_file"
@@ -1131,8 +1148,14 @@ worktree_repl() {
             echo "      MPROCS_SOCKET: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
             echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
             echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
+            local claude_proxy_cmd="claude"
+            local claude_proxy_path
+            claude_proxy_path="$(command -v mprocs-title-proxy 2>/dev/null || true)"
+            if [ -n "$claude_proxy_path" ]; then
+              claude_proxy_cmd="'$claude_proxy_path' claude"
+            fi
             echo "  \"[claude]\":" >> "$claude_mprocs_cfg"
-            echo "    shell: \"cd '$wt_path' && claude\"" >> "$claude_mprocs_cfg"
+            echo "    shell: \"cd '$wt_path' && $claude_proxy_cmd\"" >> "$claude_mprocs_cfg"
             echo "    env:" >> "$claude_mprocs_cfg"
             echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$claude_mprocs_sock\"" >> "$claude_mprocs_cfg"
             echo "      WORKTREE_SHELL_MPROCS_PID: \"$claude_mprocs_id\"" >> "$claude_mprocs_cfg"
@@ -1169,7 +1192,7 @@ worktree_repl() {
           _worktree_info
         fi
         ;;
-      shell|s)
+      s)
         local shell_name
         shell_name="$(basename "$SHELL")"
 
@@ -1180,7 +1203,13 @@ worktree_repl() {
             echo 2 > "$shell_count_file"
           fi
           local motd="$scripts_dir/mprocs-motd.sh"
-          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"$motd && cd '$wt_path' && WORKTREE_PORTS='$worktree_ports' WORKTREE_TITLE='$worktree_title' WORKTREE_SHELL_MPROCS_SOCK='$WORKTREE_SHELL_MPROCS_SOCK' WORKTREE_SHELL_MPROCS_PID='${WORKTREE_SHELL_MPROCS_PID:-}' exec $SHELL\", name: \"[$shell_name]\"}"
+          local shell_proxy
+          shell_proxy="$(command -v mprocs-title-proxy 2>/dev/null || true)"
+          local shell_exec="exec $SHELL"
+          if [ -n "$shell_proxy" ]; then
+            shell_exec="exec '$shell_proxy' $SHELL"
+          fi
+          mprocs --server "$WORKTREE_SHELL_MPROCS_SOCK" --ctl "{c: add-proc, cmd: \"$motd && cd '$wt_path' && WORKTREE_PORTS='$worktree_ports' WORKTREE_TITLE='$worktree_title' WORKTREE_SHELL_MPROCS_SOCK='$WORKTREE_SHELL_MPROCS_SOCK' WORKTREE_SHELL_MPROCS_PID='${WORKTREE_SHELL_MPROCS_PID:-}' $shell_exec\", name: \"[$shell_name]\"}"
           local current_count
           current_count="$(cat "$shell_count_file")"
           echo "$((current_count + 1))" > "$shell_count_file"
@@ -1219,6 +1248,12 @@ worktree_repl() {
             local self_cmd
             self_cmd="$(command -v worktree)"
             local motd="$scripts_dir/mprocs-motd.sh"
+            local shell_proxy
+            shell_proxy="$(command -v mprocs-title-proxy 2>/dev/null || true)"
+            local shell_exec="exec $SHELL"
+            if [ -n "$shell_proxy" ]; then
+              shell_exec="exec '$shell_proxy' $SHELL"
+            fi
             rm -f "$shell_mprocs_cfg" "$shell_mprocs_count"
             echo 2 > "$shell_mprocs_count"
             echo "hide_keymap_window: true" > "$shell_mprocs_cfg"
@@ -1232,7 +1267,7 @@ worktree_repl() {
             echo "      WORKTREE_SHELL_MPROCS_SOCK: \"$shell_mprocs_sock\"" >> "$shell_mprocs_cfg"
             echo "      WORKTREE_SHELL_MPROCS_PID: \"$shell_mprocs_id\"" >> "$shell_mprocs_cfg"
             echo "  \"[$shell_name]\":" >> "$shell_mprocs_cfg"
-            echo "    shell: \"$motd && exec $SHELL\"" >> "$shell_mprocs_cfg"
+            echo "    shell: \"$motd && $shell_exec\"" >> "$shell_mprocs_cfg"
             echo "    cwd: \"$wt_path\"" >> "$shell_mprocs_cfg"
             echo "    env:" >> "$shell_mprocs_cfg"
             echo "      WORKTREE_PORTS: \"$worktree_ports\"" >> "$shell_mprocs_cfg"
@@ -1272,14 +1307,14 @@ worktree_repl() {
           _worktree_info
         fi
         ;;
-      clone|f)
+      f)
         if [ -n "$scripts_dir" ]; then
           clone_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
         else
           echo "Clone files not available (missing scripts directory)."
         fi
         ;;
-      remove|r)
+      d)
         echo "This will remove the worktree at:"
         echo "  $(short_path "$wt_path")"
         if prompt_yn "Proceed?"; then
@@ -1295,22 +1330,20 @@ worktree_repl() {
           exit 0
         fi
         ;;
-      exit|quit|q|e)
+      q)
         if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
           echo ""
           echo "To close this pane: Ctrl+A → d → y"
         fi
         exit 0
         ;;
-      name|n|name\ *|n\ *)
+      n)
         if [ -z "${WORKTREE_MPROCS_PANE:-}" ] || [ -z "${MPROCS_SOCKET:-}" ]; then
           echo "Name command is only available inside mprocs."
         else
+          printf "New name (enter to reset): "
           local new_name=""
-          case "$cmd" in
-            "name "*)  new_name="${cmd#name }" ;;
-            "n "*)     new_name="${cmd#n }" ;;
-          esac
+          read -r new_name
           if [ -z "$new_name" ]; then
             new_name="${WORKTREE_TITLE:-$worktree_title}"
           fi
@@ -1319,13 +1352,13 @@ worktree_repl() {
             || echo "Failed to rename (mprocs server not reachable)."
         fi
         ;;
-      help|h)
+      h)
         _worktree_help
         ;;
       "")
         ;;
       *)
-        echo "Unknown command: $cmd. Type 'help' for usage."
+        echo "Unknown command: $cmd. Press 'h' for help."
         ;;
     esac
   done
