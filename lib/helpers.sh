@@ -311,7 +311,23 @@ cmux_open_worktree() {
     echo "Switched to workspace: $label"
   else
     worktree_check_shell_rc
-    cmux new-workspace --name "$label" --cwd "$wt_path" --focus "$focus" >/dev/null 2>&1
+    local ws_output
+    ws_output="$(cmux new-workspace --name "$label" --cwd "$wt_path" --focus "$focus" 2>&1)"
+    local ws_ref
+    ws_ref="$(echo "$ws_output" | awk '{print $2}')"
+    if [ -n "$ws_ref" ]; then
+      # Add a second tab running the worktree REPL
+      local tab_output
+      tab_output="$(cmux tab-action --action new-terminal-right --workspace "$ws_ref" 2>&1)"
+      local new_tab
+      new_tab="$(echo "$tab_output" | sed -n 's/.*created=tab:\([0-9]*\).*/\1/p')"
+      if [ -n "$new_tab" ]; then
+        local self_cmd
+        self_cmd="$(command -v worktree 2>/dev/null || echo worktree)"
+        cmux rename-tab --tab "tab:${new_tab}" --workspace "$ws_ref" "worktree" >/dev/null 2>&1
+        cmux send --surface "surface:${new_tab}" --workspace "$ws_ref" "'$self_cmd'\n" >/dev/null 2>&1
+      fi
+    fi
     echo "Created workspace: $label"
   fi
 }
@@ -2012,6 +2028,15 @@ resolve_repo_root() {
 
   local toplevel
   toplevel="$(git rev-parse --show-toplevel)"
+
+  # If we're inside a worktree (not the main clone), resolve to the main clone
+  if [ -f "$toplevel/.git" ]; then
+    local main_root
+    main_root="$(git -C "$toplevel" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
+    if [ -n "$main_root" ] && [ "$main_root" != "$toplevel" ]; then
+      toplevel="$main_root"
+    fi
+  fi
 
   # Find nested git repos (subdirectories that are their own git roots)
   local repos=()
