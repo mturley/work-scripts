@@ -1353,11 +1353,7 @@ worktree_repl() {
 
   # Set iTerm2 tab title and WORKTREE_TITLE
   local worktree_title iterm_label=""
-  if [ -n "${pr_num:-}" ]; then
-    worktree_title="wt PR #${pr_num}"
-  else
-    worktree_title="wt ${branch}"
-  fi
+  worktree_title="wt ${branch}"
   # Write .worktree-env file for auto-sourcing by shell RC
   worktree_write_env_file "$wt_path" "$worktree_ports" "$worktree_title"
   worktree_check_shell_rc

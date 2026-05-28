@@ -270,11 +270,7 @@ standalone_exec() {
   worktree_ports="$(assign_port_range "$wt_port_key")"
 
   worktree_gather_info "$wt_path"
-  if [ -n "${WT_INFO_PR_NUM:-}" ]; then
-    worktree_title="wt PR #${WT_INFO_PR_NUM}"
-  else
-    worktree_title="wt ${WT_INFO_BRANCH:-$(basename "$wt_path")}"
-  fi
+  worktree_title="wt ${WT_INFO_BRANCH:-$(basename "$wt_path")}"
   worktree_write_env_file "$wt_path" "$worktree_ports" "$worktree_title"
   worktree_check_shell_rc
   echo ""
@@ -294,11 +290,7 @@ cmux_worktree_open() {
   worktree_ports="$(assign_port_range "$wt_port_key")"
 
   worktree_gather_info "$wt_path"
-  if [ -n "${WT_INFO_PR_NUM:-}" ]; then
-    worktree_title="wt PR #${WT_INFO_PR_NUM}"
-  else
-    worktree_title="wt ${WT_INFO_BRANCH:-$(basename "$wt_path")}"
-  fi
+  worktree_title="wt ${WT_INFO_BRANCH:-$(basename "$wt_path")}"
   worktree_write_env_file "$wt_path" "$worktree_ports" "$worktree_title"
   label="$(pane_label "$wt_path")"
   cmux_open_worktree "$label" "$wt_path" "$focus"
