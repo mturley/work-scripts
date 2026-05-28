@@ -45,7 +45,7 @@ dev-ports    # list all dev servers grouped by repo and branch
 
 ### [`worktree`](src/worktree/) — Git Worktree Manager
 
-Create and manage git worktrees for PRs and branches, with optional cloned dependencies, VS Code auto-REPL integration, and an interactive REPL. Discovers worktrees created by any tool (Zed, Claude Code, etc.) across configurable search roots. Displays PR metadata (title, author, created/updated timestamps) when working with PRs.
+Create and manage git worktrees for PRs and branches, with optional cloned dependencies, VS Code auto-REPL integration, and an interactive REPL. Discovers worktrees created by any tool (Zed, Claude Code, etc.) across configurable search roots. Displays PR metadata (title, author, created/updated timestamps) when working with PRs. Detects associated Jira issues from branch names and PR descriptions, with optional API enrichment for issue metadata.
 
 ```bash
 worktree                             # list worktrees; select one, many (1,3,5), or all

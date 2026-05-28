@@ -1157,7 +1157,8 @@ open_editor() {
 # Gathers worktree metadata into WT_INFO_* variables for use by worktree_show_info.
 # Sets: WT_INFO_BRANCH, WT_INFO_TRACKING, WT_INFO_PR_NUM, WT_INFO_PR_URL,
 #       WT_INFO_PR_TITLE, WT_INFO_PR_AUTHOR, WT_INFO_PR_STATE,
-#       WT_INFO_PR_CREATED, WT_INFO_PR_UPDATED
+#       WT_INFO_PR_CREATED, WT_INFO_PR_UPDATED, WT_INFO_PR_BODY,
+#       WT_INFO_JIRA_ISSUES, WT_INFO_JIRA_HOST, WT_INFO_JIRA_DETAILS
 worktree_gather_info() {
   local wt_path="$1"
   local wt_name
@@ -1172,6 +1173,10 @@ worktree_gather_info() {
   WT_INFO_PR_STATE=""
   WT_INFO_PR_CREATED=""
   WT_INFO_PR_UPDATED=""
+  WT_INFO_PR_BODY=""
+  WT_INFO_JIRA_ISSUES=""
+  WT_INFO_JIRA_HOST=""
+  WT_INFO_JIRA_DETAILS=""
 
   if [[ "$wt_name" == pr-* ]]; then
     WT_INFO_PR_NUM="$(echo "$wt_name" | sed 's/^pr-\([0-9]*\)-.*/\1/')"
@@ -1224,15 +1229,187 @@ worktree_gather_info() {
 
   if [ -n "$WT_INFO_PR_URL" ]; then
     local pr_details
-    pr_details="$(gh pr view "$WT_INFO_PR_URL" --json title,author,state,createdAt,updatedAt 2>/dev/null || true)"
+    pr_details="$(gh pr view "$WT_INFO_PR_URL" --json title,author,state,createdAt,updatedAt,body 2>/dev/null || true)"
     if [ -n "$pr_details" ]; then
       WT_INFO_PR_TITLE="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('title',''))" 2>/dev/null || true)"
       WT_INFO_PR_AUTHOR="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))" 2>/dev/null || true)"
       WT_INFO_PR_STATE="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true)"
       WT_INFO_PR_CREATED="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))" 2>/dev/null || true)"
       WT_INFO_PR_UPDATED="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))" 2>/dev/null || true)"
+      WT_INFO_PR_BODY="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('body',''))" 2>/dev/null || true)"
     fi
   fi
+
+  worktree_gather_jira_info "$wt_path"
+}
+
+# worktree_gather_jira_info <worktree-path>
+# Detects Jira issue keys from branch name, PR title/body, and cached .worktree-env.
+# Optionally enriches with metadata via Jira REST API when credentials are available.
+# Sets: WT_INFO_JIRA_ISSUES, WT_INFO_JIRA_HOST, WT_INFO_JIRA_DETAILS
+worktree_gather_jira_info() {
+  local wt_path="$1"
+
+  # Load Jira config (once per session)
+  if [ -z "${_WORKTREE_JIRA_ENV_LOADED:-}" ]; then
+    _WORKTREE_JIRA_ENV_LOADED=1
+    local lib_dir
+    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    WORK_SCRIPTS_DIR="${lib_dir%/lib}"
+    # shellcheck source=load-env.sh
+    source "$lib_dir/load-env.sh" 2>/dev/null
+  fi
+
+  if [ -z "${JIRA_PROJECTS:-}" ]; then
+    return
+  fi
+
+  WT_INFO_JIRA_HOST="${JIRA_HOST:-}"
+
+  # Build grep pattern from JIRA_PROJECTS (e.g. RHOAIENG,RHOAI → (RHOAIENG|RHOAI)-[0-9]+)
+  local jira_pattern
+  jira_pattern="($(echo "$JIRA_PROJECTS" | tr ',' '|'))-[0-9]+"
+
+  local found_issues=""
+
+  # Check .worktree-env for cached manual associations
+  local env_file="${wt_path}/.worktree-env"
+  if [ -f "$env_file" ]; then
+    local cached
+    cached="$(grep '^export WORKTREE_JIRA_ISSUES=' "$env_file" 2>/dev/null | sed 's/^export WORKTREE_JIRA_ISSUES="//' | sed 's/"$//' || true)"
+    if [ -n "$cached" ]; then
+      found_issues="$cached"
+    fi
+  fi
+
+  # Scan branch name
+  local branch_matches
+  branch_matches="$(echo "$WT_INFO_BRANCH" | grep -oE "$jira_pattern" 2>/dev/null || true)"
+  if [ -n "$branch_matches" ]; then
+    found_issues="${found_issues:+$found_issues }$branch_matches"
+  fi
+
+  # Scan PR title and body
+  if [ -n "${WT_INFO_PR_TITLE:-}" ]; then
+    local title_matches
+    title_matches="$(echo "$WT_INFO_PR_TITLE" | grep -oE "$jira_pattern" 2>/dev/null || true)"
+    if [ -n "$title_matches" ]; then
+      found_issues="${found_issues:+$found_issues }$title_matches"
+    fi
+  fi
+  if [ -n "${WT_INFO_PR_BODY:-}" ]; then
+    local body_matches
+    body_matches="$(echo "$WT_INFO_PR_BODY" | grep -oE "$jira_pattern" 2>/dev/null || true)"
+    if [ -n "$body_matches" ]; then
+      found_issues="${found_issues:+$found_issues }$body_matches"
+    fi
+  fi
+
+  # Deduplicate
+  if [ -n "$found_issues" ]; then
+    WT_INFO_JIRA_ISSUES="$(echo "$found_issues" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+  fi
+
+  if [ -z "$WT_INFO_JIRA_ISSUES" ]; then
+    return
+  fi
+
+  # Enrich with Jira API metadata when credentials are available
+  if [ "${JIRA_LOADED:-false}" = "true" ] && [ -n "${JIRA_HOST:-}" ]; then
+    local issue_key api_response details_lines=""
+    for issue_key in $WT_INFO_JIRA_ISSUES; do
+      api_response="$(curl --max-time 5 --silent --fail \
+        -u "${JIRA_EMAIL}:${JIRA_TOKEN}" \
+        "https://${JIRA_HOST}/rest/api/2/issue/${issue_key}?fields=summary,issuetype,status,assignee,priority" \
+        2>/dev/null || true)"
+      if [ -n "$api_response" ]; then
+        local detail_line
+        detail_line="$(echo "$api_response" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+f = d.get('fields', {})
+summary = f.get('summary', '')
+itype = f.get('issuetype', {}).get('name', '')
+status = f.get('status', {}).get('name', '')
+assignee = f.get('assignee', {}).get('displayName', '') if f.get('assignee') else ''
+priority = f.get('priority', {}).get('name', '') if f.get('priority') else ''
+print(f'{itype}|{priority}|{status}|{summary}|{assignee}')
+" 2>/dev/null || true)"
+        if [ -n "$detail_line" ]; then
+          details_lines="${details_lines:+${details_lines}
+}${issue_key}|${detail_line}"
+        fi
+      fi
+    done
+    WT_INFO_JIRA_DETAILS="$details_lines"
+  fi
+}
+
+# worktree_update_env_jira <worktree-path> <issue-keys>
+# Writes or updates the WORKTREE_JIRA_ISSUES line in .worktree-env.
+worktree_update_env_jira() {
+  local wt_path="$1" issues="$2"
+  local env_file="${wt_path}/.worktree-env"
+  if [ ! -f "$env_file" ]; then
+    echo "export WORKTREE_JIRA_ISSUES=\"${issues}\"" >> "$env_file"
+  elif grep -q '^export WORKTREE_JIRA_ISSUES=' "$env_file" 2>/dev/null; then
+    sed -i '' "s|^export WORKTREE_JIRA_ISSUES=.*|export WORKTREE_JIRA_ISSUES=\"${issues}\"|" "$env_file"
+  else
+    echo "export WORKTREE_JIRA_ISSUES=\"${issues}\"" >> "$env_file"
+  fi
+}
+
+# worktree_jira_emoji <type-or-priority> <value>
+# Returns an emoji prefix for Jira issue type or priority.
+worktree_jira_emoji() {
+  local kind="$1" value="$2"
+  case "$kind" in
+    type)
+      case "$value" in
+        Bug)     echo "🐛" ;;
+        Story)   echo "📖" ;;
+        Task)    echo "✅" ;;
+        Epic)    echo "⚡" ;;
+        Sub-task) echo "📎" ;;
+        *)       echo "📋" ;;
+      esac
+      ;;
+    priority)
+      case "$value" in
+        Blocker)  echo "🔴" ;;
+        Critical) echo "🟠" ;;
+        Major)    echo "🟡" ;;
+        Normal|Medium) echo "🔵" ;;
+        Minor)    echo "🟢" ;;
+        Trivial)  echo "⚪" ;;
+        *)        echo "⬜" ;;
+      esac
+      ;;
+  esac
+}
+
+# worktree_jira_priority_color <priority> <red> <yellow> <green> <blue> <reset>
+# Returns the priority text wrapped in an appropriate color.
+worktree_jira_priority_color() {
+  local value="$1" red="$2" yellow="$3" green="$4" blue="$5" reset="$6"
+  case "$value" in
+    Blocker|Critical) echo "${red}${value}${reset}" ;;
+    Major)            echo "${yellow}${value}${reset}" ;;
+    Minor|Trivial)    echo "${green}${value}${reset}" ;;
+    *)                echo "${blue}${value}${reset}" ;;
+  esac
+}
+
+# worktree_jira_status_color <status> <green> <yellow> <cyan> <magenta> <reset>
+# Returns the status text wrapped in an appropriate color.
+worktree_jira_status_color() {
+  local value="$1" green="$2" yellow="$3" cyan="$4" magenta="$5" reset="$6"
+  case "$value" in
+    Done|Closed|Resolved) echo "${green}${value}${reset}" ;;
+    "In Progress"|"In Review"|"Code Review") echo "${yellow}${value}${reset}" ;;
+    "To Do"|New|Open|Backlog) echo "${cyan}${value}${reset}" ;;
+    *)                    echo "${magenta}${value}${reset}" ;;
+  esac
 }
 
 # worktree_show_info <worktree-path> [show-path] [worktree-ports]
@@ -1242,12 +1419,14 @@ worktree_show_info() {
   local show_path="${2:-true}"
   local worktree_ports="${3:-}"
 
-  local blue cyan green magenta red reset
+  local blue cyan green magenta red yellow bold reset
   blue="$(tput setaf 12 2>/dev/null || true)"
   cyan="$(tput setaf 6 2>/dev/null || true)"
   green="$(tput setaf 2 2>/dev/null || true)"
   magenta="$(tput setaf 5 2>/dev/null || true)"
   red="$(tput setaf 1 2>/dev/null || true)"
+  yellow="$(tput setaf 3 2>/dev/null || true)"
+  bold="$(tput bold 2>/dev/null || true)"
   reset="$(tput sgr0 2>/dev/null || true)"
 
   if [ "$show_path" = "true" ]; then
@@ -1274,6 +1453,69 @@ worktree_show_info() {
     fi
     if [ -n "${WT_INFO_PR_URL:-}" ]; then
       echo "  ${cyan}URL:${reset} ${WT_INFO_PR_URL}"
+    fi
+    echo ""
+  fi
+  if [ -n "${WT_INFO_JIRA_ISSUES:-}" ]; then
+    local jira_issue_count
+    jira_issue_count="$(echo "$WT_INFO_JIRA_ISSUES" | wc -w | tr -d ' ')"
+    if [ "$jira_issue_count" -eq 1 ]; then
+      local jira_key="$WT_INFO_JIRA_ISSUES"
+      local jira_detail_line=""
+      if [ -n "${WT_INFO_JIRA_DETAILS:-}" ]; then
+        jira_detail_line="$(echo "$WT_INFO_JIRA_DETAILS" | grep "^${jira_key}|" || true)"
+      fi
+      if [ -n "$jira_detail_line" ]; then
+        local j_type j_priority j_status j_summary j_assignee
+        j_type="$(echo "$jira_detail_line" | cut -d'|' -f2)"
+        j_priority="$(echo "$jira_detail_line" | cut -d'|' -f3)"
+        j_status="$(echo "$jira_detail_line" | cut -d'|' -f4)"
+        j_summary="$(echo "$jira_detail_line" | cut -d'|' -f5)"
+        j_assignee="$(echo "$jira_detail_line" | cut -d'|' -f6)"
+        local type_emoji priority_emoji priority_colored status_colored
+        type_emoji="$(worktree_jira_emoji type "$j_type")"
+        priority_emoji="$(worktree_jira_emoji priority "$j_priority")"
+        priority_colored="$(worktree_jira_priority_color "$j_priority" "$red" "$yellow" "$green" "$blue" "$reset")"
+        status_colored="$(worktree_jira_status_color "$j_status" "$green" "$yellow" "$cyan" "$magenta" "$reset")"
+        echo "${cyan}Jira:${reset} ${bold}${jira_key}${reset} ${type_emoji}${j_type} ${priority_emoji}${priority_colored} (${status_colored})${j_summary:+: ${j_summary}}"
+        if [ -n "$j_assignee" ]; then
+          echo "  ${cyan}Assignee:${reset} ${j_assignee}"
+        fi
+      else
+        echo "${cyan}Jira:${reset} ${bold}${jira_key}${reset}"
+      fi
+      if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
+        echo "  ${cyan}URL:${reset} ${blue}https://${WT_INFO_JIRA_HOST}/browse/${jira_key}${reset}"
+      fi
+    else
+      echo "${cyan}Jira issues:${reset}"
+      local jira_key
+      for jira_key in $WT_INFO_JIRA_ISSUES; do
+        local jira_detail_line=""
+        if [ -n "${WT_INFO_JIRA_DETAILS:-}" ]; then
+          jira_detail_line="$(echo "$WT_INFO_JIRA_DETAILS" | grep "^${jira_key}|" || true)"
+        fi
+        if [ -n "$jira_detail_line" ]; then
+          local j_type j_priority j_status j_summary j_assignee
+          j_type="$(echo "$jira_detail_line" | cut -d'|' -f2)"
+          j_priority="$(echo "$jira_detail_line" | cut -d'|' -f3)"
+          j_status="$(echo "$jira_detail_line" | cut -d'|' -f4)"
+          j_summary="$(echo "$jira_detail_line" | cut -d'|' -f5)"
+          j_assignee="$(echo "$jira_detail_line" | cut -d'|' -f6)"
+          local type_emoji priority_emoji priority_colored status_colored
+          type_emoji="$(worktree_jira_emoji type "$j_type")"
+          priority_emoji="$(worktree_jira_emoji priority "$j_priority")"
+          priority_colored="$(worktree_jira_priority_color "$j_priority" "$red" "$yellow" "$green" "$blue" "$reset")"
+          status_colored="$(worktree_jira_status_color "$j_status" "$green" "$yellow" "$cyan" "$magenta" "$reset")"
+          echo "  ${bold}${jira_key}${reset} ${type_emoji}${j_type} ${priority_emoji}${priority_colored} (${status_colored}): ${j_summary}  [${j_assignee:-unassigned}]"
+        else
+          local url_suffix=""
+          if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
+            url_suffix="  ${blue}https://${WT_INFO_JIRA_HOST}/browse/${jira_key}${reset}"
+          fi
+          echo "  ${bold}${jira_key}${reset}${url_suffix}"
+        fi
+      done
     fi
     echo ""
   fi
@@ -1331,6 +1573,9 @@ worktree_repl() {
   local pr_state="$WT_INFO_PR_STATE"
   local pr_created="$WT_INFO_PR_CREATED"
   local pr_updated="$WT_INFO_PR_UPDATED"
+  local jira_issues="$WT_INFO_JIRA_ISSUES"
+  local jira_host="$WT_INFO_JIRA_HOST"
+  local jira_details="$WT_INFO_JIRA_DETAILS"
 
   # --- Open editor (detects editor and sets up auto-REPL task internally) ---
   echo ""
@@ -1370,6 +1615,7 @@ worktree_repl() {
     if [ -n "${pr_url:-}" ]; then
       line3+="$(printf "%-${W}s " "[p]r")"
     fi
+    line3+="$(printf "%-${W}s " "[j]ira")"
     line3+="$(printf "%-${W}s " "[s]hell")"
     line3+="[c]laude"
 
@@ -1402,6 +1648,7 @@ worktree_repl() {
     if [ -n "${pr_url:-}" ]; then
       echo "    ${blue}p${reset}  pr        Open the pull request page on GitHub"
     fi
+    echo "    ${blue}j${reset}  jira      Open associated Jira issue in browser"
     if cmux_is_available; then
       echo "    ${blue}s${reset}  shell     Start a shell in the worktree"
       echo "    ${blue}c${reset}  claude    Start Claude Code in the worktree"
@@ -1460,6 +1707,73 @@ worktree_repl() {
           open "$pr_url"
         else
           echo "No open pull request found for this branch."
+        fi
+        ;;
+      j|jira)
+        if [ -z "${JIRA_PROJECTS:-}" ]; then
+          echo "Jira integration not configured. Add JIRA_PROJECTS to your jira.env file."
+          echo "See: jira.env.example"
+        elif [ -z "${jira_issues:-}" ]; then
+          echo "No Jira issue detected for this worktree."
+          printf "Paste a Jira issue key or URL to associate (or press Enter to skip): "
+          read -r jira_input
+          if [ -n "$jira_input" ]; then
+            local jira_key_input
+            jira_key_input="$(echo "$jira_input" | grep -oE "($(echo "$JIRA_PROJECTS" | tr ',' '|'))-[0-9]+" | head -1)"
+            if [ -n "$jira_key_input" ]; then
+              jira_issues="$jira_key_input"
+              jira_host="${JIRA_HOST:-}"
+              worktree_update_env_jira "$wt_path" "$jira_issues"
+              echo "Associated ${jira_key_input} with this worktree."
+              if [ -n "$jira_host" ]; then
+                local jira_url="https://${jira_host}/browse/${jira_key_input}"
+                echo "Opening ${jira_url}"
+                open "$jira_url"
+              fi
+            else
+              echo "Could not find a matching Jira issue key (expected projects: ${JIRA_PROJECTS})."
+            fi
+          fi
+        else
+          local jira_issue_count
+          jira_issue_count="$(echo "$jira_issues" | wc -w | tr -d ' ')"
+          if [ "$jira_issue_count" -eq 1 ]; then
+            local jira_url="https://${jira_host}/browse/${jira_issues}"
+            echo "Opening ${jira_url}"
+            open "$jira_url"
+          else
+            echo ""
+            echo "Multiple Jira issues found:"
+            local idx=1 jira_key
+            for jira_key in $jira_issues; do
+              local detail_line=""
+              if [ -n "${jira_details:-}" ]; then
+                detail_line="$(echo "$jira_details" | grep "^${jira_key}|" || true)"
+              fi
+              if [ -n "$detail_line" ]; then
+                local j_type j_summary
+                j_type="$(echo "$detail_line" | cut -d'|' -f2)"
+                j_summary="$(echo "$detail_line" | cut -d'|' -f5)"
+                local type_emoji
+                type_emoji="$(worktree_jira_emoji type "$j_type")"
+                echo "  ${idx}) ${jira_key} ${type_emoji}${j_type}: ${j_summary}"
+              else
+                echo "  ${idx}) ${jira_key}"
+              fi
+              idx=$((idx + 1))
+            done
+            printf "\nSelect issue number (or press Enter to skip): "
+            read -r jira_selection
+            if [ -n "$jira_selection" ] && [ "$jira_selection" -ge 1 ] 2>/dev/null && [ "$jira_selection" -lt "$idx" ] 2>/dev/null; then
+              local selected_key
+              selected_key="$(echo "$jira_issues" | tr ' ' '\n' | sed -n "${jira_selection}p")"
+              if [ -n "$selected_key" ] && [ -n "$jira_host" ]; then
+                local jira_url="https://${jira_host}/browse/${selected_key}"
+                echo "Opening ${jira_url}"
+                open "$jira_url"
+              fi
+            fi
+          fi
         fi
         ;;
       c|claude)

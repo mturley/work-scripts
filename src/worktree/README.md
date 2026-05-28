@@ -92,12 +92,13 @@ worktree> help
   Tools
     e  editor    Open worktree in your editor (focuses existing window if already open)
     p  pr        Open the pull request page on GitHub (if applicable)
+    j  jira      Open associated Jira issue in browser
     s  shell     Start a shell in the worktree
     c  claude    Start Claude Code in the worktree
 
 help       info       name       quit
 log        files      delete
-editor     pr         shell      claude
+editor     pr         jira       shell      claude
 
 worktree [my-branch...origin/my-branch]>
 ```
@@ -179,6 +180,39 @@ When running inside [cmux](https://cmux.com/), the worktree script automatically
 - **No-args discovery** → shows which worktrees already have cmux workspaces open (marked `[open]`); single selection switches to or creates a workspace, multiple selection opens only missing ones
 
 The `--no-persist` and `--standalone` flags are effectively no-ops when running in cmux.
+
+## Jira Integration
+
+The worktree script can detect Jira issue keys associated with a worktree and offer a `[j]ira` command to open them in your browser. Detected issues also appear in the `--info` output.
+
+### Configuration
+
+Add `JIRA_PROJECTS` to your Jira secrets env file (the file pointed to by `JIRA_SECRETS_ENV` in `.env`):
+
+```bash
+export JIRA_PROJECTS=RHOAIENG,RHOAI,ODH
+```
+
+This is a comma-separated list of Jira project prefixes to scan for in branch names and PR descriptions.
+
+### Detection
+
+Jira issue keys are detected from three sources (in order):
+1. **Cached associations** — previously associated issues stored in `.worktree-env`
+2. **Branch name** — e.g. branch `RHOAIENG-12345-fix-pagination` detects `RHOAIENG-12345`
+3. **PR title and body** — if a PR is detected, its title and description are scanned for issue keys
+
+### API Enrichment
+
+When `JIRA_HOST`, `JIRA_EMAIL`, and `JIRA_TOKEN` are all configured, the script fetches metadata (title, type, priority, status, assignee) from the Jira REST API and displays it with emoji indicators:
+- Issue types: 🐛 Bug, 📖 Story, ✅ Task, ⚡ Epic
+- Priorities: 🔴 Blocker, 🟠 Critical, 🟡 Major, 🔵 Normal, 🟢 Minor
+
+If credentials are not configured or the API call fails (expired token, network error), the script silently falls back to showing just the issue key and URL.
+
+### Manual Association
+
+If no Jira issue is detected, pressing `[j]ira` in the REPL prompts you to paste a Jira issue key or URL. The association is saved in `.worktree-env` and persists across REPL sessions.
 
 ### Worktree Environment File
 
