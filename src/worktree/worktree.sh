@@ -508,6 +508,8 @@ if $CLEANUP; then
 
   cleanup_preferences
 
+  worktree_cleanup_shell_rc
+
   echo ""
   echo "Done."
   exit 0

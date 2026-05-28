@@ -437,6 +437,70 @@ if [ -f \"\$PWD/$WORKTREE_ENV_FILENAME\" ]; then source \"\$PWD/$WORKTREE_ENV_FI
   echo "Run 'source ${rc_file}' or open a new terminal to activate."
 }
 
+# worktree_cleanup_shell_rc
+# Offers to remove the auto-source snippet from the user's shell RC file
+# and revert POWERLEVEL9K_INSTANT_PROMPT if it was changed.
+worktree_cleanup_shell_rc() {
+  local shell_name rc_file
+  shell_name="$(basename "$SHELL")"
+  local snippet_marker="# worktree-env auto-source"
+
+  case "$shell_name" in
+    zsh)  rc_file="$HOME/.zshrc" ;;
+    bash) rc_file="$HOME/.bashrc" ;;
+    fish) rc_file="$HOME/.config/fish/config.fish" ;;
+    *)    return 0 ;;
+  esac
+
+  local found_snippet=false found_p10k=false
+  if [ -f "$rc_file" ] && grep -qF "$snippet_marker" "$rc_file"; then
+    found_snippet=true
+  fi
+  local p10k_file="$HOME/.p10k.zsh"
+  if [ "$shell_name" = "zsh" ] && grep -q 'POWERLEVEL9K_INSTANT_PROMPT=quiet' "$p10k_file" 2>/dev/null; then
+    found_p10k=true
+  fi
+
+  if ! $found_snippet && ! $found_p10k; then
+    echo "No shell RC changes to clean up."
+    return 0
+  fi
+
+  echo ""
+  echo "The worktree script added the following to your shell configuration:"
+  if $found_snippet; then
+    echo "  - Auto-source snippet in ${rc_file}"
+  fi
+  if $found_p10k; then
+    echo "  - POWERLEVEL9K_INSTANT_PROMPT=quiet in ~/.p10k.zsh"
+  fi
+  if ! prompt_yn "Remove these changes?"; then
+    return 0
+  fi
+
+  if $found_snippet; then
+    if [ "$shell_name" = "fish" ]; then
+      # Fish snippet spans from marker to the second "end" after it
+      sed -i '' "/$snippet_marker/,/^end$/d" "$rc_file"
+    else
+      # zsh/bash: delete from the marker line through the next blank line or EOF
+      # The snippet is always appended at the end, so delete from marker to EOF
+      # then remove any trailing blank lines
+      local tmp="${rc_file}.worktree-tmp"
+      sed "/$snippet_marker/,\$d" "$rc_file" > "$tmp" && mv "$tmp" "$rc_file"
+      # Remove trailing blank lines
+      local tmp2="${rc_file}.worktree-tmp2"
+      sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$rc_file" > "$tmp2" && mv "$tmp2" "$rc_file"
+    fi
+    echo "Removed auto-source snippet from ${rc_file}."
+  fi
+
+  if $found_p10k; then
+    sed -i '' 's/POWERLEVEL9K_INSTANT_PROMPT=quiet/POWERLEVEL9K_INSTANT_PROMPT=verbose/' "$p10k_file"
+    echo "Reverted POWERLEVEL9K_INSTANT_PROMPT to verbose in ~/.p10k.zsh."
+  fi
+}
+
 # Terminal colors
 COLOR_BLUE="$(tput setaf 12 2>/dev/null || true)"
 COLOR_CYAN="$(tput setaf 6 2>/dev/null || true)"
