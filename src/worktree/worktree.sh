@@ -51,7 +51,7 @@ Arguments:
   <arg> <arg> ...     Open multiple worktrees in parallel panes.
 
 Options:
-  --standalone        Skip mprocs and screen entirely. Opens a new shell in the
+  -s, --standalone    Skip mprocs and screen entirely. Opens a new shell in the
                       worktree directory; exit the shell to return. Only works
                       with a single worktree argument.
   --ports             Show port ranges currently allocated to worktrees.
@@ -94,7 +94,7 @@ HELPEOF
     --open) OPEN_EDITOR=true; shift ;;
     --ports) SHOW_PORTS=true; shift ;;
     --no-persist) PERSISTENT=false; shift ;;
-    --standalone) STANDALONE=true; shift ;;
+    -s|--standalone) STANDALONE=true; shift ;;
     --sessions) SHOW_SESSIONS=true; shift ;;
     --kill-session)
       shift
