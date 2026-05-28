@@ -1146,6 +1146,10 @@ worktree_gather_info() {
       upstream_repo="$(git -C "$wt_path" remote get-url upstream 2>/dev/null | sed 's/\.git$//' | sed 's|.*github\.com[:/]||' || true)"
       if [ -n "$upstream_repo" ]; then
         detected_pr_url="$(gh pr list --head "$head_filter" --repo "$upstream_repo" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
+        # If owner:branch format didn't match, try branch name alone
+        if [ -z "$detected_pr_url" ] && [ "$head_filter" != "$search_branch" ]; then
+          detected_pr_url="$(gh pr list --head "$search_branch" --repo "$upstream_repo" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
+        fi
       fi
     fi
     if [ -n "$detected_pr_url" ]; then
@@ -1368,7 +1372,7 @@ worktree_repl() {
   _worktree_info false
   if [ -n "$scripts_dir" ]; then
     echo ""
-    echo "Tip: press [f]iles to clone installed dependencies and configuration from the main repo"
+    echo "Tip: type [f]iles to clone installed dependencies and configuration from the main repo"
   fi
   while true; do
     echo ""
@@ -1378,21 +1382,19 @@ worktree_repl() {
     else
       printf "\nworktree [${green}%s${reset}]> " "$branch"
     fi
-    read -r -n 1 cmd
-    # Print a newline after the single character (read -n 1 doesn't echo one)
-    [ -n "$cmd" ] && echo
+    read -r cmd
     case "$cmd" in
-      i)
+      i|info)
         echo ""
         _worktree_info
         ;;
-      l)
+      l|log)
         git -C "$wt_path" log --oneline --graph --decorate || true
         ;;
-      e)
+      e|editor)
         open_editor "$wt_path" "$repo_root"
         ;;
-      p)
+      p|pr)
         if [ -n "${pr_url:-}" ]; then
           echo "Opening ${pr_url}"
           open "$pr_url"
@@ -1400,7 +1402,7 @@ worktree_repl() {
           echo "No open pull request found for this branch."
         fi
         ;;
-      c)
+      c|claude)
         if cmux_is_available; then
           echo "Starting Claude in $(short_path "$wt_path")"
           echo "Exit Claude to return to this REPL."
@@ -1501,7 +1503,7 @@ procs:
           _worktree_info
         fi
         ;;
-      s)
+      s|shell)
         local shell_name
         shell_name="$(basename "$SHELL")"
 
@@ -1611,14 +1613,14 @@ procs:
           _worktree_info
         fi
         ;;
-      f)
+      f|files)
         if [ -n "$scripts_dir" ]; then
           clone_worktree_files "$scripts_dir" "$repo_root" "$wt_path" || true
         else
           echo "Clone files not available (missing scripts directory)."
         fi
         ;;
-      d)
+      d|delete)
         echo "This will remove the worktree at:"
         echo "  $(short_path "$wt_path")"
         if prompt_yn "Proceed?"; then
@@ -1634,14 +1636,14 @@ procs:
           exit 0
         fi
         ;;
-      q)
+      q|quit|exit)
         if [ -n "${WORKTREE_MPROCS_PANE:-}" ]; then
           echo ""
           echo "To close this pane: Ctrl+A → d → y"
         fi
         exit 0
         ;;
-      n)
+      n|name)
         if cmux_is_available; then
           printf "New name (enter to reset): "
           local new_name=""
@@ -1666,13 +1668,13 @@ procs:
           echo "Name command is only available inside mprocs or cmux."
         fi
         ;;
-      h)
+      h|help)
         _worktree_help
         ;;
       "")
         ;;
       *)
-        echo "Unknown command: $cmd. Press 'h' for help."
+        echo "Unknown command: $cmd. Type 'h' for help."
         ;;
     esac
   done
