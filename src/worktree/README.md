@@ -29,6 +29,7 @@ worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
 worktree ~/git/.worktrees/repo/name  # open an existing worktree by path
 worktree 1234 5678 my-branch         # open multiple worktrees in mprocs
+worktree --standalone my-branch      # shell in worktree, no mprocs
 worktree --help                      # show usage help
 ```
 
@@ -133,6 +134,17 @@ export WORKTREE_PERSISTENT=false
 - When adding to an existing session, new worktrees are added as panes (duplicates are skipped)
 - Reattach by running `worktree` with any arguments, or `screen -r wt-all`
 - Running `worktree` with no arguments in persistent mode auto-selects all discovered worktrees
+
+### Standalone Mode
+
+Use `--standalone` to skip mprocs and screen entirely. The script resolves or creates the worktree, then opens a new shell in its directory. Exit the shell to return to where you started.
+
+```bash
+worktree --standalone my-branch        # shell in worktree, no mprocs
+worktree my-branch --standalone        # flags work in any position
+```
+
+Only works with a single worktree argument. Useful when you just want to `cd` into a worktree without the full mprocs/REPL experience.
 
 ### Port Ranges
 

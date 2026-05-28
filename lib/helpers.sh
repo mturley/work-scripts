@@ -910,51 +910,45 @@ open_editor() {
   esac
 }
 
-# worktree_repl <repo-root> <worktree-path> [scripts-dir] [--open]
-# Interactive loop offering shell, open, cleanup, and exit commands.
-worktree_repl() {
-  local repo_root="$1" wt_path="$2" scripts_dir="${3:-}"
-  local open_editor=false
-  if [ "${4:-}" = "--open" ]; then
-    open_editor=true
-  fi
-  local wt_name wt_port_key branch tracking pr_num pr_url
+# worktree_gather_info <worktree-path>
+# Gathers worktree metadata into WT_INFO_* variables for use by worktree_show_info.
+# Sets: WT_INFO_BRANCH, WT_INFO_TRACKING, WT_INFO_PR_NUM, WT_INFO_PR_URL,
+#       WT_INFO_PR_TITLE, WT_INFO_PR_AUTHOR, WT_INFO_PR_STATE,
+#       WT_INFO_PR_CREATED, WT_INFO_PR_UPDATED
+worktree_gather_info() {
+  local wt_path="$1"
+  local wt_name
   wt_name="$(basename "$wt_path")"
-  # Port range key includes project dir to avoid cross-repo collisions
-  wt_port_key="${wt_path#"$WORKTREES_BASE"/}"
-  branch="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
-  tracking="$(git -C "$wt_path" rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || true)"
+
+  WT_INFO_BRANCH="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+  WT_INFO_TRACKING="$(git -C "$wt_path" rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || true)"
+  WT_INFO_PR_NUM=""
+  WT_INFO_PR_URL=""
+  WT_INFO_PR_TITLE=""
+  WT_INFO_PR_AUTHOR=""
+  WT_INFO_PR_STATE=""
+  WT_INFO_PR_CREATED=""
+  WT_INFO_PR_UPDATED=""
 
   if [[ "$wt_name" == pr-* ]]; then
-    pr_num="$(echo "$wt_name" | sed 's/^pr-\([0-9]*\)-.*/\1/')"
+    WT_INFO_PR_NUM="$(echo "$wt_name" | sed 's/^pr-\([0-9]*\)-.*/\1/')"
     local remote_url
     remote_url="$(git -C "$wt_path" remote get-url upstream 2>/dev/null || git -C "$wt_path" remote get-url origin 2>/dev/null || true)"
     if [ -n "$remote_url" ]; then
-      pr_url="$(echo "$remote_url" | sed 's/\.git$//' | sed 's|git@github.com:|https://github.com/|')/pull/${pr_num}"
+      WT_INFO_PR_URL="$(echo "$remote_url" | sed 's/\.git$//' | sed 's|git@github.com:|https://github.com/|')/pull/${WT_INFO_PR_NUM}"
     fi
   fi
 
-  # If no PR was found from the worktree name, check if the branch has a PR.
-  # Uses gh pr list (not gh pr view) so --state all can find closed/merged PRs.
-  # Try the local branch name first, then the tracking branch name (for cases
-  # where the local branch has a different name than the PR's head ref), then
-  # the upstream remote repo.
-  if [ -z "$pr_url" ] && [ "$branch" != "unknown" ]; then
+  if [ -z "$WT_INFO_PR_URL" ] && [ "$WT_INFO_BRANCH" != "unknown" ]; then
     local detected_pr_url
-    # Derive the search branch: prefer the tracking branch name if it differs
-    # from the local branch (e.g. local "review/pr-7239-..." tracks
-    # "Philip-Carneiro/fix/..." — the PR head is "fix/...").
-    local search_branch="$branch"
+    local search_branch="$WT_INFO_BRANCH"
     local search_head_owner=""
-    if [ -n "$tracking" ]; then
-      local tracking_remote="${tracking%%/*}"
-      local tracking_branch="${tracking#*/}"
-      if [ "$tracking_branch" != "$branch" ]; then
+    if [ -n "$WT_INFO_TRACKING" ]; then
+      local tracking_remote="${WT_INFO_TRACKING%%/*}"
+      local tracking_branch="${WT_INFO_TRACKING#*/}"
+      if [ "$tracking_branch" != "$WT_INFO_BRANCH" ]; then
         search_branch="$tracking_branch"
       fi
-      # Derive the fork owner from the tracking remote's URL (works for both
-      # SSH and HTTPS URLs). This is more reliable than assuming the remote
-      # name matches the GitHub username.
       local tracking_remote_url
       tracking_remote_url="$(git -C "$wt_path" remote get-url "$tracking_remote" 2>/dev/null || true)"
       if [ -n "$tracking_remote_url" ]; then
@@ -976,24 +970,120 @@ worktree_repl() {
       fi
     fi
     if [ -n "$detected_pr_url" ]; then
-      pr_url="$detected_pr_url"
-      pr_num="$(echo "$detected_pr_url" | grep -o '[0-9]*$')"
+      WT_INFO_PR_URL="$detected_pr_url"
+      WT_INFO_PR_NUM="$(echo "$detected_pr_url" | grep -o '[0-9]*$')"
     fi
   fi
 
-  # Fetch PR details (title, author, state, created date, last updated) if we have a PR
-  local pr_title pr_author pr_state pr_created pr_updated
-  if [ -n "$pr_url" ]; then
+  if [ -n "$WT_INFO_PR_URL" ]; then
     local pr_details
-    pr_details="$(gh pr view "$pr_url" --json title,author,state,createdAt,updatedAt 2>/dev/null || true)"
+    pr_details="$(gh pr view "$WT_INFO_PR_URL" --json title,author,state,createdAt,updatedAt 2>/dev/null || true)"
     if [ -n "$pr_details" ]; then
-      pr_title="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('title',''))" 2>/dev/null || true)"
-      pr_author="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))" 2>/dev/null || true)"
-      pr_state="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true)"
-      pr_created="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))" 2>/dev/null || true)"
-      pr_updated="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))" 2>/dev/null || true)"
+      WT_INFO_PR_TITLE="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('title',''))" 2>/dev/null || true)"
+      WT_INFO_PR_AUTHOR="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))" 2>/dev/null || true)"
+      WT_INFO_PR_STATE="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true)"
+      WT_INFO_PR_CREATED="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))" 2>/dev/null || true)"
+      WT_INFO_PR_UPDATED="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))" 2>/dev/null || true)"
     fi
   fi
+}
+
+# worktree_show_info <worktree-path> [show-path] [worktree-ports]
+# Displays worktree info using WT_INFO_* variables set by worktree_gather_info.
+worktree_show_info() {
+  local wt_path="$1"
+  local show_path="${2:-true}"
+  local worktree_ports="${3:-}"
+
+  local blue cyan green magenta red reset
+  blue="$(tput setaf 12 2>/dev/null || true)"
+  cyan="$(tput setaf 6 2>/dev/null || true)"
+  green="$(tput setaf 2 2>/dev/null || true)"
+  magenta="$(tput setaf 5 2>/dev/null || true)"
+  red="$(tput setaf 1 2>/dev/null || true)"
+  reset="$(tput sgr0 2>/dev/null || true)"
+
+  if [ "$show_path" = "true" ]; then
+    echo "${cyan}Path:${reset} $(short_path "$wt_path")"
+  fi
+  echo "${cyan}Branch:${reset} ${WT_INFO_BRANCH}"
+  if [ -n "${WT_INFO_PR_NUM:-}" ]; then
+    echo ""
+    local state_display=""
+    case "${WT_INFO_PR_STATE:-}" in
+      OPEN)   state_display=" ${green}(open)${reset}" ;;
+      MERGED) state_display=" ${magenta}(merged)${reset}" ;;
+      CLOSED) state_display=" ${red}(closed)${reset}" ;;
+    esac
+    echo "${cyan}PR #${WT_INFO_PR_NUM}${reset}${state_display}${WT_INFO_PR_TITLE:+: ${WT_INFO_PR_TITLE}}"
+    if [ -n "${WT_INFO_PR_AUTHOR:-}" ]; then
+      echo "  ${cyan}Author:${reset} ${WT_INFO_PR_AUTHOR}"
+    fi
+    if [ -n "${WT_INFO_PR_CREATED:-}" ]; then
+      echo "  ${cyan}Created:${reset} $(relative_time "$WT_INFO_PR_CREATED")"
+    fi
+    if [ -n "${WT_INFO_PR_UPDATED:-}" ]; then
+      echo "  ${cyan}Updated:${reset} $(relative_time "$WT_INFO_PR_UPDATED")"
+    fi
+    if [ -n "${WT_INFO_PR_URL:-}" ]; then
+      echo "  ${cyan}URL:${reset} ${WT_INFO_PR_URL}"
+    fi
+    echo ""
+  fi
+  if [ -n "${WT_INFO_TRACKING:-}" ]; then
+    local info_ahead info_behind info_parts=""
+    info_ahead="$(git -C "$wt_path" rev-list --count "${WT_INFO_TRACKING}..HEAD" 2>/dev/null || echo 0)"
+    info_behind="$(git -C "$wt_path" rev-list --count "HEAD..${WT_INFO_TRACKING}" 2>/dev/null || echo 0)"
+    if [ "$info_ahead" -eq 0 ] && [ "$info_behind" -eq 0 ]; then
+      echo "${cyan}Tracking:${reset} up to date with ${WT_INFO_TRACKING}"
+    else
+      if [ "$info_ahead" -gt 0 ]; then
+        local w="commits"; [ "$info_ahead" -eq 1 ] && w="commit"
+        info_parts="${info_ahead} ${w} ahead"
+      fi
+      if [ "$info_behind" -gt 0 ]; then
+        local w="commits"; [ "$info_behind" -eq 1 ] && w="commit"
+        [ -n "$info_parts" ] && info_parts="${info_parts}, "
+        info_parts="${info_parts}${info_behind} ${w} behind"
+      fi
+      echo "${cyan}Tracking:${reset} ${info_parts} ${WT_INFO_TRACKING}"
+    fi
+  fi
+  if [ -n "${worktree_ports:-}" ]; then
+    echo "${cyan}Environment:${reset}"
+    echo "  WORKTREE_PORTS=${worktree_ports}"
+  fi
+  if [ -z "$(git -C "$wt_path" status --short)" ]; then
+    echo "${cyan}Git status:${reset} working tree clean"
+  else
+    echo "${cyan}Git status:${reset}"
+    git -C "$wt_path" status --short
+  fi
+}
+
+# worktree_repl <repo-root> <worktree-path> [scripts-dir] [--open]
+# Interactive loop offering shell, open, cleanup, and exit commands.
+worktree_repl() {
+  local repo_root="$1" wt_path="$2" scripts_dir="${3:-}"
+  local open_editor=false
+  if [ "${4:-}" = "--open" ]; then
+    open_editor=true
+  fi
+  local wt_name wt_port_key branch tracking pr_num pr_url
+  wt_name="$(basename "$wt_path")"
+  # Port range key includes project dir to avoid cross-repo collisions
+  wt_port_key="${wt_path#"$WORKTREES_BASE"/}"
+
+  worktree_gather_info "$wt_path"
+  branch="$WT_INFO_BRANCH"
+  tracking="$WT_INFO_TRACKING"
+  pr_num="$WT_INFO_PR_NUM"
+  pr_url="$WT_INFO_PR_URL"
+  local pr_title="$WT_INFO_PR_TITLE"
+  local pr_author="$WT_INFO_PR_AUTHOR"
+  local pr_state="$WT_INFO_PR_STATE"
+  local pr_created="$WT_INFO_PR_CREATED"
+  local pr_updated="$WT_INFO_PR_UPDATED"
 
   # --- Open editor (detects editor and sets up auto-REPL task internally) ---
   echo ""
@@ -1011,62 +1101,8 @@ worktree_repl() {
 
   _worktree_info() {
     local show_path="${1:-true}"
-    if [ "$show_path" = "true" ]; then
-      echo "${cyan}Path:${reset} $(short_path "$wt_path")"
-    fi
-    echo "${cyan}Branch:${reset} ${branch}"
-    if [ -n "${pr_num:-}" ]; then
-      echo ""
-      local state_display=""
-      case "${pr_state:-}" in
-        OPEN)   state_display=" ${green}(open)${reset}" ;;
-        MERGED) state_display=" ${magenta}(merged)${reset}" ;;
-        CLOSED) state_display=" ${red}(closed)${reset}" ;;
-      esac
-      echo "${cyan}PR #${pr_num}${reset}${state_display}${pr_title:+: ${pr_title}}"
-      if [ -n "${pr_author:-}" ]; then
-        echo "  ${cyan}Author:${reset} ${pr_author}"
-      fi
-      if [ -n "${pr_created:-}" ]; then
-        echo "  ${cyan}Created:${reset} $(relative_time "$pr_created")"
-      fi
-      if [ -n "${pr_updated:-}" ]; then
-        echo "  ${cyan}Updated:${reset} $(relative_time "$pr_updated")"
-      fi
-      if [ -n "${pr_url:-}" ]; then
-        echo "  ${cyan}URL:${reset} ${pr_url}"
-      fi
-      echo ""
-    fi
-    if [ -n "$tracking" ]; then
-      local info_ahead info_behind info_parts=""
-      info_ahead="$(git -C "$wt_path" rev-list --count "${tracking}..HEAD" 2>/dev/null || echo 0)"
-      info_behind="$(git -C "$wt_path" rev-list --count "HEAD..${tracking}" 2>/dev/null || echo 0)"
-      if [ "$info_ahead" -eq 0 ] && [ "$info_behind" -eq 0 ]; then
-        echo "${cyan}Tracking:${reset} up to date with ${tracking}"
-      else
-        if [ "$info_ahead" -gt 0 ]; then
-          local w="commits"; [ "$info_ahead" -eq 1 ] && w="commit"
-          info_parts="${info_ahead} ${w} ahead"
-        fi
-        if [ "$info_behind" -gt 0 ]; then
-          local w="commits"; [ "$info_behind" -eq 1 ] && w="commit"
-          [ -n "$info_parts" ] && info_parts="${info_parts}, "
-          info_parts="${info_parts}${info_behind} ${w} behind"
-        fi
-        echo "${cyan}Tracking:${reset} ${info_parts} ${tracking}"
-      fi
-    fi
-    if [ -n "${worktree_ports:-}" ]; then
-      echo "${cyan}Environment:${reset}"
-      echo "  WORKTREE_PORTS=${worktree_ports} (reserved for dev servers in this worktree's child shell)"
-    fi
-    if [ -z "$(git -C "$wt_path" status --short)" ]; then
-      echo "${cyan}Git status:${reset} working tree clean"
-    else
-      echo "${cyan}Git status:${reset}"
-      git -C "$wt_path" status --short
-    fi
+    local worktree_ports="${worktree_ports:-}"
+    worktree_show_info "$wt_path" "$show_path" "$worktree_ports"
   }
 
   _worktree_commands() {

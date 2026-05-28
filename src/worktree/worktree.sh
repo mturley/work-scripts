@@ -20,16 +20,22 @@ LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../../lib" && pwd)"
 # shellcheck source=../../lib/helpers.sh
 source "$LIB_DIR/helpers.sh"
 
-# --- Parse flags ---
+# --- Parse flags (two-pass: flags can appear anywhere) ---
 PERSISTENT="${WORKTREE_PERSISTENT:-true}"
 CLEANUP=false
 CLEANUP_PREFS=false
 OPEN_EDITOR=false
+STANDALONE=false
+SHOW_PORTS=false
+SHOW_SESSIONS=false
+KILL_SESSION=""
+POSITIONAL_ARGS=()
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<'HELPEOF'
-Usage: worktree [--no-persist] [pr-number|pr-url|branch-name|worktree-path] ...
+Usage: worktree [options] [pr-number|pr-url|branch-name|worktree-path] ...
        worktree --ports | --sessions | --kill-session <name>
        worktree --cleanup | --cleanup-prefs
 
@@ -45,6 +51,9 @@ Arguments:
   <arg> <arg> ...     Open multiple worktrees in parallel panes.
 
 Options:
+  --standalone        Skip mprocs and screen entirely. Opens a new shell in the
+                      worktree directory; exit the shell to return. Only works
+                      with a single worktree argument.
   --ports             Show port ranges currently allocated to worktrees.
   --open              Open an editor when entering the REPL.
   --no-persist        Skip screen wrapping (mprocs only, no persistence).
@@ -75,6 +84,7 @@ Examples:
   worktree 1234 5678 my-branch                      # multiple in mprocs
   worktree --open 1234                               # auto-open editor on REPL entry
   worktree --no-persist 1234                        # skip screen, mprocs only
+  worktree --standalone my-branch                   # shell in worktree, no mprocs
   worktree --ports                                  # show allocated port ranges
   worktree --sessions                               # list active persistent sessions
   worktree --kill-session wt-all                     # kill the persistent session
@@ -82,48 +92,10 @@ HELPEOF
       exit 0
       ;;
     --open) OPEN_EDITOR=true; shift ;;
-    --ports)
-      if [ ! -f "$PORT_RANGE_FILE" ] || [ ! -s "$PORT_RANGE_FILE" ]; then
-        echo "No port ranges allocated."
-        exit 0
-      fi
-      echo "Allocated port ranges:"
-      stale_names=()
-      while IFS=' ' read -r slot wt_name; do
-        [ -z "$slot" ] && continue
-        start=$((PORT_RANGE_BASE + slot * PORT_RANGE_SIZE))
-        end=$((start + PORT_RANGE_SIZE - 1))
-        wt_dir="${WORKTREES_BASE}/${wt_name}"
-        if [ -d "$wt_dir" ]; then
-          echo "  ${start}-${end}  ${wt_name}"
-        else
-          echo "  ${start}-${end}  ${wt_name}  (worktree missing)"
-          stale_names+=("$wt_name")
-        fi
-      done < "$PORT_RANGE_FILE"
-      if [ ${#stale_names[@]} -gt 0 ]; then
-        echo ""
-        stale_labels=()
-        for name in "${stale_names[@]}"; do
-          s=$(awk -v n="$name" '$2 == n {print $1; exit}' "$PORT_RANGE_FILE")
-          ps=$((PORT_RANGE_BASE + s * PORT_RANGE_SIZE))
-          pe=$((ps + PORT_RANGE_SIZE - 1))
-          stale_labels+=("${ps}-${pe}  ${name}")
-        done
-        selected=()
-        while IFS= read -r line; do
-          [ -n "$line" ] && selected+=("$line")
-        done <<< "$(prompt_multi_select "Free port ranges for missing worktrees?" "${stale_labels[@]}")"
-        for sel in "${selected[@]+${selected[@]}}"; do
-          freed_name="${sel#*  }"
-          release_port_range "$freed_name"
-          echo "Freed: ${sel}"
-        done
-      fi
-      exit 0
-      ;;
+    --ports) SHOW_PORTS=true; shift ;;
     --no-persist) PERSISTENT=false; shift ;;
-    --sessions) list_persistent_sessions; exit 0 ;;
+    --standalone) STANDALONE=true; shift ;;
+    --sessions) SHOW_SESSIONS=true; shift ;;
     --kill-session)
       shift
       if [ $# -eq 0 ]; then
@@ -131,27 +103,77 @@ HELPEOF
         echo "  Use --sessions to list active sessions." >&2
         exit 1
       fi
-      KILL_SESSION="$1"
-      if screen_has_session "$KILL_SESSION"; then
-        screen_kill_session "$KILL_SESSION"
-        rm -f "/tmp/worktree-screen-${KILL_SESSION}.sock"
-        rm -f "/tmp/worktree-screenrc-${KILL_SESSION}"
-        rm -f "/tmp/worktree-mprocs-${KILL_SESSION}.yaml"
-        rm -f "/tmp/worktree-mprocs-${KILL_SESSION}-count"
-        rm -f "/tmp/worktree-launch-${KILL_SESSION}.sh"
-        echo "Killed session: $KILL_SESSION"
-      else
-        echo "Session not found: $KILL_SESSION" >&2
-        echo "  Use --sessions to list active sessions." >&2
-        exit 1
-      fi
-      exit 0
+      KILL_SESSION="$1"; shift
       ;;
     --cleanup) CLEANUP=true; shift ;;
     --cleanup-prefs) CLEANUP_PREFS=true; shift ;;
-    *) break ;;
+    --) shift; while [ $# -gt 0 ]; do POSITIONAL_ARGS+=("$1"); shift; done ;;
+    --*) echo "ERROR: Unknown option: $1" >&2; echo "  Use --help for usage." >&2; exit 1 ;;
+    *) POSITIONAL_ARGS+=("$1"); shift ;;
   esac
 done
+set -- "${POSITIONAL_ARGS[@]+${POSITIONAL_ARGS[@]}}"
+
+# --- Handle early-exit flag commands ---
+if $SHOW_SESSIONS; then list_persistent_sessions; exit 0; fi
+
+if [ -n "$KILL_SESSION" ]; then
+  if screen_has_session "$KILL_SESSION"; then
+    screen_kill_session "$KILL_SESSION"
+    rm -f "/tmp/worktree-screen-${KILL_SESSION}.sock"
+    rm -f "/tmp/worktree-screenrc-${KILL_SESSION}"
+    rm -f "/tmp/worktree-mprocs-${KILL_SESSION}.yaml"
+    rm -f "/tmp/worktree-mprocs-${KILL_SESSION}-count"
+    rm -f "/tmp/worktree-launch-${KILL_SESSION}.sh"
+    echo "Killed session: $KILL_SESSION"
+  else
+    echo "Session not found: $KILL_SESSION" >&2
+    echo "  Use --sessions to list active sessions." >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+if $SHOW_PORTS; then
+  if [ ! -f "$PORT_RANGE_FILE" ] || [ ! -s "$PORT_RANGE_FILE" ]; then
+    echo "No port ranges allocated."
+    exit 0
+  fi
+  echo "Allocated port ranges:"
+  stale_names=()
+  while IFS=' ' read -r slot wt_name; do
+    [ -z "$slot" ] && continue
+    start=$((PORT_RANGE_BASE + slot * PORT_RANGE_SIZE))
+    end=$((start + PORT_RANGE_SIZE - 1))
+    wt_dir="${WORKTREES_BASE}/${wt_name}"
+    if [ -d "$wt_dir" ]; then
+      echo "  ${start}-${end}  ${wt_name}"
+    else
+      echo "  ${start}-${end}  ${wt_name}  (worktree missing)"
+      stale_names+=("$wt_name")
+    fi
+  done < "$PORT_RANGE_FILE"
+  if [ ${#stale_names[@]} -gt 0 ]; then
+    echo ""
+    stale_labels=()
+    for name in "${stale_names[@]}"; do
+      s=$(awk -v n="$name" '$2 == n {print $1; exit}' "$PORT_RANGE_FILE")
+      ps=$((PORT_RANGE_BASE + s * PORT_RANGE_SIZE))
+      pe=$((ps + PORT_RANGE_SIZE - 1))
+      stale_labels+=("${ps}-${pe}  ${name}")
+    done
+    selected=()
+    while IFS= read -r line; do
+      [ -n "$line" ] && selected+=("$line")
+    done <<< "$(prompt_multi_select "Free port ranges for missing worktrees?" "${stale_labels[@]}")"
+    for sel in "${selected[@]+${selected[@]}}"; do
+      freed_name="${sel#*  }"
+      release_port_range "$freed_name"
+      echo "Freed: ${sel}"
+    done
+  fi
+  exit 0
+fi
 
 # Clean up stale mprocs config/count files from dead sessions
 # Files are named worktree-mprocs-<PID>.yaml and worktree-mprocs-<PID>-count
@@ -199,9 +221,25 @@ fi
 REEXEC_FLAGS=()
 $OPEN_EDITOR && REEXEC_FLAGS+=(--open)
 $PERSISTENT || REEXEC_FLAGS+=(--no-persist)
+$STANDALONE && REEXEC_FLAGS+=(--standalone)
 
 CYAN="$(tput setaf 6 2>/dev/null || true)"
 RESET="$(tput sgr0 2>/dev/null || true)"
+
+# --- Standalone mode: exec a new shell in the worktree directory ---
+standalone_exec() {
+  local wt_path="$1"
+  local wt_port_key worktree_ports
+  wt_port_key="${wt_path#"$WORKTREES_BASE"/}"
+  worktree_ports="$(assign_port_range "$wt_port_key")"
+
+  worktree_gather_info "$wt_path"
+  echo ""
+  worktree_show_info "$wt_path" true "$worktree_ports"
+  echo ""
+  echo "Run ${CYAN}worktree${RESET} to enter the REPL. Exit the shell to return."
+  cd "$wt_path" && WORKTREE_PORTS="$worktree_ports" exec "$SHELL"
+}
 
 # --- Helper: generate a pane label from an argument ---
 pane_label() {
@@ -444,8 +482,14 @@ if [ $# -gt 0 ] && [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-
   exit 0
 fi
 
+# --- Standalone mode: reject multiple arguments ---
+if $STANDALONE && [ $# -gt 1 ]; then
+  echo "ERROR: --standalone only works with a single worktree argument." >&2
+  exit 1
+fi
+
 # --- Multiple arguments ---
-if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE:-}" ] && command -v mprocs &>/dev/null; }; then
+if ! $STANDALONE && { [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE:-}" ] && command -v mprocs &>/dev/null; }; }; then
   # Pre-check: ensure we're in a git repo before spawning panes, unless
   # all args are full GitHub URLs or existing worktree paths (which don't need it)
   needs_repo=false
@@ -597,7 +641,7 @@ if [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE
 fi
 
 # --- Single argument: wrap in mprocs with shell + worktree pane ---
-if [ $# -eq 1 ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
+if ! $STANDALONE && [ $# -eq 1 ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
   if ! command -v mprocs &>/dev/null; then
     echo "mprocs not found, falling back to inline mode." >&2
   else
@@ -636,6 +680,7 @@ if [ $# -eq 0 ]; then
     # .git is a file → this is a worktree
     REPO_ROOT="$(git -C "$CURRENT_DIR" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
     if [ -n "$REPO_ROOT" ]; then
+      if $STANDALONE; then standalone_exec "$CURRENT_DIR"; fi
       worktree_repl "$REPO_ROOT" "$CURRENT_DIR" "$LIB_DIR" $($OPEN_EDITOR && echo "--open")
       exit 0
     fi
@@ -649,6 +694,7 @@ if [ $# -eq 0 ]; then
       WT_PATH="${WORKTREES_BASE}/${WT_PROJECT}/${WT_NAME}"
       if [ -e "$WT_PATH/.git" ]; then
         REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
+        if $STANDALONE; then standalone_exec "$WT_PATH"; fi
         worktree_repl "$REPO_ROOT" "$WT_PATH" "$LIB_DIR" $($OPEN_EDITOR && echo "--open")
         exit 0
       fi
@@ -820,6 +866,7 @@ if ! is_pr_arg "$ARG" && resolve_worktree "$ARG"; then
     else
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
     fi
+    if $STANDALONE; then standalone_exec "$WT_PATH"; fi
     worktree_repl "$REPO_ROOT" "$WT_PATH" "$LIB_DIR" $($OPEN_EDITOR && echo "--open")
     exit 0
   fi
@@ -1045,6 +1092,7 @@ if is_pr_arg "$ARG"; then
     if [ "$SELECTED_WT" = "$REPO_ROOT" ]; then
       exit 0
     fi
+    if $STANDALONE; then standalone_exec "$WT_PATH"; fi
     worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
 
   else
@@ -1068,6 +1116,7 @@ if is_pr_arg "$ARG"; then
       echo "${CYAN}Created worktree:${RESET} $(short_path "$WT_PATH")"
 
       setup_pr_tracking "$WT_PATH" "$PR_HEAD_REF" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
+      if $STANDALONE; then standalone_exec "$WT_PATH"; fi
       worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
 
     else
@@ -1124,6 +1173,7 @@ if is_pr_arg "$ARG"; then
       PR_LOCAL_BRANCH="review/pr-${PR_NUMBER}-${SLUG}"
       setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
 
+      if $STANDALONE; then standalone_exec "$WT_PATH"; fi
       worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
     fi
   fi
@@ -1208,5 +1258,6 @@ else
       ;;
   esac
 
+  if $STANDALONE; then standalone_exec "$WT_PATH"; fi
   worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH"
 fi
