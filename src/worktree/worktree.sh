@@ -88,6 +88,7 @@ Examples:
   worktree --no-persist 1234                        # skip screen, mprocs only
   worktree --standalone my-branch                   # shell in worktree, no mprocs
   worktree --ports                                  # show allocated port ranges
+  worktree --info                                    # show worktree info (used by .worktree-env)
   worktree --sessions                               # list active persistent sessions
   worktree --kill-session wt-all                     # kill the persistent session
 HELPEOF

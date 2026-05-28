@@ -62,9 +62,9 @@ worktree --help                      # show usage help
 Sessions are persistent by default (mprocs runs inside GNU Screen 5.0+ for detach/reattach). Use `--no-persist` to skip screen. When running inside [cmux](https://cmux.com/), workspaces and splits are used instead of mprocs/screen.
 
 ```
-[h]elp     [i]nfo     [n]ame     [q]uit
-[l]og      [f]iles    [d]elete
-[e]ditor   [p]r       [s]hell    [c]laude
+help       info       name       quit
+log        files      delete
+editor     pr         shell      claude
 
 worktree [my-branch...origin/my-branch]>
 ```

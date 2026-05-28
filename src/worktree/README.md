@@ -73,15 +73,15 @@ For each category you choose, you can select which specific files to include. Se
 
 ### Interactive REPL
 
-Once a worktree is ready, all usage paths above end here (unless VS Code auto-REPL is enabled, in which case the REPL starts in VS Code's terminal instead). On entry, a tip is shown reminding you to press `[f]iles` to clone installed dependencies from the main repo. Commands are single-keystroke — just press the highlighted letter:
+Once a worktree is ready, all usage paths above end here (unless VS Code auto-REPL is enabled, in which case the REPL starts in VS Code's terminal instead). On entry, a tip is shown reminding you to type `files` to clone installed dependencies from the main repo. Type a command and press Enter (both single-letter shortcuts and full words work):
 
 ```
-worktree> h
+worktree> help
 
   REPL
     h  help      Show this help
     i  info      Show PR info with author and dates (if applicable), worktree path, tracking status, and git status
-    n  name      Rename this mprocs pane (only in mprocs)
+    n  name      Rename this mprocs pane or cmux workspace
     q  quit      Exit the REPL
 
   Worktree
@@ -92,17 +92,17 @@ worktree> h
   Tools
     e  editor    Open worktree in your editor (focuses existing window if already open)
     p  pr        Open the pull request page on GitHub (if applicable)
-    s  shell     Start a shell in the worktree (mprocs with worktree REPL + shell pane)
-    c  claude    Start Claude Code in the worktree (adds pane to mprocs session)
+    s  shell     Start a shell in the worktree
+    c  claude    Start Claude Code in the worktree
 
-[h]elp     [i]nfo     [n]ame     [q]uit
-[l]og      [f]iles    [d]elete
-[e]ditor   [p]r       [s]hell    [c]laude
+help       info       name       quit
+log        files      delete
+editor     pr         shell      claude
 
 worktree [my-branch...origin/my-branch]>
 ```
 
-I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it. If you want to run a dev environment in the worktree, you can use `s` — it starts a nested mprocs session with a `[worktree]` pane (running the REPL) and a shell pane. Pressing `s` again from the nested worktree REPL adds another shell pane to the same session instead of nesting further.
+I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it. If you want to run a dev environment in the worktree, you can use `shell` — in mprocs it starts a nested session with a `[worktree]` pane (running the REPL) and a shell pane; in cmux or standalone mode it opens an inline subshell.
 
 ### Persistent Sessions
 
@@ -150,13 +150,13 @@ Only works with a single worktree argument. Useful when you just want to `cd` in
 
 Each worktree is automatically assigned a unique port range (starting at 4020, 10 ports per worktree) so dev servers in different worktrees don't collide. The `WORKTREE_PORTS` environment variable is set in the worktree's shell with the assigned range. Use `worktree --ports` to view allocated ranges and free stale entries for removed worktrees.
 
-### Renaming Panes
+### Renaming
 
-Inside a worktree REPL running in mprocs, use the `name` (or `n`) command to rename the mprocs process pane:
+Inside a worktree REPL, use the `name` command to rename the mprocs pane or cmux workspace:
 
 ```
-worktree [my-branch]> n my-custom-name    # rename the pane
-worktree [my-branch]> name                # reset to default name
+worktree [my-branch]> name my-custom-name    # rename the pane/workspace
+worktree [my-branch]> name                   # reset to default name
 ```
 
 **Mobile-friendly configuration:**
@@ -169,10 +169,9 @@ See [remote-access.md](remote-access.md) for a guide on setting up SSH access fr
 
 ## cmux Integration
 
-When running inside [cmux](https://cmux.com/), the worktree script automatically detects the environment via the `CMUX_SOCKET_PATH` variable and uses cmux workspaces and splits instead of mprocs/screen:
+When running inside [cmux](https://cmux.com/), the worktree script automatically detects the environment via the `CMUX_SOCKET_PATH` variable and uses cmux workspaces instead of mprocs/screen:
 
-- **Multiple worktrees** → each worktree gets its own cmux workspace
-- **Single worktree** → the REPL runs inline in the current terminal (no wrapper)
+- **Worktrees** → each worktree gets its own cmux workspace (with a shell tab and a REPL tab)
 - **Persistence** → handled natively by cmux (screen is skipped entirely)
 - **Shell/Claude commands** → run inline in the current terminal (exit to return to REPL)
 - **Rename** → renames the cmux workspace instead of an mprocs pane
@@ -180,3 +179,9 @@ When running inside [cmux](https://cmux.com/), the worktree script automatically
 - **No-args discovery** → shows which worktrees already have cmux workspaces open (marked `[open]`); single selection switches to or creates a workspace, multiple selection opens only missing ones
 
 The `--no-persist` and `--standalone` flags are effectively no-ops when running in cmux.
+
+### Worktree Environment File
+
+A `.worktree-env` file is automatically generated in each worktree directory, exporting `WORKTREE_PORTS`, `WORKTREE_TITLE`, and `WORKTREE_PATH`. On first use, the script offers to add an auto-source snippet to your shell RC file (`.zshrc`, `.bashrc`, or `config.fish`) so these variables are available in any terminal opened in the worktree directory. The file also displays worktree info once per shell session via `worktree --info`.
+
+If you use Powerlevel10k with instant prompt, the setup will change `POWERLEVEL9K_INSTANT_PROMPT` to `quiet` in `~/.p10k.zsh` to allow the info output without warnings.
