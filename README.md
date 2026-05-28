@@ -59,7 +59,7 @@ worktree --sessions                  # list active persistent sessions
 worktree --help                      # show usage help
 ```
 
-Sessions are persistent by default (mprocs runs inside GNU Screen 5.0+ for detach/reattach). Use `--no-persist` to skip screen. Ideal for [remote access from a phone](src/worktree/remote-access.md) via SSH.
+Sessions are persistent by default (mprocs runs inside GNU Screen 5.0+ for detach/reattach). Use `--no-persist` to skip screen. When running inside [cmux](https://cmux.com/), workspaces and splits are used instead of mprocs/screen.
 
 ```
 [h]elp     [i]nfo     [n]ame     [q]uit

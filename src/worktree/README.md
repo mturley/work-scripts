@@ -166,3 +166,17 @@ When using persistent sessions (especially over SSH from a phone):
 Use the mprocs **zoom** command (`z` key) to expand the terminal pane to full screen, hiding the sidebar entirely. Press `z` again to unzoom. Use `Ctrl+a` to switch between processes while zoomed.
 
 See [remote-access.md](remote-access.md) for a guide on setting up SSH access from a phone.
+
+## cmux Integration
+
+When running inside [cmux](https://cmux.com/), the worktree script automatically detects the environment via the `CMUX_SOCKET_PATH` variable and uses cmux workspaces and splits instead of mprocs/screen:
+
+- **Multiple worktrees** → each worktree gets its own cmux workspace
+- **Single worktree** → the REPL runs inline in the current terminal (no wrapper)
+- **Persistence** → handled natively by cmux (screen is skipped entirely)
+- **Shell/Claude commands** → run inline in the current terminal (exit to return to REPL)
+- **Rename** → renames the cmux workspace instead of an mprocs pane
+- **Deduplication** → before creating a workspace, checks existing workspaces by working directory and switches to a match instead of creating a duplicate
+- **No-args discovery** → shows which worktrees already have cmux workspaces open (marked `[open]`); single selection switches to or creates a workspace, multiple selection opens only missing ones
+
+The `--no-persist` and `--standalone` flags are effectively no-ops when running in cmux.

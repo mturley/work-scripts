@@ -26,6 +26,7 @@ CLEANUP=false
 CLEANUP_PREFS=false
 OPEN_EDITOR=false
 STANDALONE=false
+SHOW_INFO=false
 SHOW_PORTS=false
 SHOW_SESSIONS=false
 KILL_SESSION=""
@@ -60,6 +61,7 @@ Options:
                       By default, mprocs runs inside a screen session for persistence.
   --sessions          List active persistent (screen) worktree sessions.
   --kill-session <n>  Kill a persistent session by name and clean up its temp files.
+  --info              Show worktree info for the current directory and exit.
   --cleanup           Select worktrees to remove, then clean up stale temp files and preferences.
   --cleanup-prefs     Clean up saved preferences only (editor, clone/link selections, etc.).
   -h, --help          Show this help message and exit.
@@ -92,6 +94,7 @@ HELPEOF
       exit 0
       ;;
     --open) OPEN_EDITOR=true; shift ;;
+    --info) SHOW_INFO=true; shift ;;
     --ports) SHOW_PORTS=true; shift ;;
     --no-persist) PERSISTENT=false; shift ;;
     -s|--standalone) STANDALONE=true; shift ;;
@@ -114,7 +117,40 @@ HELPEOF
 done
 set -- "${POSITIONAL_ARGS[@]+${POSITIONAL_ARGS[@]}}"
 
+# --- Detect cmux ---
+IN_CMUX=false
+if cmux_is_available; then
+  IN_CMUX=true
+fi
+
 # --- Handle early-exit flag commands ---
+if $SHOW_INFO; then
+  CURRENT_DIR="$(pwd)"
+  if [ -f "$CURRENT_DIR/.git" ] || [[ "$CURRENT_DIR" == "$WORKTREES_BASE"/* ]]; then
+    # Resolve worktree path
+    if [ -f "$CURRENT_DIR/.git" ]; then
+      INFO_WT_PATH="$CURRENT_DIR"
+    else
+      WT_REL="${CURRENT_DIR#"$WORKTREES_BASE"/}"
+      WT_PROJECT="${WT_REL%%/*}"
+      WT_REST="${WT_REL#*/}"
+      WT_NAME="${WT_REST%%/*}"
+      INFO_WT_PATH="${WORKTREES_BASE}/${WT_PROJECT}/${WT_NAME}"
+    fi
+    if [ -d "$INFO_WT_PATH" ]; then
+      INFO_PORT_KEY="${INFO_WT_PATH#"$WORKTREES_BASE"/}"
+      INFO_PORTS="$(assign_port_range "$INFO_PORT_KEY")"
+      worktree_gather_info "$INFO_WT_PATH"
+      echo ""
+      echo "${COLOR_CYAN}--- Worktree ---${COLOR_RESET}"
+      worktree_show_info "$INFO_WT_PATH" true "$INFO_PORTS"
+      echo ""
+      echo "Run ${COLOR_CYAN}worktree${COLOR_RESET} to enter the REPL."
+    fi
+  fi
+  exit 0
+fi
+
 if $SHOW_SESSIONS; then list_persistent_sessions; exit 0; fi
 
 if [ -n "$KILL_SESSION" ]; then
@@ -229,16 +265,59 @@ RESET="$(tput sgr0 2>/dev/null || true)"
 # --- Standalone mode: exec a new shell in the worktree directory ---
 standalone_exec() {
   local wt_path="$1"
-  local wt_port_key worktree_ports
+  local wt_port_key worktree_ports worktree_title
   wt_port_key="${wt_path#"$WORKTREES_BASE"/}"
   worktree_ports="$(assign_port_range "$wt_port_key")"
 
   worktree_gather_info "$wt_path"
+  if [ -n "${WT_INFO_PR_NUM:-}" ]; then
+    worktree_title="wt PR #${WT_INFO_PR_NUM}"
+  else
+    worktree_title="wt ${WT_INFO_BRANCH:-$(basename "$wt_path")}"
+  fi
+  worktree_write_env_file "$wt_path" "$worktree_ports" "$worktree_title"
+  worktree_check_shell_rc
   echo ""
   worktree_show_info "$wt_path" true "$worktree_ports"
   echo ""
   echo "Run ${CYAN}worktree${RESET} to enter the REPL. Exit the shell to return."
   cd "$wt_path" && WORKTREE_PORTS="$worktree_ports" exec "$SHELL"
+}
+
+# --- cmux mode: create or switch to a workspace for the worktree ---
+# cmux_worktree_open writes the env file and creates/switches to a cmux workspace.
+# Does not exit — caller decides whether to exit or continue.
+cmux_worktree_open() {
+  local wt_path="$1" focus="${2:---focus}"
+  local wt_port_key worktree_ports worktree_title label
+  wt_port_key="${wt_path#"$WORKTREES_BASE"/}"
+  worktree_ports="$(assign_port_range "$wt_port_key")"
+
+  worktree_gather_info "$wt_path"
+  if [ -n "${WT_INFO_PR_NUM:-}" ]; then
+    worktree_title="wt PR #${WT_INFO_PR_NUM}"
+  else
+    worktree_title="wt ${WT_INFO_BRANCH:-$(basename "$wt_path")}"
+  fi
+  worktree_write_env_file "$wt_path" "$worktree_ports" "$worktree_title"
+  label="$(pane_label "$wt_path")"
+  cmux_open_worktree "$label" "$wt_path" "$focus"
+}
+
+# cmux_worktree_exec calls cmux_worktree_open and exits.
+# Used at REPL entry points as an alternative to entering the REPL.
+# If we're already in the workspace for this worktree, returns without
+# exiting so the caller falls through to the REPL.
+cmux_worktree_exec() {
+  local wt_path="$1"
+  local existing_ref
+  existing_ref="$(cmux_find_workspace_by_cwd "$wt_path")"
+  if [ -n "$existing_ref" ] && [ "$existing_ref" = "$(cmux identify 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('caller',{}).get('workspace_ref',''))" 2>/dev/null)" ]; then
+    # Already in this workspace — fall through to the REPL
+    return
+  fi
+  cmux_worktree_open "$wt_path" --focus
+  exit 0
 }
 
 # --- Helper: generate a pane label from an argument ---
@@ -449,6 +528,17 @@ if $CLEANUP_PREFS; then
   exit 0
 fi
 
+# --- Inside cmux with multiple args: handle each arg separately ---
+# Each arg is processed by re-running the script, which resolves the worktree
+# and creates a cmux workspace at the REPL entry point.
+if [ $# -gt 1 ] && $IN_CMUX && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
+  SELF="$(readlink -f "$0")"
+  for arg in "$@"; do
+    "$SELF" "${REEXEC_FLAGS[@]+${REEXEC_FLAGS[@]}}" "$arg"
+  done
+  exit 0
+fi
+
 # --- Inside mprocs: add pane(s) to the existing session ---
 if [ $# -gt 0 ] && [ -n "${MPROCS_SOCKET:-}" ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
   SELF="$(readlink -f "$0")"
@@ -489,7 +579,7 @@ if $STANDALONE && [ $# -gt 1 ]; then
 fi
 
 # --- Multiple arguments ---
-if ! $STANDALONE && { [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE:-}" ] && command -v mprocs &>/dev/null; }; }; then
+if ! $STANDALONE && { [ $# -gt 1 ] || { [ $# -eq 1 ] && ! $IN_CMUX && $PERSISTENT && [ -z "${WORKTREE_MPROCS_PANE:-}" ] && command -v mprocs &>/dev/null; }; }; then
   # Pre-check: ensure we're in a git repo before spawning panes, unless
   # all args are full GitHub URLs or existing worktree paths (which don't need it)
   needs_repo=false
@@ -641,7 +731,7 @@ if ! $STANDALONE && { [ $# -gt 1 ] || { [ $# -eq 1 ] && $PERSISTENT && [ -z "${W
 fi
 
 # --- Single argument: wrap in mprocs with shell + worktree pane ---
-if ! $STANDALONE && [ $# -eq 1 ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
+if ! $STANDALONE && ! $IN_CMUX && [ $# -eq 1 ] && [ -z "${WORKTREE_MPROCS_PANE:-}" ]; then
   if ! command -v mprocs &>/dev/null; then
     echo "mprocs not found, falling back to inline mode." >&2
   else
@@ -681,6 +771,7 @@ if [ $# -eq 0 ]; then
     REPO_ROOT="$(git -C "$CURRENT_DIR" worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
     if [ -n "$REPO_ROOT" ]; then
       if $STANDALONE; then standalone_exec "$CURRENT_DIR"; fi
+      if $IN_CMUX; then cmux_worktree_exec "$CURRENT_DIR"; fi
       worktree_repl "$REPO_ROOT" "$CURRENT_DIR" "$LIB_DIR" $($OPEN_EDITOR && echo "--open")
       exit 0
     fi
@@ -695,6 +786,7 @@ if [ $# -eq 0 ]; then
       if [ -e "$WT_PATH/.git" ]; then
         REPO_ROOT="$(git -C "$WT_PATH" worktree list --porcelain | head -1 | sed 's/^worktree //')"
         if $STANDALONE; then standalone_exec "$WT_PATH"; fi
+        if $IN_CMUX; then cmux_worktree_exec "$WT_PATH"; fi
         worktree_repl "$REPO_ROOT" "$WT_PATH" "$LIB_DIR" $($OPEN_EDITOR && echo "--open")
         exit 0
       fi
@@ -709,8 +801,8 @@ if [ $# -eq 0 ]; then
     exit 0
   fi
 
-  # In persistent mode, auto-select all usable worktrees (no interactive prompt)
-  if $PERSISTENT; then
+  # In persistent mode (non-cmux), auto-select all usable worktrees (no interactive prompt)
+  if $PERSISTENT && ! $IN_CMUX; then
     selected_paths=()
     for i in "${!disc_wt_paths[@]}"; do
       wt="${disc_wt_paths[$i]}"
@@ -723,6 +815,15 @@ if [ $# -eq 0 ]; then
     fi
   fi
 
+  # In cmux, build a map of which worktrees already have cmux workspaces open
+  if $IN_CMUX; then
+    disc_wt_cmux_refs=()
+    for i in "${!disc_wt_paths[@]}"; do
+      ref="$(cmux_find_workspace_by_cwd "${disc_wt_paths[$i]}")"
+      disc_wt_cmux_refs+=("$ref")
+    done
+  fi
+
   # Display worktree list grouped by repo
   echo ""
   echo "Select a worktree (comma-separated for multiple, 'all' for all):"
@@ -730,7 +831,11 @@ if [ $# -eq 0 ]; then
     echo "  ${COLOR_CYAN}${repo}:${COLOR_RESET}"
     for i in "${!disc_wt_paths[@]}"; do
       if [ "${disc_wt_repos[$i]}" = "$repo" ]; then
-        echo "    ${COLOR_BLUE}$((i+1)))${COLOR_RESET} ${disc_wt_labels[$i]}"
+        local_label="${disc_wt_labels[$i]}"
+        if $IN_CMUX && [ -n "${disc_wt_cmux_refs[$i]:-}" ]; then
+          local_label="${local_label} ${COLOR_GREEN}[open]${COLOR_RESET}"
+        fi
+        echo "    ${COLOR_BLUE}$((i+1)))${COLOR_RESET} ${local_label}"
       fi
     done
   done
@@ -740,7 +845,22 @@ if [ $# -eq 0 ]; then
     read -r input
 
     if [ "$input" = "all" ]; then
-      # Collect all usable worktree paths (skip prunable/missing/orphaned)
+      if $IN_CMUX; then
+        # In cmux: create workspaces for each worktree (dedup handled by cmux_open_worktree)
+        opened=0
+        for i in "${!disc_wt_paths[@]}"; do
+          wt="${disc_wt_paths[$i]}"
+          if [ -d "$wt" ] && [ -e "$wt/.git" ] && [ "${disc_wt_prunable[$i]}" != "true" ]; then
+            cmux_worktree_open "$wt" --no-focus
+            opened=$((opened + 1))
+          fi
+        done
+        if [ "$opened" -eq 0 ]; then
+          echo "No usable worktrees to open."
+        fi
+        exit 0
+      fi
+      # Non-cmux: collect all usable worktree paths
       selected_paths=()
       for i in "${!disc_wt_paths[@]}"; do
         wt="${disc_wt_paths[$i]}"
@@ -774,8 +894,15 @@ if [ $# -eq 0 ]; then
       continue
     fi
 
-    # Multiple selections: re-exec with all selected paths
+    # Multiple selections
     if [ ${#selected_indices[@]} -gt 1 ]; then
+      if $IN_CMUX; then
+        # In cmux: create workspaces for each selection
+        for idx in "${selected_indices[@]}"; do
+          cmux_worktree_open "${disc_wt_paths[$idx]}" --no-focus
+        done
+        exit 0
+      fi
       selected_paths=()
       for idx in "${selected_indices[@]}"; do
         selected_paths+=("${disc_wt_paths[$idx]}")
@@ -788,6 +915,11 @@ if [ $# -eq 0 ]; then
   done
 
   WT_PATH="${disc_wt_paths[${selected_indices[0]}]}"
+
+  # In cmux, single selection: switch to existing workspace or create one
+  if $IN_CMUX; then
+    cmux_worktree_exec "$WT_PATH"
+  fi
 
   # Handle problematic worktrees
   if [ "${disc_wt_prunable[${selected_indices[0]}]}" = "true" ]; then
@@ -867,6 +999,7 @@ if ! is_pr_arg "$ARG" && resolve_worktree "$ARG"; then
       echo "${CYAN}Reusing worktree:${RESET} $(short_path "$WT_PATH")"
     fi
     if $STANDALONE; then standalone_exec "$WT_PATH"; fi
+    if $IN_CMUX; then cmux_worktree_exec "$WT_PATH"; fi
     worktree_repl "$REPO_ROOT" "$WT_PATH" "$LIB_DIR" $($OPEN_EDITOR && echo "--open")
     exit 0
   fi
@@ -1093,6 +1226,7 @@ if is_pr_arg "$ARG"; then
       exit 0
     fi
     if $STANDALONE; then standalone_exec "$WT_PATH"; fi
+    if $IN_CMUX; then cmux_worktree_exec "$WT_PATH"; fi
     worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
 
   else
@@ -1117,6 +1251,7 @@ if is_pr_arg "$ARG"; then
 
       setup_pr_tracking "$WT_PATH" "$PR_HEAD_REF" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
       if $STANDALONE; then standalone_exec "$WT_PATH"; fi
+      if $IN_CMUX; then cmux_worktree_exec "$WT_PATH"; fi
       worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
 
     else
@@ -1174,6 +1309,7 @@ if is_pr_arg "$ARG"; then
       setup_pr_tracking "$WT_PATH" "$PR_LOCAL_BRANCH" "$PR_HEAD_OWNER" "$PR_HEAD_REF"
 
       if $STANDALONE; then standalone_exec "$WT_PATH"; fi
+      if $IN_CMUX; then cmux_worktree_exec "$WT_PATH"; fi
       worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH" $($OPEN_EDITOR && echo "--open")
     fi
   fi
@@ -1259,5 +1395,6 @@ else
   esac
 
   if $STANDALONE; then standalone_exec "$WT_PATH"; fi
+  if $IN_CMUX; then cmux_worktree_exec "$WT_PATH"; fi
   worktree_post_setup "$LIB_DIR" "$REPO_ROOT" "$WT_PATH"
 fi
