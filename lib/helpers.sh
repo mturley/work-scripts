@@ -312,8 +312,8 @@ cmux_open_worktree() {
   if [ -n "${existing_ref:-}" ]; then
     if [ "$focus" = "true" ]; then
       cmux select-workspace --workspace "$existing_ref" >/dev/null 2>&1
+      echo "Switched to workspace: $label"
     fi
-    echo "Switched to workspace: $label"
   else
     worktree_check_shell_rc
     local self_cmd
