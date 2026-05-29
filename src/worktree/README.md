@@ -69,7 +69,9 @@ The `[f]iles` REPL command lets you clone files from the main working tree into 
 
 For each category you choose, you can select which specific files to include. Selections are cached separately per repo (in `/tmp`) and offered for reuse next time.
 
-**Copy strategy** — on macOS (APFS), all targets are cloned using `cp -Rc` for copy-on-write clones (writes don't affect the original). On other platforms, all targets are copied via `rsync -a`.
+**Dotfile method** — after selecting dotfiles, you're asked whether to **symlink** or **clone** them. Symlinks mean changes to environment files (`.env.local`, etc.) in the main repo automatically affect all worktrees — no need to update each one separately. Clones create independent copies. This preference is cached alongside the file selection and reused together.
+
+**Copy strategy** — cloned targets use `cp -Rc` on macOS (APFS copy-on-write) or `rsync -a` on other platforms. Directories (dependencies, build artifacts) are always cloned, never symlinked.
 
 ### Interactive REPL
 
@@ -172,7 +174,10 @@ See [remote-access.md](remote-access.md) for a guide on setting up SSH access fr
 
 When running inside [cmux](https://cmux.com/), the worktree script automatically detects the environment via the `CMUX_SOCKET_PATH` variable and uses cmux workspaces instead of mprocs/screen:
 
-- **Worktrees** → each worktree gets its own cmux workspace (with a shell tab and a REPL tab)
+- **Workspace layout** → each worktree gets a cmux workspace with a split layout:
+  - **Top-left (1/3 height):** two terminal tabs — a generic shell and the worktree REPL
+  - **Bottom-left (2/3 height):** `cmux claude-teams` for AI-assisted development
+  - **Right (50% width, optional):** browser tabs for the associated PR and/or Jira issue, shown when URLs are detected
 - **Persistence** → handled natively by cmux (screen is skipped entirely)
 - **Shell/Claude commands** → run inline in the current terminal (exit to return to REPL)
 - **Rename** → renames the cmux workspace instead of an mprocs pane

@@ -294,7 +294,19 @@ cmux_worktree_open() {
   worktree_title="wt ${WT_INFO_BRANCH:-$(basename "$wt_path")}"
   worktree_write_env_file "$wt_path" "$worktree_ports" "$worktree_title"
   label="$(pane_label "$wt_path")"
-  cmux_open_worktree "$label" "$wt_path" "$focus"
+
+  # Build browser URL arguments for the cmux layout
+  local pr_url="${WT_INFO_PR_URL:-}"
+  local jira_url=""
+  if [ -n "${WT_INFO_JIRA_ISSUES:-}" ] && [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
+    local first_issue
+    first_issue="$(echo "$WT_INFO_JIRA_ISSUES" | awk '{print $1}')"
+    if [ -n "$first_issue" ]; then
+      jira_url="https://${WT_INFO_JIRA_HOST}/browse/${first_issue}"
+    fi
+  fi
+
+  cmux_open_worktree "$label" "$wt_path" "$focus" "$pr_url" "$jira_url"
 }
 
 # cmux_worktree_exec calls cmux_worktree_open and exits.
@@ -371,6 +383,12 @@ cleanup_preferences() {
     pref_files+=("$f")
     pref_labels+=("Clone ${kind} selection for ${repo}")
   done < <(find -L /tmp -maxdepth 1 -name "worktree-clone-*" 2>/dev/null | sort)
+  while IFS= read -r f; do
+    local_name="$(basename "$f")"
+    repo="${local_name#worktree-dotfile-method-}"
+    pref_files+=("$f")
+    pref_labels+=("Dotfile method for ${repo} ($(cat "$f"))")
+  done < <(find -L /tmp -maxdepth 1 -name "worktree-dotfile-method-*" 2>/dev/null | sort)
   while IFS= read -r f; do
     local_name="$(basename "$f")"
     kind="${local_name#worktree-link-}"

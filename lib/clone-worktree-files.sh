@@ -4,12 +4,14 @@
 # Usage:
 #   clone-worktree-files.sh --list <source-root>
 #   clone-worktree-files.sh --clone <source-root> <dest-root> <rel-path>...
+#   clone-worktree-files.sh --link <source-root> <dest-root> <rel-path>...
 #
 # Targets: node_modules/ directories, build output directories (dist/, bin/),
 # and top-level dotfiles/dotdirs (config like .env.local, .husky, etc.).
 #
 # --list: prints relative paths of cloneable targets, one per line.
 # --clone: clones the specified relative paths from source to dest.
+# --link: symlinks the specified relative paths from source to dest.
 #
 # Copy strategy (detected once at runtime):
 #   macOS (APFS) — uses `cp -Rc` for copy-on-write clones.
@@ -69,6 +71,48 @@ case "$MODE" in
         echo "$base"
       fi
     done
+    ;;
+
+  --link)
+    DEST_ROOT="${3:?Missing dest root}"
+    shift 3
+    if [ $# -eq 0 ]; then
+      echo "No paths specified to link."
+      exit 0
+    fi
+
+    DONE=0
+    ERRORS=0
+
+    for rel in "$@"; do
+      src="${SOURCE_ROOT}/${rel}"
+      dest="${DEST_ROOT}/${rel}"
+
+      if [ ! -e "$src" ]; then
+        echo "  SKIP (not found): $rel"
+        continue
+      fi
+
+      mkdir -p "$(dirname "$dest")"
+
+      if [ -L "$dest" ] || [ -e "$dest" ]; then
+        rm -rf "$dest"
+      fi
+
+      printf "  Linking ${rel}... "
+      if ln -s "$src" "$dest" 2>/dev/null; then
+        echo "done"
+        DONE=$((DONE + 1))
+      else
+        echo "ERROR" >&2
+        ERRORS=$((ERRORS + 1))
+      fi
+    done
+
+    echo "Done: ${DONE} entries."
+    if [ "$ERRORS" -gt 0 ]; then
+      echo "Errors: ${ERRORS}." >&2
+    fi
     ;;
 
   --clone)
@@ -155,7 +199,7 @@ case "$MODE" in
     ;;
 
   *)
-    echo "Unknown mode: $MODE. Use --list-dirs, --list-dotfiles, or --clone." >&2
+    echo "Unknown mode: $MODE. Use --list-dirs, --list-dotfiles, --clone, or --link." >&2
     exit 1
     ;;
 esac

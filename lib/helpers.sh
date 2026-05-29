@@ -292,42 +292,86 @@ for ws in data.get('workspaces', []):
 " "$target_path" 2>/dev/null
 }
 
-# cmux_open_worktree <label> <worktree-path> [--focus|--no-focus]
+# cmux_open_worktree <label> <worktree-path> <--focus|--no-focus> [<pr-url>] [<jira-url>]
 # Finds an existing cmux workspace by working directory or creates a new one.
-# If found, selects it. If not, creates a workspace cd'd to the worktree.
-# The .worktree-env file (written during worktree setup) handles env vars and info display.
+# If found, selects it. If not, creates a workspace with a split layout:
+#   - Top-left (1/3): terminal tabs (shell + worktree REPL)
+#   - Bottom-left (2/3): cmux claude-teams
+#   - Right (optional, 50/50): browser tabs for PR and/or Jira URLs
 cmux_open_worktree() {
   local label="$1" wt_path="$2"
   local focus="true"
   if [ "${3:-}" = "--no-focus" ]; then
     focus="false"
   fi
+  local pr_url="${4:-}" jira_url="${5:-}"
   local existing_ref
   if [ -d "$wt_path" ]; then
     existing_ref="$(cmux_find_workspace_by_cwd "$wt_path")"
   fi
   if [ -n "${existing_ref:-}" ]; then
-    cmux select-workspace --workspace "$existing_ref" >/dev/null 2>&1
+    if [ "$focus" = "true" ]; then
+      cmux select-workspace --workspace "$existing_ref" >/dev/null 2>&1
+    fi
     echo "Switched to workspace: $label"
   else
     worktree_check_shell_rc
+    local self_cmd
+    self_cmd="$(command -v worktree 2>/dev/null || echo worktree)"
+
+    # Build left side: vertical split (1/3 top, 2/3 bottom)
+    local left_layout
+    left_layout="{\"direction\":\"vertical\",\"split\":0.33,\"children\":["
+    # Top pane: shell tab + worktree REPL tab
+    left_layout="${left_layout}{\"pane\":{\"surfaces\":["
+    left_layout="${left_layout}{\"type\":\"terminal\"}"
+    left_layout="${left_layout},{\"type\":\"terminal\",\"command\":\"${self_cmd}\"}"
+    left_layout="${left_layout}]}},"
+    # Bottom pane: cmux claude-teams
+    left_layout="${left_layout}{\"pane\":{\"surfaces\":["
+    left_layout="${left_layout}{\"type\":\"terminal\",\"command\":\"clear && cmux claude-teams\"}"
+    left_layout="${left_layout}]}}"
+    left_layout="${left_layout}]}"
+
+    local layout_json
+    # If we have browser URLs, wrap in horizontal split
+    if [ -n "$pr_url" ] || [ -n "$jira_url" ]; then
+      local browser_surfaces=""
+      if [ -n "$pr_url" ]; then
+        browser_surfaces="{\"type\":\"browser\",\"url\":\"${pr_url}\"}"
+      fi
+      if [ -n "$jira_url" ]; then
+        if [ -n "$browser_surfaces" ]; then
+          browser_surfaces="${browser_surfaces},"
+        fi
+        browser_surfaces="${browser_surfaces}{\"type\":\"browser\",\"url\":\"${jira_url}\"}"
+      fi
+      layout_json="{\"direction\":\"horizontal\",\"split\":0.5,\"children\":["
+      layout_json="${layout_json}${left_layout},"
+      layout_json="${layout_json}{\"pane\":{\"surfaces\":[${browser_surfaces}]}}"
+      layout_json="${layout_json}]}"
+    else
+      layout_json="$left_layout"
+    fi
+
     local ws_output
-    ws_output="$(cmux new-workspace --name "$label" --cwd "$wt_path" --focus "$focus" 2>&1)"
+    ws_output="$(cmux new-workspace --name "$label" --cwd "$wt_path" --focus "$focus" --layout "$layout_json" 2>&1)"
     local ws_ref
     ws_ref="$(echo "$ws_output" | awk '{print $2}')"
+
+    # Rename the worktree REPL tab (second surface in the first pane)
     if [ -n "$ws_ref" ]; then
-      # Add a second tab running the worktree REPL
-      local tab_output
-      tab_output="$(cmux tab-action --action new-terminal-right --workspace "$ws_ref" 2>&1)"
-      local new_tab
-      new_tab="$(echo "$tab_output" | sed -n 's/.*created=tab:\([0-9]*\).*/\1/p')"
-      if [ -n "$new_tab" ]; then
-        local self_cmd
-        self_cmd="$(command -v worktree 2>/dev/null || echo worktree)"
-        cmux rename-tab --tab "tab:${new_tab}" --workspace "$ws_ref" "worktree" >/dev/null 2>&1
-        cmux send --surface "surface:${new_tab}" --workspace "$ws_ref" "'$self_cmd'\n" >/dev/null 2>&1
+      local first_pane
+      first_pane="$(cmux list-panes --workspace "$ws_ref" 2>/dev/null | awk 'NR==1 {for(i=1;i<=NF;i++) if($i ~ /^pane:/) {print $i; exit}}')"
+      if [ -n "$first_pane" ]; then
+        local worktree_surface
+        worktree_surface="$(cmux list-pane-surfaces --workspace "$ws_ref" --pane "$first_pane" 2>/dev/null | awk 'NR==2 {for(i=1;i<=NF;i++) if($i ~ /^surface:/) {print $i; exit}}')"
+        if [ -n "$worktree_surface" ]; then
+          cmux rename-tab --workspace "$ws_ref" --surface "$worktree_surface" "worktree" >/dev/null 2>&1
+        fi
       fi
     fi
+
     echo "Created workspace: $label"
   fi
 }
@@ -345,12 +389,14 @@ worktree_write_env_file() {
 export WORKTREE_PORTS="$ports"
 export WORKTREE_TITLE="$title"
 export WORKTREE_PATH="$wt_path"
-if [ -z "\${_WORKTREE_ENV_SHOWN:-}" ]; then
-  _WORKTREE_ENV_SHOWN=1
-  if command -v worktree >/dev/null 2>&1; then
-    worktree --info
+case "\$-" in *i*)
+  if [ -z "\${_WORKTREE_ENV_SHOWN:-}" ]; then
+    _WORKTREE_ENV_SHOWN=1
+    if command -v worktree >/dev/null 2>&1; then
+      worktree --info
+    fi
   fi
-fi
+;; esac
 ENVEOF
 
   # Ensure .worktree-env is in the repo's git exclude
@@ -727,16 +773,18 @@ remove_worktree() {
 
 
 # clone_worktree_files <scripts-dir> <repo-root> <worktree-path>
-# Prompts the user to clone gitignored files from the main clone into a new
-# worktree. On macOS, uses APFS copy-on-write clones (cp -Rc). On other
-# platforms, symlinks most files but copies node_modules via rsync.
-# Dotfile and dir selections are cached separately in /tmp.
-# Returns 0 if files were cloned, 1 otherwise.
+# Prompts the user to clone or symlink gitignored files from the main clone
+# into a new worktree. Top-level dotfiles can be symlinked (stays in sync) or
+# cloned; directories are always cloned. On macOS, clones use APFS copy-on-write
+# (cp -Rc). On other platforms, clones use rsync.
+# Dotfile/dir selections and the dotfile method are cached separately in /tmp.
+# Returns 0 if files were cloned/linked, 1 otherwise.
 clone_worktree_files() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
   local repo_name
   repo_name="$(basename "$repo_root")"
   local cache_dotfiles="/tmp/worktree-clone-dotfiles-${repo_name}"
+  local cache_dotfiles_method="/tmp/worktree-dotfile-method-${repo_name}"
   local cache_dirs="/tmp/worktree-clone-dirs-${repo_name}"
 
   # --- Initial prompt: what level of cloning/linking? ---
@@ -782,6 +830,7 @@ clone_worktree_files() {
   fi
 
   local clone_paths=()
+  local link_paths=()
 
   # --- Dotfiles (both modes) ---
   local dotfile_targets
@@ -791,13 +840,22 @@ clone_worktree_files() {
     while IFS= read -r line; do dotfile_options+=("$line"); done <<< "$dotfile_targets"
 
     local dotfile_selected=()
-    dotfile_selected=("$(clone_worktree_select_cached "$cache_dotfiles" "$repo_name" "dotfiles" "Which dotfiles to clone?" "${dotfile_options[@]}")")
+    dotfile_selected=("$(clone_worktree_select_cached "$cache_dotfiles" "$repo_name" "dotfiles" "Which dotfiles?" --method-cache "$cache_dotfiles_method" "${dotfile_options[@]}")")
     # Re-split output into array (prompt_multi_select outputs one per line)
     local dotfile_final=()
     if [ -n "${dotfile_selected[0]}" ]; then
       while IFS= read -r line; do [ -n "$line" ] && dotfile_final+=("$line"); done <<< "${dotfile_selected[0]}"
     fi
-    for df in "${dotfile_final[@]+${dotfile_final[@]}}"; do clone_paths+=("$df"); done
+    # Read method from cache (function runs in subshell so globals don't propagate)
+    local dotfile_method="clone"
+    if [ -f "$cache_dotfiles_method" ]; then
+      dotfile_method="$(cat "$cache_dotfiles_method")"
+    fi
+    if [ "$dotfile_method" = "symlink" ]; then
+      for df in "${dotfile_final[@]+${dotfile_final[@]}}"; do link_paths+=("$df"); done
+    else
+      for df in "${dotfile_final[@]+${dotfile_final[@]}}"; do clone_paths+=("$df"); done
+    fi
   fi
 
   # --- Dirs (only in "all" mode) ---
@@ -818,25 +876,40 @@ clone_worktree_files() {
     fi
   fi
 
-  if [ ${#clone_paths[@]} -eq 0 ]; then
+  if [ ${#clone_paths[@]} -eq 0 ] && [ ${#link_paths[@]} -eq 0 ]; then
     return 1
   fi
 
-  "$scripts_dir/clone-worktree-files.sh" --clone "$repo_root" "$wt_path" "${clone_paths[@]}"
+  if [ ${#link_paths[@]} -gt 0 ]; then
+    "$scripts_dir/clone-worktree-files.sh" --link "$repo_root" "$wt_path" "${link_paths[@]}"
+  fi
+  if [ ${#clone_paths[@]} -gt 0 ]; then
+    "$scripts_dir/clone-worktree-files.sh" --clone "$repo_root" "$wt_path" "${clone_paths[@]}"
+  fi
   if [ "$(uname -s)" = "Darwin" ]; then
     osascript -e "display alert \"Clone Complete\" message \"Finished cloning files into $(basename "$wt_path").\" buttons {\"OK\"} default button \"OK\"" &>/dev/null &
   fi
   return 0
 }
 
-# clone_worktree_select_cached <cache-file> <repo-name> <label> <prompt> <options...>
+# clone_worktree_select_cached <cache-file> <repo-name> <label> <prompt> [--method-cache <file>] <options...>
 # Checks for a cached selection, offers to reuse it, or prompts with
 # prompt_multi_select. Saves the new selection to the cache file.
 # Prints selected items to stdout (one per line).
+# When --method-cache is provided, also prompts for clone vs symlink method
+# and caches it. Sets global CLONE_SELECT_METHOD to "clone" or "symlink".
 clone_worktree_select_cached() {
   local cache_file="$1" repo_name="$2" label="$3" prompt_msg="$4"
   shift 4
+
+  local method_cache=""
+  if [ "${1:-}" = "--method-cache" ]; then
+    method_cache="$2"
+    shift 2
+  fi
   local options=("$@")
+
+  CLONE_SELECT_METHOD="clone"
 
   # Check for cached selection
   if [ -f "$cache_file" ]; then
@@ -853,8 +926,15 @@ clone_worktree_select_cached() {
     done <<< "$cached"
 
     if $all_valid && [ -n "$cached" ]; then
+      local method_hint=""
+      if [ -n "$method_cache" ] && [ -f "$method_cache" ]; then
+        local cached_method
+        cached_method="$(cat "$method_cache")"
+        method_hint=" (${cached_method}d)"
+        CLONE_SELECT_METHOD="$cached_method"
+      fi
       echo "" >&2
-      echo "Previous ${label} selection for ${repo_name}:" >&2
+      echo "Previous ${label} selection for ${repo_name}${method_hint}:" >&2
       while IFS= read -r item; do echo "  - $item" >&2; done <<< "$cached"
       if prompt_yn "Use this selection?"; then
         echo "$cached"
@@ -868,6 +948,28 @@ clone_worktree_select_cached() {
   selected="$(prompt_multi_select "$prompt_msg" "${options[@]}")"
   if [ -n "$selected" ]; then
     echo "$selected" > "$cache_file"
+
+    # Prompt for method if method cache is enabled and items were selected
+    if [ -n "$method_cache" ]; then
+      echo "" >&2
+      echo "Symlink keeps dotfiles in sync with the main repo." >&2
+      echo "Clone creates independent copy-on-write copies." >&2
+      echo "" >&2
+      echo "  ${COLOR_BLUE}1)${COLOR_RESET} Symlink" >&2
+      echo "  ${COLOR_BLUE}2)${COLOR_RESET} Clone" >&2
+      echo "" >&2
+      while true; do
+        printf "Select [${COLOR_BLUE}1${COLOR_RESET}/${COLOR_BLUE}2${COLOR_RESET}]: " >&2
+        read -r method_input
+        case "$method_input" in
+          1) CLONE_SELECT_METHOD="symlink"; break ;;
+          2) CLONE_SELECT_METHOD="clone"; break ;;
+          *) printf "Please answer ${COLOR_BLUE}1${COLOR_RESET} or ${COLOR_BLUE}2${COLOR_RESET}.\n" >&2 ;;
+        esac
+      done
+      echo "$CLONE_SELECT_METHOD" > "$method_cache"
+    fi
+
     echo "$selected"
   fi
 }
@@ -1298,8 +1400,12 @@ worktree_gather_jira_info() {
     fi
   fi
   if [ -n "${WT_INFO_PR_BODY:-}" ]; then
+    local body_stripped
+    body_stripped="$(echo "$WT_INFO_PR_BODY" | python3 -c "
+import sys, re
+print(re.sub(r'<!--.*?-->', '', sys.stdin.read(), flags=re.DOTALL))" 2>/dev/null || echo "$WT_INFO_PR_BODY")"
     local body_matches
-    body_matches="$(echo "$WT_INFO_PR_BODY" | grep -oE "$jira_pattern" 2>/dev/null || true)"
+    body_matches="$(echo "$body_stripped" | grep -oE "$jira_pattern" 2>/dev/null || true)"
     if [ -n "$body_matches" ]; then
       found_issues="${found_issues:+$found_issues }$body_matches"
     fi
@@ -1441,7 +1547,11 @@ worktree_show_info() {
       MERGED) state_display=" ${magenta}(merged)${reset}" ;;
       CLOSED) state_display=" ${red}(closed)${reset}" ;;
     esac
-    echo "${cyan}PR #${WT_INFO_PR_NUM}${reset}${state_display}${WT_INFO_PR_TITLE:+: ${WT_INFO_PR_TITLE}}"
+    local pr_link="${cyan}PR #${WT_INFO_PR_NUM}${reset}"
+    if [ -n "${WT_INFO_PR_URL:-}" ]; then
+      pr_link="\033]8;;${WT_INFO_PR_URL}\033\\${cyan}PR #${WT_INFO_PR_NUM}${reset}\033]8;;\033\\"
+    fi
+    printf "${pr_link}${state_display}${WT_INFO_PR_TITLE:+: ${WT_INFO_PR_TITLE}}\n"
     if [ -n "${WT_INFO_PR_AUTHOR:-}" ]; then
       echo "  ${cyan}Author:${reset} ${WT_INFO_PR_AUTHOR}"
     fi
@@ -1477,12 +1587,20 @@ worktree_show_info() {
         priority_emoji="$(worktree_jira_emoji priority "$j_priority")"
         priority_colored="$(worktree_jira_priority_color "$j_priority" "$red" "$yellow" "$green" "$blue" "$reset")"
         status_colored="$(worktree_jira_status_color "$j_status" "$green" "$yellow" "$cyan" "$magenta" "$reset")"
-        echo "${cyan}Jira:${reset} ${bold}${jira_key}${reset} ${type_emoji}${j_type} ${priority_emoji}${priority_colored} (${status_colored})${j_summary:+: ${j_summary}}"
+        local jira_link="${bold}${jira_key}${reset}"
+        if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
+          jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${bold}${jira_key}${reset}\033]8;;\033\\"
+        fi
+        printf "${cyan}Jira:${reset} ${jira_link} ${type_emoji}${j_type} ${priority_emoji}${priority_colored} (${status_colored})${j_summary:+: ${j_summary}}\n"
         if [ -n "$j_assignee" ]; then
           echo "  ${cyan}Assignee:${reset} ${j_assignee}"
         fi
       else
-        echo "${cyan}Jira:${reset} ${bold}${jira_key}${reset}"
+        local jira_link="${bold}${jira_key}${reset}"
+        if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
+          jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${bold}${jira_key}${reset}\033]8;;\033\\"
+        fi
+        printf "${cyan}Jira:${reset} ${jira_link}\n"
       fi
       if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
         echo "  ${cyan}URL:${reset} ${blue}https://${WT_INFO_JIRA_HOST}/browse/${jira_key}${reset}"
@@ -1507,13 +1625,17 @@ worktree_show_info() {
           priority_emoji="$(worktree_jira_emoji priority "$j_priority")"
           priority_colored="$(worktree_jira_priority_color "$j_priority" "$red" "$yellow" "$green" "$blue" "$reset")"
           status_colored="$(worktree_jira_status_color "$j_status" "$green" "$yellow" "$cyan" "$magenta" "$reset")"
-          echo "  ${bold}${jira_key}${reset} ${type_emoji}${j_type} ${priority_emoji}${priority_colored} (${status_colored}): ${j_summary}  [${j_assignee:-unassigned}]"
-        else
-          local url_suffix=""
+          local jira_link="${bold}${jira_key}${reset}"
           if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
-            url_suffix="  ${blue}https://${WT_INFO_JIRA_HOST}/browse/${jira_key}${reset}"
+            jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${bold}${jira_key}${reset}\033]8;;\033\\"
           fi
-          echo "  ${bold}${jira_key}${reset}${url_suffix}"
+          printf "  ${jira_link} ${type_emoji}${j_type} ${priority_emoji}${priority_colored} (${status_colored}): ${j_summary}  [${j_assignee:-unassigned}]\n"
+        else
+          local jira_link="${bold}${jira_key}${reset}"
+          if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
+            jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${bold}${jira_key}${reset}\033]8;;\033\\"
+          fi
+          printf "  ${jira_link}\n"
         fi
       done
     fi
@@ -1563,6 +1685,7 @@ worktree_repl() {
   # Port range key includes project dir to avoid cross-repo collisions
   wt_port_key="${wt_path#"$WORKTREES_BASE"/}"
 
+  clear
   worktree_gather_info "$wt_path"
   branch="$WT_INFO_BRANCH"
   tracking="$WT_INFO_TRACKING"
