@@ -337,14 +337,14 @@ cmux_open_worktree() {
     # If we have browser URLs, wrap in horizontal split
     if [ -n "$pr_url" ] || [ -n "$jira_url" ]; then
       local browser_surfaces=""
-      if [ -n "$pr_url" ]; then
-        browser_surfaces="{\"type\":\"browser\",\"url\":\"${pr_url}\"}"
-      fi
       if [ -n "$jira_url" ]; then
+        browser_surfaces="{\"type\":\"browser\",\"url\":\"${jira_url}\"}"
+      fi
+      if [ -n "$pr_url" ]; then
         if [ -n "$browser_surfaces" ]; then
           browser_surfaces="${browser_surfaces},"
         fi
-        browser_surfaces="${browser_surfaces}{\"type\":\"browser\",\"url\":\"${jira_url}\"}"
+        browser_surfaces="${browser_surfaces}{\"type\":\"browser\",\"url\":\"${pr_url}\"}"
       fi
       layout_json="{\"direction\":\"horizontal\",\"split\":0.5,\"children\":["
       layout_json="${layout_json}${left_layout},"
@@ -1525,7 +1525,7 @@ worktree_show_info() {
   local show_path="${2:-true}"
   local worktree_ports="${3:-}"
 
-  local blue cyan green magenta red yellow bold reset
+  local blue cyan green magenta red yellow bold underline reset
   blue="$(tput setaf 12 2>/dev/null || true)"
   cyan="$(tput setaf 6 2>/dev/null || true)"
   green="$(tput setaf 2 2>/dev/null || true)"
@@ -1533,6 +1533,7 @@ worktree_show_info() {
   red="$(tput setaf 1 2>/dev/null || true)"
   yellow="$(tput setaf 3 2>/dev/null || true)"
   bold="$(tput bold 2>/dev/null || true)"
+  underline="$(tput smul 2>/dev/null || true)"
   reset="$(tput sgr0 2>/dev/null || true)"
 
   if [ "$show_path" = "true" ]; then
@@ -1549,7 +1550,7 @@ worktree_show_info() {
     esac
     local pr_link="${cyan}PR #${WT_INFO_PR_NUM}${reset}"
     if [ -n "${WT_INFO_PR_URL:-}" ]; then
-      pr_link="\033]8;;${WT_INFO_PR_URL}\033\\${cyan}PR #${WT_INFO_PR_NUM}${reset}\033]8;;\033\\"
+      pr_link="\033]8;;${WT_INFO_PR_URL}\033\\${underline}${cyan}PR #${WT_INFO_PR_NUM}${reset}\033]8;;\033\\"
     fi
     printf "${pr_link}${state_display}${WT_INFO_PR_TITLE:+: ${WT_INFO_PR_TITLE}}\n"
     if [ -n "${WT_INFO_PR_AUTHOR:-}" ]; then
@@ -1560,9 +1561,6 @@ worktree_show_info() {
     fi
     if [ -n "${WT_INFO_PR_UPDATED:-}" ]; then
       echo "  ${cyan}Updated:${reset} $(relative_time "$WT_INFO_PR_UPDATED")"
-    fi
-    if [ -n "${WT_INFO_PR_URL:-}" ]; then
-      echo "  ${cyan}URL:${reset} ${WT_INFO_PR_URL}"
     fi
     echo ""
   fi
@@ -1589,7 +1587,7 @@ worktree_show_info() {
         status_colored="$(worktree_jira_status_color "$j_status" "$green" "$yellow" "$cyan" "$magenta" "$reset")"
         local jira_link="${bold}${jira_key}${reset}"
         if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
-          jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${bold}${jira_key}${reset}\033]8;;\033\\"
+          jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${underline}${bold}${jira_key}${reset}\033]8;;\033\\"
         fi
         printf "${cyan}Jira:${reset} ${jira_link} ${type_emoji}${j_type} ${priority_emoji}${priority_colored} (${status_colored})${j_summary:+: ${j_summary}}\n"
         if [ -n "$j_assignee" ]; then
@@ -1598,12 +1596,9 @@ worktree_show_info() {
       else
         local jira_link="${bold}${jira_key}${reset}"
         if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
-          jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${bold}${jira_key}${reset}\033]8;;\033\\"
+          jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${underline}${bold}${jira_key}${reset}\033]8;;\033\\"
         fi
         printf "${cyan}Jira:${reset} ${jira_link}\n"
-      fi
-      if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
-        echo "  ${cyan}URL:${reset} ${blue}https://${WT_INFO_JIRA_HOST}/browse/${jira_key}${reset}"
       fi
     else
       echo "${cyan}Jira issues:${reset}"
@@ -1627,13 +1622,13 @@ worktree_show_info() {
           status_colored="$(worktree_jira_status_color "$j_status" "$green" "$yellow" "$cyan" "$magenta" "$reset")"
           local jira_link="${bold}${jira_key}${reset}"
           if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
-            jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${bold}${jira_key}${reset}\033]8;;\033\\"
+            jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${underline}${bold}${jira_key}${reset}\033]8;;\033\\"
           fi
           printf "  ${jira_link} ${type_emoji}${j_type} ${priority_emoji}${priority_colored} (${status_colored}): ${j_summary}  [${j_assignee:-unassigned}]\n"
         else
           local jira_link="${bold}${jira_key}${reset}"
           if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
-            jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${bold}${jira_key}${reset}\033]8;;\033\\"
+            jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${underline}${bold}${jira_key}${reset}\033]8;;\033\\"
           fi
           printf "  ${jira_link}\n"
         fi
