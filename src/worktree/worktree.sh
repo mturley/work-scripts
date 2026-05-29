@@ -27,6 +27,7 @@ CLEANUP_PREFS=false
 OPEN_EDITOR=false
 STANDALONE=false
 SHOW_INFO=false
+SHOW_INFO_SIMPLE=false
 SHOW_PORTS=false
 SHOW_SESSIONS=false
 KILL_SESSION=""
@@ -62,6 +63,7 @@ Options:
   --sessions          List active persistent (screen) worktree sessions.
   --kill-session <n>  Kill a persistent session by name and clean up its temp files.
   --info              Show worktree info for the current directory and exit.
+  --info-simple       Show fast worktree info (no API calls) and exit.
   --cleanup           Select worktrees to remove, then clean up stale temp files and preferences.
   --cleanup-prefs     Clean up saved preferences only (editor, clone/link selections, etc.).
   -h, --help          Show this help message and exit.
@@ -88,7 +90,8 @@ Examples:
   worktree --no-persist 1234                        # skip screen, mprocs only
   worktree --standalone my-branch                   # shell in worktree, no mprocs
   worktree --ports                                  # show allocated port ranges
-  worktree --info                                    # show worktree info (used by .worktree-env)
+  worktree --info                                    # show worktree info (PR and Jira status)
+  worktree --info-simple                             # fast info, no API calls (used by .worktree-env)
   worktree --sessions                               # list active persistent sessions
   worktree --kill-session wt-all                     # kill the persistent session
 HELPEOF
@@ -96,6 +99,7 @@ HELPEOF
       ;;
     --open) OPEN_EDITOR=true; shift ;;
     --info) SHOW_INFO=true; shift ;;
+    --info-simple) SHOW_INFO_SIMPLE=true; shift ;;
     --ports) SHOW_PORTS=true; shift ;;
     --no-persist) PERSISTENT=false; shift ;;
     -s|--standalone) STANDALONE=true; shift ;;
@@ -125,7 +129,7 @@ if cmux_is_available; then
 fi
 
 # --- Handle early-exit flag commands ---
-if $SHOW_INFO; then
+if $SHOW_INFO || $SHOW_INFO_SIMPLE; then
   CURRENT_DIR="$(pwd)"
   if [ -f "$CURRENT_DIR/.git" ] || [[ "$CURRENT_DIR" == "$WORKTREES_BASE"/* ]]; then
     # Resolve worktree path
@@ -141,12 +145,21 @@ if $SHOW_INFO; then
     if [ -d "$INFO_WT_PATH" ]; then
       INFO_PORT_KEY="${INFO_WT_PATH#"$WORKTREES_BASE"/}"
       INFO_PORTS="$(assign_port_range "$INFO_PORT_KEY")"
-      worktree_gather_info "$INFO_WT_PATH"
-      echo ""
-      echo "${COLOR_CYAN}--- Worktree ---${COLOR_RESET}"
-      worktree_show_info "$INFO_WT_PATH" true "$INFO_PORTS"
-      echo ""
-      echo "Run ${COLOR_CYAN}worktree${COLOR_RESET} to enter the REPL."
+      if $SHOW_INFO_SIMPLE; then
+        WT_INFO_BRANCH="$(git -C "$INFO_WT_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+        echo ""
+        echo "${COLOR_CYAN}--- Worktree ---${COLOR_RESET}"
+        worktree_show_info "$INFO_WT_PATH" true "$INFO_PORTS" --simple
+        echo ""
+        echo "Run ${COLOR_CYAN}worktree --info${COLOR_RESET} for PR and Jira status or run ${COLOR_CYAN}worktree${COLOR_RESET} to enter the REPL."
+      else
+        worktree_gather_info "$INFO_WT_PATH"
+        echo ""
+        echo "${COLOR_CYAN}--- Worktree ---${COLOR_RESET}"
+        worktree_show_info "$INFO_WT_PATH" true "$INFO_PORTS"
+        echo ""
+        echo "Run ${COLOR_CYAN}worktree${COLOR_RESET} to enter the REPL."
+      fi
     fi
   fi
   exit 0

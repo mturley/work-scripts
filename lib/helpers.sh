@@ -393,7 +393,7 @@ case "\$-" in *i*)
   if [ -z "\${_WORKTREE_ENV_SHOWN:-}" ]; then
     _WORKTREE_ENV_SHOWN=1
     if command -v worktree >/dev/null 2>&1; then
-      worktree --info
+      worktree --info-simple
     fi
   fi
 ;; esac
@@ -1255,14 +1255,17 @@ open_editor() {
   esac
 }
 
-# worktree_gather_info <worktree-path>
+# worktree_gather_info <worktree-path> [--simple]
 # Gathers worktree metadata into WT_INFO_* variables for use by worktree_show_info.
+# With --simple, skips all GitHub and Jira API calls (fast, local-only).
 # Sets: WT_INFO_BRANCH, WT_INFO_TRACKING, WT_INFO_PR_NUM, WT_INFO_PR_URL,
 #       WT_INFO_PR_TITLE, WT_INFO_PR_AUTHOR, WT_INFO_PR_STATE,
 #       WT_INFO_PR_CREATED, WT_INFO_PR_UPDATED, WT_INFO_PR_BODY,
 #       WT_INFO_JIRA_ISSUES, WT_INFO_JIRA_HOST, WT_INFO_JIRA_DETAILS
 worktree_gather_info() {
   local wt_path="$1"
+  local simple=false
+  if [ "${2:-}" = "--simple" ]; then simple=true; fi
   local wt_name
   wt_name="$(basename "$wt_path")"
 
@@ -1280,6 +1283,7 @@ worktree_gather_info() {
   WT_INFO_JIRA_HOST=""
   WT_INFO_JIRA_DETAILS=""
 
+  # PR number from directory name (local, fast)
   if [[ "$wt_name" == pr-* ]]; then
     WT_INFO_PR_NUM="$(echo "$wt_name" | sed 's/^pr-\([0-9]*\)-.*/\1/')"
     local remote_url
@@ -1289,68 +1293,74 @@ worktree_gather_info() {
     fi
   fi
 
-  if [ -z "$WT_INFO_PR_URL" ] && [ "$WT_INFO_BRANCH" != "unknown" ]; then
-    local detected_pr_url
-    local search_branch="$WT_INFO_BRANCH"
-    local search_head_owner=""
-    if [ -n "$WT_INFO_TRACKING" ]; then
-      local tracking_remote="${WT_INFO_TRACKING%%/*}"
-      local tracking_branch="${WT_INFO_TRACKING#*/}"
-      if [ "$tracking_branch" != "$WT_INFO_BRANCH" ]; then
-        search_branch="$tracking_branch"
-      fi
-      local tracking_remote_url
-      tracking_remote_url="$(git -C "$wt_path" remote get-url "$tracking_remote" 2>/dev/null || true)"
-      if [ -n "$tracking_remote_url" ]; then
-        search_head_owner="$(echo "$tracking_remote_url" | sed 's/\.git$//' | sed 's|.*github\.com[:/]||' | cut -d/ -f1)"
-      fi
-    fi
-
-    local head_filter="$search_branch"
-    if [ -n "$search_head_owner" ]; then
-      head_filter="${search_head_owner}:${search_branch}"
-    fi
-
-    detected_pr_url="$(gh pr list --head "$head_filter" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
-    if [ -z "$detected_pr_url" ]; then
-      local upstream_repo
-      upstream_repo="$(git -C "$wt_path" remote get-url upstream 2>/dev/null | sed 's/\.git$//' | sed 's|.*github\.com[:/]||' || true)"
-      if [ -n "$upstream_repo" ]; then
-        detected_pr_url="$(gh pr list --head "$head_filter" --repo "$upstream_repo" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
-        # If owner:branch format didn't match, try branch name alone
-        if [ -z "$detected_pr_url" ] && [ "$head_filter" != "$search_branch" ]; then
-          detected_pr_url="$(gh pr list --head "$search_branch" --repo "$upstream_repo" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
+  if ! $simple; then
+    # PR detection via GitHub API (slow)
+    if [ -z "$WT_INFO_PR_URL" ] && [ "$WT_INFO_BRANCH" != "unknown" ]; then
+      local detected_pr_url
+      local search_branch="$WT_INFO_BRANCH"
+      local search_head_owner=""
+      if [ -n "$WT_INFO_TRACKING" ]; then
+        local tracking_remote="${WT_INFO_TRACKING%%/*}"
+        local tracking_branch="${WT_INFO_TRACKING#*/}"
+        if [ "$tracking_branch" != "$WT_INFO_BRANCH" ]; then
+          search_branch="$tracking_branch"
+        fi
+        local tracking_remote_url
+        tracking_remote_url="$(git -C "$wt_path" remote get-url "$tracking_remote" 2>/dev/null || true)"
+        if [ -n "$tracking_remote_url" ]; then
+          search_head_owner="$(echo "$tracking_remote_url" | sed 's/\.git$//' | sed 's|.*github\.com[:/]||' | cut -d/ -f1)"
         fi
       fi
+
+      local head_filter="$search_branch"
+      if [ -n "$search_head_owner" ]; then
+        head_filter="${search_head_owner}:${search_branch}"
+      fi
+
+      detected_pr_url="$(gh pr list --head "$head_filter" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
+      if [ -z "$detected_pr_url" ]; then
+        local upstream_repo
+        upstream_repo="$(git -C "$wt_path" remote get-url upstream 2>/dev/null | sed 's/\.git$//' | sed 's|.*github\.com[:/]||' || true)"
+        if [ -n "$upstream_repo" ]; then
+          detected_pr_url="$(gh pr list --head "$head_filter" --repo "$upstream_repo" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
+          # If owner:branch format didn't match, try branch name alone
+          if [ -z "$detected_pr_url" ] && [ "$head_filter" != "$search_branch" ]; then
+            detected_pr_url="$(gh pr list --head "$search_branch" --repo "$upstream_repo" --state all --json url --jq '.[0].url' 2>/dev/null || true)"
+          fi
+        fi
+      fi
+      if [ -n "$detected_pr_url" ]; then
+        WT_INFO_PR_URL="$detected_pr_url"
+        WT_INFO_PR_NUM="$(echo "$detected_pr_url" | grep -o '[0-9]*$')"
+      fi
     fi
-    if [ -n "$detected_pr_url" ]; then
-      WT_INFO_PR_URL="$detected_pr_url"
-      WT_INFO_PR_NUM="$(echo "$detected_pr_url" | grep -o '[0-9]*$')"
+
+    # PR metadata via GitHub API (slow)
+    if [ -n "$WT_INFO_PR_URL" ]; then
+      local pr_details
+      pr_details="$(gh pr view "$WT_INFO_PR_URL" --json title,author,state,createdAt,updatedAt,body 2>/dev/null || true)"
+      if [ -n "$pr_details" ]; then
+        WT_INFO_PR_TITLE="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('title',''))" 2>/dev/null || true)"
+        WT_INFO_PR_AUTHOR="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))" 2>/dev/null || true)"
+        WT_INFO_PR_STATE="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true)"
+        WT_INFO_PR_CREATED="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))" 2>/dev/null || true)"
+        WT_INFO_PR_UPDATED="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))" 2>/dev/null || true)"
+        WT_INFO_PR_BODY="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('body',''))" 2>/dev/null || true)"
+      fi
     fi
   fi
 
-  if [ -n "$WT_INFO_PR_URL" ]; then
-    local pr_details
-    pr_details="$(gh pr view "$WT_INFO_PR_URL" --json title,author,state,createdAt,updatedAt,body 2>/dev/null || true)"
-    if [ -n "$pr_details" ]; then
-      WT_INFO_PR_TITLE="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('title',''))" 2>/dev/null || true)"
-      WT_INFO_PR_AUTHOR="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('author',{}).get('login',''))" 2>/dev/null || true)"
-      WT_INFO_PR_STATE="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true)"
-      WT_INFO_PR_CREATED="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('createdAt',''))" 2>/dev/null || true)"
-      WT_INFO_PR_UPDATED="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('updatedAt',''))" 2>/dev/null || true)"
-      WT_INFO_PR_BODY="$(echo "$pr_details" | python3 -c "import sys,json; print(json.load(sys.stdin).get('body',''))" 2>/dev/null || true)"
-    fi
-  fi
-
-  worktree_gather_jira_info "$wt_path"
+  worktree_gather_jira_info "$wt_path" "$($simple && echo "--simple")"
 }
 
-# worktree_gather_jira_info <worktree-path>
+# worktree_gather_jira_info <worktree-path> [--simple]
 # Detects Jira issue keys from branch name, PR title/body, and cached .worktree-env.
-# Optionally enriches with metadata via Jira REST API when credentials are available.
+# With --simple, skips PR title/body scanning and Jira API enrichment.
 # Sets: WT_INFO_JIRA_ISSUES, WT_INFO_JIRA_HOST, WT_INFO_JIRA_DETAILS
 worktree_gather_jira_info() {
   local wt_path="$1"
+  local simple=false
+  if [ "${2:-}" = "--simple" ]; then simple=true; fi
 
   # Load Jira config (once per session)
   if [ -z "${_WORKTREE_JIRA_ENV_LOADED:-}" ]; then
@@ -1391,15 +1401,15 @@ worktree_gather_jira_info() {
     found_issues="${found_issues:+$found_issues }$branch_matches"
   fi
 
-  # Scan PR title and body
-  if [ -n "${WT_INFO_PR_TITLE:-}" ]; then
+  # Scan PR title and body (skipped in simple mode — no PR metadata available)
+  if ! $simple && [ -n "${WT_INFO_PR_TITLE:-}" ]; then
     local title_matches
     title_matches="$(echo "$WT_INFO_PR_TITLE" | grep -oE "$jira_pattern" 2>/dev/null || true)"
     if [ -n "$title_matches" ]; then
       found_issues="${found_issues:+$found_issues }$title_matches"
     fi
   fi
-  if [ -n "${WT_INFO_PR_BODY:-}" ]; then
+  if ! $simple && [ -n "${WT_INFO_PR_BODY:-}" ]; then
     local body_stripped
     body_stripped="$(echo "$WT_INFO_PR_BODY" | python3 -c "
 import sys, re
@@ -1420,8 +1430,8 @@ print(re.sub(r'<!--.*?-->', '', sys.stdin.read(), flags=re.DOTALL))" 2>/dev/null
     return
   fi
 
-  # Enrich with Jira API metadata when credentials are available
-  if [ "${JIRA_LOADED:-false}" = "true" ] && [ -n "${JIRA_HOST:-}" ]; then
+  # Enrich with Jira API metadata when credentials are available (skipped in simple mode)
+  if ! $simple && [ "${JIRA_LOADED:-false}" = "true" ] && [ -n "${JIRA_HOST:-}" ]; then
     local issue_key api_response details_lines=""
     for issue_key in $WT_INFO_JIRA_ISSUES; do
       api_response="$(curl --max-time 5 --silent --fail \
@@ -1518,12 +1528,25 @@ worktree_jira_status_color() {
   esac
 }
 
-# worktree_show_info <worktree-path> [show-path] [worktree-ports]
+# worktree_show_environment <worktree-ports> <cyan> <reset>
+# Displays the Environment section with worktree-related env vars.
+worktree_show_environment() {
+  local worktree_ports="$1" cyan="$2" reset="$3"
+  if [ -n "$worktree_ports" ]; then
+    echo "${cyan}Environment:${reset}"
+    echo "  WORKTREE_PORTS=${worktree_ports}"
+  fi
+}
+
+# worktree_show_info <worktree-path> [show-path] [worktree-ports] [--simple]
 # Displays worktree info using WT_INFO_* variables set by worktree_gather_info.
+# With --simple, shows only IDs/links (no titles/metadata) and no path.
 worktree_show_info() {
   local wt_path="$1"
   local show_path="${2:-true}"
   local worktree_ports="${3:-}"
+  local simple=false
+  if [ "${4:-}" = "--simple" ]; then simple=true; fi
 
   local blue cyan green magenta red yellow bold underline reset
   blue="$(tput setaf 12 2>/dev/null || true)"
@@ -1540,34 +1563,49 @@ worktree_show_info() {
     echo "${cyan}Path:${reset} $(short_path "$wt_path")"
   fi
   echo "${cyan}Branch:${reset} ${WT_INFO_BRANCH}"
+  if $simple; then
+    worktree_show_environment "${worktree_ports:-}" "$cyan" "$reset"
+    return
+  fi
   if [ -n "${WT_INFO_PR_NUM:-}" ]; then
-    echo ""
-    local state_display=""
-    case "${WT_INFO_PR_STATE:-}" in
-      OPEN)   state_display=" ${green}(open)${reset}" ;;
-      MERGED) state_display=" ${magenta}(merged)${reset}" ;;
-      CLOSED) state_display=" ${red}(closed)${reset}" ;;
-    esac
     local pr_link="${cyan}PR #${WT_INFO_PR_NUM}${reset}"
     if [ -n "${WT_INFO_PR_URL:-}" ]; then
       pr_link="\033]8;;${WT_INFO_PR_URL}\033\\${underline}${cyan}PR #${WT_INFO_PR_NUM}${reset}\033]8;;\033\\"
     fi
-    printf "${pr_link}${state_display}${WT_INFO_PR_TITLE:+: ${WT_INFO_PR_TITLE}}\n"
-    if [ -n "${WT_INFO_PR_AUTHOR:-}" ]; then
-      echo "  ${cyan}Author:${reset} ${WT_INFO_PR_AUTHOR}"
+    if $simple; then
+      printf "${pr_link}\n"
+    else
+      echo ""
+      local state_display=""
+      case "${WT_INFO_PR_STATE:-}" in
+        OPEN)   state_display=" ${green}(open)${reset}" ;;
+        MERGED) state_display=" ${magenta}(merged)${reset}" ;;
+        CLOSED) state_display=" ${red}(closed)${reset}" ;;
+      esac
+      printf "${pr_link}${state_display}${WT_INFO_PR_TITLE:+: ${WT_INFO_PR_TITLE}}\n"
+      if [ -n "${WT_INFO_PR_AUTHOR:-}" ]; then
+        echo "  ${cyan}Author:${reset} ${WT_INFO_PR_AUTHOR}"
+      fi
+      if [ -n "${WT_INFO_PR_CREATED:-}" ]; then
+        echo "  ${cyan}Created:${reset} $(relative_time "$WT_INFO_PR_CREATED")"
+      fi
+      if [ -n "${WT_INFO_PR_UPDATED:-}" ]; then
+        echo "  ${cyan}Updated:${reset} $(relative_time "$WT_INFO_PR_UPDATED")"
+      fi
+      echo ""
     fi
-    if [ -n "${WT_INFO_PR_CREATED:-}" ]; then
-      echo "  ${cyan}Created:${reset} $(relative_time "$WT_INFO_PR_CREATED")"
-    fi
-    if [ -n "${WT_INFO_PR_UPDATED:-}" ]; then
-      echo "  ${cyan}Updated:${reset} $(relative_time "$WT_INFO_PR_UPDATED")"
-    fi
-    echo ""
   fi
   if [ -n "${WT_INFO_JIRA_ISSUES:-}" ]; then
-    local jira_issue_count
-    jira_issue_count="$(echo "$WT_INFO_JIRA_ISSUES" | wc -w | tr -d ' ')"
-    if [ "$jira_issue_count" -eq 1 ]; then
+    if $simple; then
+      local jira_key
+      for jira_key in $WT_INFO_JIRA_ISSUES; do
+        local jira_link="${bold}${jira_key}${reset}"
+        if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
+          jira_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${jira_key}\033\\${underline}${bold}${jira_key}${reset}\033]8;;\033\\"
+        fi
+        printf "${cyan}Jira:${reset} ${jira_link}\n"
+      done
+    elif [ "$(echo "$WT_INFO_JIRA_ISSUES" | wc -w | tr -d ' ')" -eq 1 ]; then
       local jira_key="$WT_INFO_JIRA_ISSUES"
       local jira_detail_line=""
       if [ -n "${WT_INFO_JIRA_DETAILS:-}" ]; then
@@ -1634,7 +1672,7 @@ worktree_show_info() {
         fi
       done
     fi
-    echo ""
+    if ! $simple; then echo ""; fi
   fi
   if [ -n "${WT_INFO_TRACKING:-}" ]; then
     local info_ahead info_behind info_parts=""
@@ -1655,16 +1693,13 @@ worktree_show_info() {
       echo "${cyan}Tracking:${reset} ${info_parts} ${WT_INFO_TRACKING}"
     fi
   fi
-  if [ -n "${worktree_ports:-}" ]; then
-    echo "${cyan}Environment:${reset}"
-    echo "  WORKTREE_PORTS=${worktree_ports}"
-  fi
   if [ -z "$(git -C "$wt_path" status --short)" ]; then
     echo "${cyan}Git status:${reset} working tree clean"
   else
     echo "${cyan}Git status:${reset}"
     git -C "$wt_path" status --short
   fi
+  worktree_show_environment "${worktree_ports:-}" "$cyan" "$reset"
 }
 
 # worktree_repl <repo-root> <worktree-path> [scripts-dir] [--open]

@@ -221,6 +221,6 @@ If no Jira issue is detected, pressing `[j]ira` in the REPL prompts you to paste
 
 ### Worktree Environment File
 
-A `.worktree-env` file is automatically generated in each worktree directory, exporting `WORKTREE_PORTS`, `WORKTREE_TITLE`, and `WORKTREE_PATH`. On first use, the script offers to add an auto-source snippet to your shell RC file (`.zshrc`, `.bashrc`, or `config.fish`) so these variables are available in any terminal opened in the worktree directory. The file also displays worktree info once per shell session via `worktree --info`.
+A `.worktree-env` file is automatically generated in each worktree directory, exporting `WORKTREE_PORTS`, `WORKTREE_TITLE`, and `WORKTREE_PATH`. On first use, the script offers to add an auto-source snippet to your shell RC file (`.zshrc`, `.bashrc`, or `config.fish`) so these variables are available in any terminal opened in the worktree directory. The file displays a lightweight summary once per shell session via `worktree --info-simple` (path, branch, environment — no API calls). Run `worktree --info` for full PR and Jira status.
 
 If you use Powerlevel10k with instant prompt, the setup will change `POWERLEVEL9K_INSTANT_PROMPT` to `quiet` in `~/.p10k.zsh` to allow the info output without warnings.
