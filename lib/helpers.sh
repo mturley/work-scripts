@@ -327,9 +327,9 @@ cmux_open_worktree() {
     left_layout="${left_layout}{\"type\":\"terminal\"}"
     left_layout="${left_layout},{\"type\":\"terminal\",\"command\":\"${self_cmd}\"}"
     left_layout="${left_layout}]}},"
-    # Bottom pane: cmux claude-teams
+    # Bottom pane: claude
     left_layout="${left_layout}{\"pane\":{\"surfaces\":["
-    left_layout="${left_layout}{\"type\":\"terminal\",\"command\":\"clear && cmux claude-teams\"}"
+    left_layout="${left_layout}{\"type\":\"terminal\",\"command\":\"clear && claude\"}"
     left_layout="${left_layout}]}}"
     left_layout="${left_layout}]}"
 
