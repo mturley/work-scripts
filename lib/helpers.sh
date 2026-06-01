@@ -1691,6 +1691,17 @@ worktree_repl() {
   _worktree_info() {
     local show_path="${1:-true}"
     local worktree_ports="${worktree_ports:-}"
+    worktree_gather_info "$wt_path"
+    pr_num="$WT_INFO_PR_NUM"
+    pr_url="$WT_INFO_PR_URL"
+    pr_title="$WT_INFO_PR_TITLE"
+    pr_author="$WT_INFO_PR_AUTHOR"
+    pr_state="$WT_INFO_PR_STATE"
+    pr_created="$WT_INFO_PR_CREATED"
+    pr_updated="$WT_INFO_PR_UPDATED"
+    jira_issues="$WT_INFO_JIRA_ISSUES"
+    jira_host="$WT_INFO_JIRA_HOST"
+    jira_details="$WT_INFO_JIRA_DETAILS"
     worktree_show_info "$wt_path" "$show_path" "$worktree_ports"
   }
 
