@@ -398,12 +398,6 @@ cleanup_preferences() {
   done < <(find -L /tmp -maxdepth 1 -name "worktree-clone-*" 2>/dev/null | sort)
   while IFS= read -r f; do
     local_name="$(basename "$f")"
-    repo="${local_name#worktree-dotfile-method-}"
-    pref_files+=("$f")
-    pref_labels+=("Dotfile method for ${repo} ($(cat "$f"))")
-  done < <(find -L /tmp -maxdepth 1 -name "worktree-dotfile-method-*" 2>/dev/null | sort)
-  while IFS= read -r f; do
-    local_name="$(basename "$f")"
     kind="${local_name#worktree-link-}"
     kind="${kind%%-*}"
     repo="${local_name#worktree-link-${kind}-}"

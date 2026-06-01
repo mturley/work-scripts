@@ -773,18 +773,16 @@ remove_worktree() {
 
 
 # clone_worktree_files <scripts-dir> <repo-root> <worktree-path>
-# Prompts the user to clone or symlink gitignored files from the main clone
-# into a new worktree. Top-level dotfiles can be symlinked (stays in sync) or
-# cloned; directories are always cloned. On macOS, clones use APFS copy-on-write
-# (cp -Rc). On other platforms, clones use rsync.
-# Dotfile/dir selections and the dotfile method are cached separately in /tmp.
-# Returns 0 if files were cloned/linked, 1 otherwise.
+# Prompts the user to clone gitignored files from the main clone into a new
+# worktree. On macOS, uses APFS copy-on-write clones (cp -Rc). On other
+# platforms, copies via rsync.
+# Dotfile and dir selections are cached separately in /tmp.
+# Returns 0 if files were cloned, 1 otherwise.
 clone_worktree_files() {
   local scripts_dir="$1" repo_root="$2" wt_path="$3"
   local repo_name
   repo_name="$(basename "$repo_root")"
   local cache_dotfiles="/tmp/worktree-clone-dotfiles-${repo_name}"
-  local cache_dotfiles_method="/tmp/worktree-dotfile-method-${repo_name}"
   local cache_dirs="/tmp/worktree-clone-dirs-${repo_name}"
 
   # --- Initial prompt: what level of cloning/linking? ---
@@ -830,7 +828,6 @@ clone_worktree_files() {
   fi
 
   local clone_paths=()
-  local link_paths=()
 
   # --- Dotfiles (both modes) ---
   local dotfile_targets
@@ -840,22 +837,13 @@ clone_worktree_files() {
     while IFS= read -r line; do dotfile_options+=("$line"); done <<< "$dotfile_targets"
 
     local dotfile_selected=()
-    dotfile_selected=("$(clone_worktree_select_cached "$cache_dotfiles" "$repo_name" "dotfiles" "Which dotfiles?" --method-cache "$cache_dotfiles_method" "${dotfile_options[@]}")")
+    dotfile_selected=("$(clone_worktree_select_cached "$cache_dotfiles" "$repo_name" "dotfiles" "Which dotfiles to clone?" "${dotfile_options[@]}")")
     # Re-split output into array (prompt_multi_select outputs one per line)
     local dotfile_final=()
     if [ -n "${dotfile_selected[0]}" ]; then
       while IFS= read -r line; do [ -n "$line" ] && dotfile_final+=("$line"); done <<< "${dotfile_selected[0]}"
     fi
-    # Read method from cache (function runs in subshell so globals don't propagate)
-    local dotfile_method="clone"
-    if [ -f "$cache_dotfiles_method" ]; then
-      dotfile_method="$(cat "$cache_dotfiles_method")"
-    fi
-    if [ "$dotfile_method" = "symlink" ]; then
-      for df in "${dotfile_final[@]+${dotfile_final[@]}}"; do link_paths+=("$df"); done
-    else
-      for df in "${dotfile_final[@]+${dotfile_final[@]}}"; do clone_paths+=("$df"); done
-    fi
+    for df in "${dotfile_final[@]+${dotfile_final[@]}}"; do clone_paths+=("$df"); done
   fi
 
   # --- Dirs (only in "all" mode) ---
@@ -876,40 +864,25 @@ clone_worktree_files() {
     fi
   fi
 
-  if [ ${#clone_paths[@]} -eq 0 ] && [ ${#link_paths[@]} -eq 0 ]; then
+  if [ ${#clone_paths[@]} -eq 0 ]; then
     return 1
   fi
 
-  if [ ${#link_paths[@]} -gt 0 ]; then
-    "$scripts_dir/clone-worktree-files.sh" --link "$repo_root" "$wt_path" "${link_paths[@]}"
-  fi
-  if [ ${#clone_paths[@]} -gt 0 ]; then
-    "$scripts_dir/clone-worktree-files.sh" --clone "$repo_root" "$wt_path" "${clone_paths[@]}"
-  fi
+  "$scripts_dir/clone-worktree-files.sh" --clone "$repo_root" "$wt_path" "${clone_paths[@]}"
   if [ "$(uname -s)" = "Darwin" ]; then
     osascript -e "display alert \"Clone Complete\" message \"Finished cloning files into $(basename "$wt_path").\" buttons {\"OK\"} default button \"OK\"" &>/dev/null &
   fi
   return 0
 }
 
-# clone_worktree_select_cached <cache-file> <repo-name> <label> <prompt> [--method-cache <file>] <options...>
+# clone_worktree_select_cached <cache-file> <repo-name> <label> <prompt> <options...>
 # Checks for a cached selection, offers to reuse it, or prompts with
 # prompt_multi_select. Saves the new selection to the cache file.
 # Prints selected items to stdout (one per line).
-# When --method-cache is provided, also prompts for clone vs symlink method
-# and caches it. Sets global CLONE_SELECT_METHOD to "clone" or "symlink".
 clone_worktree_select_cached() {
   local cache_file="$1" repo_name="$2" label="$3" prompt_msg="$4"
   shift 4
-
-  local method_cache=""
-  if [ "${1:-}" = "--method-cache" ]; then
-    method_cache="$2"
-    shift 2
-  fi
   local options=("$@")
-
-  CLONE_SELECT_METHOD="clone"
 
   # Check for cached selection
   if [ -f "$cache_file" ]; then
@@ -926,15 +899,8 @@ clone_worktree_select_cached() {
     done <<< "$cached"
 
     if $all_valid && [ -n "$cached" ]; then
-      local method_hint=""
-      if [ -n "$method_cache" ] && [ -f "$method_cache" ]; then
-        local cached_method
-        cached_method="$(cat "$method_cache")"
-        method_hint=" (${cached_method}d)"
-        CLONE_SELECT_METHOD="$cached_method"
-      fi
       echo "" >&2
-      echo "Previous ${label} selection for ${repo_name}${method_hint}:" >&2
+      echo "Previous ${label} selection for ${repo_name}:" >&2
       while IFS= read -r item; do echo "  - $item" >&2; done <<< "$cached"
       if prompt_yn "Use this selection?"; then
         echo "$cached"
@@ -948,28 +914,6 @@ clone_worktree_select_cached() {
   selected="$(prompt_multi_select "$prompt_msg" "${options[@]}")"
   if [ -n "$selected" ]; then
     echo "$selected" > "$cache_file"
-
-    # Prompt for method if method cache is enabled and items were selected
-    if [ -n "$method_cache" ]; then
-      echo "" >&2
-      echo "Symlink keeps dotfiles in sync with the main repo." >&2
-      echo "Clone creates independent copy-on-write copies." >&2
-      echo "" >&2
-      echo "  ${COLOR_BLUE}1)${COLOR_RESET} Symlink" >&2
-      echo "  ${COLOR_BLUE}2)${COLOR_RESET} Clone" >&2
-      echo "" >&2
-      while true; do
-        printf "Select [${COLOR_BLUE}1${COLOR_RESET}/${COLOR_BLUE}2${COLOR_RESET}]: " >&2
-        read -r method_input
-        case "$method_input" in
-          1) CLONE_SELECT_METHOD="symlink"; break ;;
-          2) CLONE_SELECT_METHOD="clone"; break ;;
-          *) printf "Please answer ${COLOR_BLUE}1${COLOR_RESET} or ${COLOR_BLUE}2${COLOR_RESET}.\n" >&2 ;;
-        esac
-      done
-      echo "$CLONE_SELECT_METHOD" > "$method_cache"
-    fi
-
     echo "$selected"
   fi
 }

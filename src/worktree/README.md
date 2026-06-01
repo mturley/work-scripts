@@ -69,9 +69,7 @@ The `[f]iles` REPL command lets you clone files from the main working tree into 
 
 For each category you choose, you can select which specific files to include. Selections are cached separately per repo (in `/tmp`) and offered for reuse next time.
 
-**Dotfile method** — after selecting dotfiles, you're asked whether to **symlink** or **clone** them. Symlinks mean changes to environment files (`.env.local`, etc.) in the main repo automatically affect all worktrees — no need to update each one separately. Clones create independent copies. This preference is cached alongside the file selection and reused together.
-
-**Copy strategy** — cloned targets use `cp -Rc` on macOS (APFS copy-on-write) or `rsync -a` on other platforms. Directories (dependencies, build artifacts) are always cloned, never symlinked.
+**Copy strategy** — on macOS (APFS), all targets are cloned using `cp -Rc` for copy-on-write clones (writes don't affect the original). On other platforms, all targets are copied via `rsync -a`.
 
 ### Interactive REPL
 
