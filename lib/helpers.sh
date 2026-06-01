@@ -1043,10 +1043,14 @@ maybe_setup_vscode_tasks() {
     return 0
   fi
 
-  # Check cached preference (only "Yes" is persisted; "No" is asked each time)
+  # Check cached preference
   if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
+    local pref
+    pref="$(cat "$VSCODE_TASKS_PREF_FILE")"
+    if [ "$pref" = "No" ]; then
+      return 1
+    fi
     # pref is "Yes", fall through to create
-    true
   else
     # Ask user
     echo ""
@@ -1056,6 +1060,7 @@ maybe_setup_vscode_tasks() {
     if prompt_yn "Set up auto-REPL task?"; then
       echo "Yes" > "$VSCODE_TASKS_PREF_FILE"
     else
+      echo "No" > "$VSCODE_TASKS_PREF_FILE"
       return 1
     fi
   fi
@@ -1707,25 +1712,24 @@ worktree_repl() {
 
   _worktree_commands() {
     local W=10 line1 line2 line3
-    line1="$(printf "%-${W}s %-${W}s " "[h]elp" "[i]nfo")"
-    if { [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; } || cmux_is_available; then
-      line1+="$(printf "%-${W}s " "[n]ame")"
-    fi
+    line1="$(printf "%-${W}s %-${W}s %-${W}s " "[h]elp" "[i]nfo" "[l]og")"
     line1+="[q]uit"
 
-    line2="$(printf "%-${W}s " "[l]og")"
+    line2=""
     if [ -n "$scripts_dir" ]; then
       line2+="$(printf "%-${W}s " "[f]iles")"
     fi
+    line2+="$(printf "%-${W}s " "[p]refs")"
+    if { [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; } || cmux_is_available; then
+      line2+="$(printf "%-${W}s " "[n]ame")"
+    fi
     line2+="[d]elete"
 
-    line3="$(printf "%-${W}s " "[e]ditor")"
+    line3="$(printf "%-${W}s %-${W}s %-${W}s " "[e]ditor" "[s]hell" "[c]laude")"
     if [ -n "${pr_url:-}" ]; then
-      line3+="$(printf "%-${W}s " "[p]r")"
+      line3+="$(printf "%-${W}s " "[g]ithub")"
     fi
-    line3+="$(printf "%-${W}s " "[j]ira")"
-    line3+="$(printf "%-${W}s " "[s]hell")"
-    line3+="[c]laude"
+    line3+="[j]ira"
 
     echo "${blue}${line1}${reset}"
     echo "${blue}${line2}${reset}"
@@ -1734,29 +1738,26 @@ worktree_repl() {
 
   _worktree_help() {
     echo ""
-    echo "  ${blue}REPL${reset}"
+    echo "  ${blue}Navigation${reset}"
     echo "    ${blue}h${reset}  help      Show this help"
-    echo "    ${blue}i${reset}  info      Show PR URL (if applicable), worktree path, and git status"
+    echo "    ${blue}i${reset}  info      Show worktree path, git status, PR info, and Jira details"
+    echo "    ${blue}l${reset}  log       Show git log"
+    echo "    ${blue}q${reset}  quit      Exit the REPL"
+    echo ""
+    echo "  ${blue}Manage${reset}"
+    if [ -n "$scripts_dir" ]; then
+      echo "    ${blue}f${reset}  files     Clone gitignored files (dotfiles, dependencies) from the main worktree"
+    fi
+    echo "    ${blue}p${reset}  prefs     Show saved preferences and optionally clean them up"
     if [ -n "${WORKTREE_MPROCS_PANE:-}" ] && [ -n "${MPROCS_SOCKET:-}" ]; then
       echo "    ${blue}n${reset}  name      Rename this mprocs pane"
     elif cmux_is_available; then
       echo "    ${blue}n${reset}  name      Rename this cmux workspace"
     fi
-    echo "    ${blue}q${reset}  quit      Exit the REPL"
-    echo ""
-    echo "  ${blue}Worktree${reset}"
-    echo "    ${blue}l${reset}  log       Show git log"
-    if [ -n "$scripts_dir" ]; then
-      echo "    ${blue}f${reset}  files     Clone gitignored files (dotfiles, dependencies) from the main worktree"
-    fi
     echo "    ${blue}d${reset}  delete    Remove the worktree and its branch"
     echo ""
-    echo "  ${blue}Tools${reset}"
+    echo "  ${blue}Open${reset}"
     echo "    ${blue}e${reset}  editor    Open worktree in your editor (focuses existing window if already open)"
-    if [ -n "${pr_url:-}" ]; then
-      echo "    ${blue}p${reset}  pr        Open the pull request page on GitHub"
-    fi
-    echo "    ${blue}j${reset}  jira      Open associated Jira issue in browser"
     if cmux_is_available; then
       echo "    ${blue}s${reset}  shell     Start a shell in the worktree"
       echo "    ${blue}c${reset}  claude    Start Claude Code in the worktree"
@@ -1764,6 +1765,10 @@ worktree_repl() {
       echo "    ${blue}s${reset}  shell     Start a shell in the worktree (mprocs with worktree REPL + shell pane)"
       echo "    ${blue}c${reset}  claude    Start Claude Code in the worktree (adds pane to mprocs session)"
     fi
+    if [ -n "${pr_url:-}" ]; then
+      echo "    ${blue}g${reset}  github    Open the pull request page on GitHub"
+    fi
+    echo "    ${blue}j${reset}  jira      Open associated Jira issue in browser"
   }
 
   # Assign port range for this worktree
@@ -1809,7 +1814,7 @@ worktree_repl() {
       e|editor)
         open_editor "$wt_path" "$repo_root"
         ;;
-      p|pr)
+      g|github)
         if [ -n "${pr_url:-}" ]; then
           echo "Opening ${pr_url}"
           open "$pr_url"
@@ -2148,6 +2153,75 @@ procs:
             || echo "Failed to rename (mprocs server not reachable)."
         else
           echo "Name command is only available inside mprocs or cmux."
+        fi
+        ;;
+      p|prefs|preferences)
+        echo ""
+        local p_files=() p_labels=() p_values=()
+        if [ -f /tmp/worktree-editor-preference ]; then
+          p_files+=("/tmp/worktree-editor-preference")
+          p_labels+=("Editor")
+          p_values+=("$(cat /tmp/worktree-editor-preference)")
+        fi
+        if [ -f /tmp/worktree-zed-window-preference ]; then
+          p_files+=("/tmp/worktree-zed-window-preference")
+          p_labels+=("Zed window mode")
+          p_values+=("$(cat /tmp/worktree-zed-window-preference)")
+        fi
+        if [ -f "$VSCODE_TASKS_PREF_FILE" ]; then
+          p_files+=("$VSCODE_TASKS_PREF_FILE")
+          p_labels+=("VS Code auto-REPL")
+          p_values+=("$(cat "$VSCODE_TASKS_PREF_FILE")")
+        fi
+        if [ -f "$SHELL_MPROCS_PREF_FILE" ]; then
+          p_files+=("$SHELL_MPROCS_PREF_FILE")
+          p_labels+=("Shell mprocs")
+          p_values+=("$(cat "$SHELL_MPROCS_PREF_FILE")")
+        fi
+        while IFS= read -r f; do
+          local p_name
+          p_name="$(basename "$f")"
+          local p_kind="${p_name#worktree-clone-}"
+          p_kind="${p_kind%%-*}"
+          local p_repo="${p_name#worktree-clone-${p_kind}-}"
+          p_files+=("$f")
+          p_labels+=("Clone ${p_kind} for ${p_repo}")
+          p_values+=("$(cat "$f" | head -1)")
+        done < <(find -L /tmp -maxdepth 1 -name "worktree-clone-*" 2>/dev/null | sort)
+        while IFS= read -r f; do
+          local p_name
+          p_name="$(basename "$f")"
+          local p_kind="${p_name#worktree-link-}"
+          p_kind="${p_kind%%-*}"
+          local p_repo="${p_name#worktree-link-${p_kind}-}"
+          p_files+=("$f")
+          p_labels+=("Link ${p_kind} for ${p_repo}")
+          p_values+=("$(cat "$f" | head -1)")
+        done < <(find -L /tmp -maxdepth 1 -name "worktree-link-*" 2>/dev/null | sort)
+
+        if [ ${#p_files[@]} -eq 0 ]; then
+          echo "No saved preferences."
+        else
+          echo "Saved preferences:"
+          for i in "${!p_labels[@]}"; do
+            echo "  ${blue}${p_labels[$i]}${reset}: ${p_values[$i]}"
+          done
+          echo ""
+          if prompt_yn "Clean up preferences?"; then
+            local sel_prefs=()
+            while IFS= read -r line; do
+              [ -n "$line" ] && sel_prefs+=("$line")
+            done <<< "$(prompt_multi_select "Remove which preferences?" "${p_labels[@]}")"
+            for sel in "${sel_prefs[@]+${sel_prefs[@]}}"; do
+              for i in "${!p_labels[@]}"; do
+                if [ "${p_labels[$i]}" = "$sel" ]; then
+                  rm -f "${p_files[$i]}"
+                  echo "Removed: ${sel}"
+                  break
+                fi
+              done
+            done
+          fi
         fi
         ;;
       h|help)

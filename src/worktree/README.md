@@ -53,7 +53,7 @@ By default, the REPL does not automatically open an editor. Use the `--open` fla
 
 ### VS Code Auto-REPL
 
-When opening VS Code or Cursor, the script offers to create a `.vscode/tasks.json` in the worktree that auto-starts the REPL in VS Code's integrated terminal when the folder opens. This preference is cached in `/tmp` and can be reset via `--cleanup`.
+When opening VS Code or Cursor, the script offers to create a `.vscode/tasks.json` in the worktree that auto-starts the REPL in VS Code's integrated terminal when the folder opens. Both "Yes" and "No" choices are cached in `/tmp` and can be reset via `--cleanup` or the `[p]refs` REPL command.
 
 The `.vscode/` directory is added to the repo's `.git/info/exclude` (with a marker comment) so it doesn't pollute `git status`. When the last worktree for a repo is removed, the exclude entry is automatically cleaned up.
 
@@ -78,27 +78,28 @@ Once a worktree is ready, all usage paths above end here (unless VS Code auto-RE
 ```
 worktree> help
 
-  REPL
+  Navigation
     h  help      Show this help
-    i  info      Show PR info with author and dates (if applicable), worktree path, tracking status, and git status
-    n  name      Rename this mprocs pane or cmux workspace
+    i  info      Show worktree path, git status, PR info, and Jira details
+    l  log       Show git log
     q  quit      Exit the REPL
 
-  Worktree
-    l  log       Show git log
+  Manage
     f  files     Clone gitignored files (dotfiles, dependencies) from the main worktree
+    p  prefs     Show saved preferences and optionally clean them up
+    n  name      Rename this mprocs pane or cmux workspace
     d  delete    Remove the worktree and its branch
 
-  Tools
+  Open
     e  editor    Open worktree in your editor (focuses existing window if already open)
-    p  pr        Open the pull request page on GitHub (if applicable)
-    j  jira      Open associated Jira issue in browser
     s  shell     Start a shell in the worktree
     c  claude    Start Claude Code in the worktree
+    g  github    Open the pull request page on GitHub (if applicable)
+    j  jira      Open associated Jira issue in browser
 
-help       info       name       quit
-log        files      delete
-editor     pr         jira       shell      claude
+help       info       log        quit
+files      prefs      name       delete
+editor     shell      claude     github     jira
 
 worktree [my-branch...origin/my-branch]>
 ```
