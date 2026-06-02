@@ -295,7 +295,7 @@ for ws in data.get('workspaces', []):
 # cmux_open_worktree <label> <worktree-path> <--focus|--no-focus> [<pr-url>] [<jira-url>]
 # Finds an existing cmux workspace by working directory or creates a new one.
 # If found, selects it. If not, creates a workspace with a split layout:
-#   - Top-left (1/3): terminal tabs (worktree REPL + shell)
+#   - Top-left (1/3): worktree REPL
 #   - Bottom-left (2/3): cmux claude-teams
 #   - Right (optional, 50/50): browser tabs for PR and/or Jira URLs
 cmux_open_worktree() {
@@ -322,10 +322,9 @@ cmux_open_worktree() {
     # Build left side: vertical split (1/3 top, 2/3 bottom)
     local left_layout
     left_layout="{\"direction\":\"vertical\",\"split\":0.33,\"children\":["
-    # Top pane: shell tab + worktree REPL tab
+    # Top pane: worktree REPL tab
     left_layout="${left_layout}{\"pane\":{\"surfaces\":["
     left_layout="${left_layout}{\"type\":\"terminal\",\"command\":\"${self_cmd}\"}"
-    left_layout="${left_layout},{\"type\":\"terminal\"}"
     left_layout="${left_layout}]}},"
     # Bottom pane: claude
     left_layout="${left_layout}{\"pane\":{\"surfaces\":["
