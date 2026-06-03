@@ -264,9 +264,15 @@ truncate_text() {
   fi
 }
 
-# Replace bare Slack URLs with markdown links
+# Replace bare Slack URLs with markdown links (skip URLs already inside markdown links)
 linkify_slack_urls() {
-  echo "$1" | sed 's|\(https\{0,1\}://[^ ]*slack\.com[^ ]*\)|[See slack thread](\1)|g'
+  python3 -c "
+import re, sys
+text = sys.argv[1]
+# Match slack URLs that are NOT preceded by ]( (already in a markdown link)
+text = re.sub(r'(?<!\]\()https?://[^ ]*slack\.com[^ )]*', r'[See slack thread](\g<0>)', text)
+print(text)
+" "$1"
 }
 
 urlencode() {
