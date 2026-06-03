@@ -351,7 +351,9 @@ compose_entry() {
   if [ -n "$ROW_REF" ]; then
     entry+="${ROW_REF}"$'\n'
   fi
-  entry+="*${ROW_TITLE}*"
+  if [ -n "$ROW_TITLE" ]; then
+    entry+="*${ROW_TITLE}*"
+  fi
   if [ ${#ROW_SUB_DETAILS[@]} -gt 0 ]; then
     entry+=$'\n'
     local detail
@@ -1104,13 +1106,12 @@ handle_jenkins() {
   fi
 
   local display_ref="${JENKINS_JOB}#${JENKINS_BUILD}"
-  local summary="Jenkins build ${display_ref}"
 
   # Build row components
   ROW_TIME="$(get_timestamp)"
   ROW_EMOJI="$(get_emoji jenkins "$action")"
   ROW_ACTION="$(title_case "$action") Jenkins Build"
-  ROW_TITLE="$summary"
+  ROW_TITLE=""
   ROW_SUB_DETAILS=()
 
   if [ -n "$JENKINS_URL" ]; then
@@ -1234,12 +1235,11 @@ handle_test() {
   # --- Jenkins: seen ---
   local jenkins_url="https://jenkins-csb-rhods-opendatascience.dno.corp.redhat.com/job/components/job/dashboard/job/dashboard-e2e-tests/1074"
   local jenkins_ref="dashboard-e2e-tests#1074"
-  local jenkins_summary="Jenkins build ${jenkins_ref}"
 
   ROW_TIME="$timestamp"
   ROW_EMOJI="$(get_emoji jenkins seen)"
   ROW_ACTION="$(title_case seen) Jenkins Build"
-  ROW_TITLE="$jenkins_summary"
+  ROW_TITLE=""
   ROW_SUB_DETAILS=()
   ROW_REF="[${jenkins_ref}](${jenkins_url})"
   ROW_SUB_DETAILS+=("Notes: Checked E2E test results for dashboard PR")
