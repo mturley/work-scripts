@@ -13,6 +13,8 @@ worklog pr approved #123                   # infers repo from current directory
 worklog jira started RHOAIENG-12345
 worklog jira seen RHOAIENG-12345
 worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345
+worklog jenkins seen https://jenkins-host.example.com/job/components/job/dashboard/job/e2e-tests/42/
+worklog jenkins seen components/dashboard/e2e-tests#42
 ```
 
 ## PR commands
@@ -38,6 +40,16 @@ Actions: `opened`, `started`, `closed`, `seen`, `updated`, `commented`
 - Includes linked PRs from the "Git Pull Request" custom field
 
 Reference formats: issue key (`RHOAIENG-12345`) or full URL (`https://issues.redhat.com/browse/RHOAIENG-12345` or `https://redhat.atlassian.net/browse/RHOAIENG-12345`).
+
+## Jenkins commands
+
+`worklog jenkins <action> <ref>`
+
+Actions: `seen`
+
+- Logs a Jenkins build with a linked reference
+
+Reference formats: full Jenkins URL (`https://jenkins-host/job/path/to/job/123/`) or shorthand (`path/to/job#123`). When given a full URL, the entry links the shortened job name and build number (e.g. `dashboard-e2e-tests#1074`) to the full URL.
 
 ## Other commands
 

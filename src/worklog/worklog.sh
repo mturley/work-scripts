@@ -31,6 +31,12 @@ JIRA_EXAMPLES="  worklog jira started RHOAIENG-12345
   worklog jira seen RHOAIENG-12345
   worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345"
 
+JENKINS_ACTIONS="seen"
+JENKINS_REFS="  https://jenkins-host.example.com/job/path/to/job/123/
+  path/to/job#123"
+JENKINS_EXAMPLES="  worklog jenkins seen https://jenkins-host.example.com/job/components/job/dashboard/job/e2e-tests/42/
+  worklog jenkins seen components/dashboard/e2e-tests#42"
+
 usage_pr() {
   cat <<EOF
 Usage: worklog pr <action> <ref>
@@ -59,6 +65,20 @@ ${JIRA_EXAMPLES}
 EOF
 }
 
+usage_jenkins() {
+  cat <<EOF
+Usage: worklog jenkins <action> <ref>
+
+Actions:  ${JENKINS_ACTIONS}
+
+Reference formats:
+${JENKINS_REFS}
+
+Examples:
+${JENKINS_EXAMPLES}
+EOF
+}
+
 usage() {
   cat <<EOF
 Usage: worklog <category> <action> [reference]
@@ -70,6 +90,7 @@ Categories and actions:
 
   pr      ${PR_ACTIONS}   <ref>
   jira    ${JIRA_ACTIONS}              <ref>
+  jenkins ${JENKINS_ACTIONS}                                                <ref>
 
 Reference formats:
 
@@ -79,10 +100,14 @@ ${PR_REFS}
   Jira:
 ${JIRA_REFS}
 
+  Jenkins:
+${JENKINS_REFS}
+
 Examples:
 
 ${PR_EXAMPLES}
 ${JIRA_EXAMPLES}
+${JENKINS_EXAMPLES}
 
 Options:
 
@@ -165,9 +190,10 @@ get_emoji() {
   local category="$1" action="$2"
   local cat_emoji action_emoji
   case "$category" in
-    pr)   cat_emoji="🔀" ;;
-    jira) cat_emoji="📋" ;;
-    *)    echo "📌"; return ;;
+    pr)      cat_emoji="🔀" ;;
+    jira)    cat_emoji="📋" ;;
+    jenkins) cat_emoji="🏗️" ;;
+    *)       echo "📌"; return ;;
   esac
   case "$action" in
     opened)    action_emoji="✨" ;;
@@ -1017,6 +1043,78 @@ except:
 }
 
 # ---------------------------------------------------------------------------
+# Jenkins reference parsing
+# ---------------------------------------------------------------------------
+
+JENKINS_URL=""
+JENKINS_JOB=""
+JENKINS_BUILD=""
+
+parse_jenkins_ref() {
+  local ref="$1"
+  JENKINS_URL=""
+  JENKINS_JOB=""
+  JENKINS_BUILD=""
+
+  # Full Jenkins URL: https://host/job/a/job/b/job/c/123/
+  if [[ "$ref" == http* ]]; then
+    JENKINS_URL="$(echo "$ref" | sed 's|/$||')"
+    JENKINS_BUILD="$(echo "$JENKINS_URL" | grep -o '[0-9]*$')"
+    # Extract job name: last /job/NAME/ segment before the build number
+    JENKINS_JOB="$(echo "$JENKINS_URL" | sed 's|/[0-9]*$||' | grep -o '/job/[^/]*$' | sed 's|^/job/||')"
+    return 0
+  fi
+
+  # Short ref: path/to/job#123
+  if [[ "$ref" == *#* ]]; then
+    JENKINS_BUILD="$(echo "$ref" | sed 's/.*#//')"
+    local job_path
+    job_path="$(echo "$ref" | sed 's/#[0-9]*$//')"
+    # Job name is the last path segment
+    JENKINS_JOB="$(echo "$job_path" | sed 's|.*/||')"
+    return 0
+  fi
+
+  echo "ERROR: Could not parse Jenkins reference: $ref" >&2
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Jenkins handler
+# ---------------------------------------------------------------------------
+
+handle_jenkins() {
+  local action="$1" ref="$2"
+
+  parse_jenkins_ref "$ref" || return 1
+
+  if [ -z "$JENKINS_BUILD" ]; then
+    echo "ERROR: Could not determine build number from: $ref" >&2
+    return 1
+  fi
+
+  if [ "$action" = "seen" ] && [ -n "$JENKINS_JOB" ]; then
+    check_already_seen "${JENKINS_JOB}#${JENKINS_BUILD}"
+  fi
+
+  local display_ref="${JENKINS_JOB}#${JENKINS_BUILD}"
+  local summary="Jenkins build ${display_ref}"
+
+  # Build row components
+  ROW_TIME="$(get_timestamp)"
+  ROW_EMOJI="$(get_emoji jenkins "$action")"
+  ROW_ACTION="$(title_case "$action") Jenkins Build"
+  ROW_TITLE="$summary"
+  ROW_SUB_DETAILS=()
+
+  if [ -n "$JENKINS_URL" ]; then
+    ROW_REF="[${display_ref}](${JENKINS_URL})"
+  else
+    ROW_REF="${display_ref}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Test handler — generates fake entries for every permutation
 # ---------------------------------------------------------------------------
 
@@ -1126,6 +1224,20 @@ handle_test() {
 
     TEST_ROWS+=("$(compose_entry)")
   done
+
+  # --- Jenkins: seen ---
+  local jenkins_url="https://jenkins-csb-rhods-opendatascience.dno.corp.redhat.com/job/components/job/dashboard/job/dashboard-e2e-tests/1074"
+  local jenkins_ref="dashboard-e2e-tests#1074"
+  local jenkins_summary="Jenkins build ${jenkins_ref}"
+
+  ROW_TIME="$timestamp"
+  ROW_EMOJI="$(get_emoji jenkins seen)"
+  ROW_ACTION="$(title_case seen) Jenkins Build"
+  ROW_TITLE="$jenkins_summary"
+  ROW_SUB_DETAILS=()
+  ROW_REF="[${jenkins_ref}](${jenkins_url})"
+  ROW_SUB_DETAILS+=("Notes: Checked E2E test results for dashboard PR")
+  TEST_ROWS+=("$(compose_entry)")
 }
 
 # ---------------------------------------------------------------------------
@@ -1320,17 +1432,39 @@ case "$CATEGORY" in
       exit 1
     fi
     ;;
+  jenkins)
+    if [ -z "$ACTION" ]; then
+      usage_jenkins
+      exit 0
+    fi
+    case "$ACTION" in
+      seen) ;;
+      *)
+        echo "ERROR: Invalid Jenkins action: $ACTION" >&2
+        echo "" >&2
+        usage_jenkins >&2
+        exit 1
+        ;;
+    esac
+    if [ -z "$REFERENCE" ]; then
+      echo "ERROR: Jenkins reference required." >&2
+      echo "" >&2
+      usage_jenkins >&2
+      exit 1
+    fi
+    ;;
   *)
     echo "ERROR: Unknown category: $CATEGORY" >&2
-    echo "Valid categories: pr, jira" >&2
+    echo "Valid categories: pr, jira, jenkins" >&2
     echo "Run 'worklog help' for full usage." >&2
     exit 1
     ;;
 esac
 
 case "$CATEGORY" in
-  pr)   handle_pr "$ACTION" "$REFERENCE" ;;
-  jira) handle_jira "$ACTION" "$REFERENCE" ;;
+  pr)      handle_pr "$ACTION" "$REFERENCE" ;;
+  jira)    handle_jira "$ACTION" "$REFERENCE" ;;
+  jenkins) handle_jenkins "$ACTION" "$REFERENCE" ;;
 esac
 
 if [ -z "$ROW_TIME" ]; then
