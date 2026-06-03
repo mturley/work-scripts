@@ -349,7 +349,10 @@ get_daily_note_path() {
 compose_entry() {
   local entry="${ROW_TIME} — ${ROW_EMOJI} ${ROW_ACTION}"$'\n'$'\n'
   if [ -n "$ROW_REF" ]; then
-    entry+="${ROW_REF}"$'\n'
+    entry+="${ROW_REF}"
+    if [ -n "$ROW_TITLE" ]; then
+      entry+=$'\n'
+    fi
   fi
   if [ -n "$ROW_TITLE" ]; then
     entry+="*${ROW_TITLE}*"
