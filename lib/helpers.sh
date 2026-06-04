@@ -758,7 +758,15 @@ force_rm() {
 # remove_worktree <path> - Remove a worktree, handling invalid/leftover directories
 remove_worktree() {
   local wt_path="$1"
-  echo "Removing worktree at $(basename "$wt_path")..."
+  local wt_name
+  wt_name="$(basename "$wt_path")"
+  echo "Removing worktree at ${wt_name}..."
+  # Clean up isolated kubeconfig if it exists
+  local wt_kubeconfig="$HOME/.kube/config-${wt_name}"
+  if [ -f "$wt_kubeconfig" ]; then
+    rm -f "$wt_kubeconfig"
+    echo "Removed kubeconfig: ${wt_kubeconfig/#$HOME/~}"
+  fi
   # Derive the main repo root from the worktree so git commands work
   # regardless of the caller's working directory
   local repo_root=""
