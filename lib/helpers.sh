@@ -1499,10 +1499,12 @@ worktree_show_environment() {
   fi
   if [ -n "${KUBECONFIG:-}" ]; then
     echo "  KUBECONFIG=${KUBECONFIG/#$HOME/~}"
+  fi
+  if command -v oc >/dev/null 2>&1; then
     local oc_context
     oc_context="$(oc config current-context 2>/dev/null || true)"
     if [ -n "$oc_context" ]; then
-      echo "  Current oc context: ${oc_context}"
+      echo "${cyan}Cluster:${reset} ${oc_context}"
     fi
   fi
 }
