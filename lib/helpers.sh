@@ -1499,6 +1499,11 @@ worktree_show_environment() {
   fi
   if [ -n "${KUBECONFIG:-}" ]; then
     echo "  KUBECONFIG=${KUBECONFIG/#$HOME/~}"
+    local oc_context
+    oc_context="$(oc config current-context 2>/dev/null || true)"
+    if [ -n "$oc_context" ]; then
+      echo "  Current oc context: ${oc_context}"
+    fi
   fi
 }
 
