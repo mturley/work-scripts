@@ -383,9 +383,10 @@ WORKTREE_ENV_FILENAME=".worktree-env"
 # and a one-time info display that any shell can source automatically.
 worktree_write_env_file() {
   local wt_path="$1" ports="$2" title="$3"
-  local wt_name wt_kubeconfig source_kubeconfig
+  local wt_name wt_repo wt_kubeconfig source_kubeconfig
   wt_name="$(basename "$wt_path")"
-  wt_kubeconfig="$HOME/.kube/config-$wt_name"
+  wt_repo="$(basename "$(dirname "$wt_path")")"
+  wt_kubeconfig="$HOME/.kube/config-${wt_repo}-${wt_name}"
 
   # Seed the worktree's kubeconfig from the current one if it doesn't exist yet
   if [ ! -f "$wt_kubeconfig" ]; then
@@ -758,11 +759,12 @@ force_rm() {
 # remove_worktree <path> - Remove a worktree, handling invalid/leftover directories
 remove_worktree() {
   local wt_path="$1"
-  local wt_name
+  local wt_name wt_repo
   wt_name="$(basename "$wt_path")"
+  wt_repo="$(basename "$(dirname "$wt_path")")"
   echo "Removing worktree at ${wt_name}..."
   # Clean up isolated kubeconfig if it exists
-  local wt_kubeconfig="$HOME/.kube/config-${wt_name}"
+  local wt_kubeconfig="$HOME/.kube/config-${wt_repo}-${wt_name}"
   if [ -f "$wt_kubeconfig" ]; then
     rm -f "$wt_kubeconfig"
     echo "Removed kubeconfig: ${wt_kubeconfig/#$HOME/~}"
