@@ -1483,9 +1483,12 @@ worktree_jira_status_color() {
 # Displays the Environment section with worktree-related env vars.
 worktree_show_environment() {
   local worktree_ports="$1" cyan="$2" reset="$3"
+  echo "${cyan}Environment:${reset}"
   if [ -n "$worktree_ports" ]; then
-    echo "${cyan}Environment:${reset}"
     echo "  WORKTREE_PORTS=${worktree_ports}"
+  fi
+  if [ -n "${KUBECONFIG:-}" ]; then
+    echo "  KUBECONFIG=${KUBECONFIG/#$HOME/~}"
   fi
 }
 
