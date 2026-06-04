@@ -51,14 +51,6 @@ By default, every worktree session launches in [mprocs](https://github.com/pvolo
 
 By default, the REPL does not automatically open an editor. Use the `--open` flag to detect your editor (VS Code or Cursor) or use a cached preference (in `/tmp`) and open a window (or focus an existing one). The REPL's `[e]ditor` command is always available to open an editor on demand.
 
-### VS Code Auto-REPL
-
-When opening VS Code or Cursor, the script offers to create a `.vscode/tasks.json` in the worktree that auto-starts the REPL in VS Code's integrated terminal when the folder opens. Both "Yes" and "No" choices are cached in `/tmp` and can be reset via `--cleanup` or the `[p]refs` REPL command.
-
-The `.vscode/` directory is added to the repo's `.git/info/exclude` (with a marker comment) so it doesn't pollute `git status`. When the last worktree for a repo is removed, the exclude entry is automatically cleaned up.
-
-If auto-REPL is enabled, the terminal session that launched the editor exits (with a hint to close the mprocs pane if applicable) since the REPL will run inside VS Code instead.
-
 ### Cross-Worktree Dependency Cloning
 
 The `[f]iles` REPL command lets you clone files from the main working tree into a worktree:
@@ -73,7 +65,7 @@ For each category you choose, you can select which specific files to include. Se
 
 ### Interactive REPL
 
-Once a worktree is ready, all usage paths above end here (unless VS Code auto-REPL is enabled, in which case the REPL starts in VS Code's terminal instead). On entry, a tip is shown reminding you to type `files` to clone installed dependencies from the main repo. Type a command and press Enter (both single-letter shortcuts and full words work):
+Once a worktree is ready, all usage paths above end here. On entry, a tip is shown reminding you to type `files` to clone installed dependencies from the main repo. Type a command and press Enter (both single-letter shortcuts and full words work):
 
 ```
 worktree> help
