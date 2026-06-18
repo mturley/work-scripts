@@ -380,43 +380,88 @@ cmux_open_worktree() {
 WORKTREE_ENV_FILENAME=".worktree-env"
 WORKTREE_RESOURCES_FILENAME=".worktree-resources"
 
-# worktree_read_resources <worktree-path> [type-filter]
+# worktree_read_resources <worktree-path> [type-filter] [role-filter]
 # Reads .worktree-resources and outputs matching lines.
-# If type-filter is given (e.g. "jira"), only lines starting with "jira:" are output.
+# type-filter: e.g. "jira" — only lines with that type prefix. Empty = all types.
+# role-filter: "primary" (unmarked lines), "related" (~ prefixed), or empty (all).
+# Output lines are raw (~ prefix preserved) so callers can distinguish.
 worktree_read_resources() {
-  local wt_path="$1" type_filter="${2:-}"
+  local wt_path="$1" type_filter="${2:-}" role_filter="${3:-}"
   local res_file="${wt_path}/${WORKTREE_RESOURCES_FILENAME}"
   if [ ! -f "$res_file" ]; then
     return
   fi
   while IFS= read -r line || [ -n "$line" ]; do
-    # Skip empty lines and malformed lines (must have a space separating id from url)
+    # Skip empty lines
+    [ -z "$line" ] && continue
+
+    # Determine if related (~ prefix) and strip prefix for matching
+    local is_related=false
+    local content="$line"
     case "$line" in
-      "") continue ;;
+      "~ "*)
+        is_related=true
+        content="${line#"~ "}"
+        ;;
+    esac
+
+    # Malformed lines must have a space separating type:id from url
+    case "$content" in
       *" "*) ;;
       *) continue ;;
     esac
-    if [ -z "$type_filter" ]; then
-      echo "$line"
-    else
-      case "$line" in
-        "${type_filter}:"*) echo "$line" ;;
+
+    # Role filter
+    case "$role_filter" in
+      primary) $is_related && continue ;;
+      related) $is_related || continue ;;
+    esac
+
+    # Type filter (match against content without ~ prefix)
+    if [ -n "$type_filter" ]; then
+      case "$content" in
+        "${type_filter}:"*) ;;
+        *) continue ;;
       esac
     fi
+
+    echo "$line"
   done < "$res_file"
 }
 
-# worktree_write_resource <worktree-path> <type> <id> <url>
-# Appends a resource line if not already present (deduplicates by type:id).
+# worktree_write_resource <worktree-path> <type> <id> <url> [related]
+# Appends a resource line if not already present (deduplicates by type:id
+# regardless of primary/related status). Pass "related" as 5th arg for ~ prefix.
 worktree_write_resource() {
-  local wt_path="$1" res_type="$2" res_id="$3" res_url="$4"
+  local wt_path="$1" res_type="$2" res_id="$3" res_url="$4" role="${5:-primary}"
   local res_file="${wt_path}/${WORKTREE_RESOURCES_FILENAME}"
-  local entry="${res_type}:${res_id} ${res_url}"
-  local prefix="${res_type}:${res_id} "
-  if [ -f "$res_file" ] && grep -qF "$prefix" "$res_file" 2>/dev/null; then
+  local content="${res_type}:${res_id} ${res_url}"
+  # Check if this type:id already exists (with or without ~ prefix)
+  if [ -f "$res_file" ] && grep -qF "${res_type}:${res_id} " "$res_file" 2>/dev/null; then
     return
   fi
-  echo "$entry" >> "$res_file"
+  if [ "$role" = "related" ]; then
+    echo "~ ${content}" >> "$res_file"
+  else
+    echo "$content" >> "$res_file"
+  fi
+}
+
+# worktree_set_primary_resource <worktree-path> <type> <id> <url>
+# Sets a resource as the primary for its type. Demotes any existing primary
+# of the same type to related, then adds the new entry as primary.
+worktree_set_primary_resource() {
+  local wt_path="$1" res_type="$2" res_id="$3" res_url="$4"
+  local res_file="${wt_path}/${WORKTREE_RESOURCES_FILENAME}"
+  if [ -f "$res_file" ]; then
+    # Remove this exact entry if it already exists (will re-add as primary)
+    local tmp_file="${res_file}.tmp"
+    grep -vF "${res_type}:${res_id} " "$res_file" > "$tmp_file" 2>/dev/null || true
+    # Demote any existing primary entries of this type to related (skip already-related)
+    sed "/^~ /!s/^${res_type}:/~ ${res_type}:/" "$tmp_file" > "$res_file"
+    rm -f "$tmp_file"
+  fi
+  echo "${res_type}:${res_id} ${res_url}" >> "$res_file"
 }
 
 # worktree_update_resources <worktree-path>
@@ -1302,7 +1347,8 @@ open_editor() {
 # Sets: WT_INFO_BRANCH, WT_INFO_TRACKING, WT_INFO_PR_NUM, WT_INFO_PR_URL,
 #       WT_INFO_PR_TITLE, WT_INFO_PR_AUTHOR, WT_INFO_PR_STATE,
 #       WT_INFO_PR_CREATED, WT_INFO_PR_UPDATED, WT_INFO_PR_BODY,
-#       WT_INFO_JIRA_ISSUES, WT_INFO_JIRA_HOST, WT_INFO_JIRA_DETAILS
+#       WT_INFO_JIRA_ISSUES, WT_INFO_JIRA_HOST, WT_INFO_JIRA_DETAILS,
+#       WT_INFO_RELATED_PR_URLS, WT_INFO_RELATED_JIRA_ISSUES
 worktree_gather_info() {
   local wt_path="$1"
   local simple=false
@@ -1323,14 +1369,27 @@ worktree_gather_info() {
   WT_INFO_JIRA_ISSUES=""
   WT_INFO_JIRA_HOST=""
   WT_INFO_JIRA_DETAILS=""
+  WT_INFO_RELATED_PR_URLS=""
+  WT_INFO_RELATED_JIRA_ISSUES=""
 
-  # Check .worktree-resources for cached PR
+  # Check .worktree-resources for cached primary PR
   local cached_pr_line
-  cached_pr_line="$(worktree_read_resources "$wt_path" "pr" | head -1 || true)"
+  cached_pr_line="$(worktree_read_resources "$wt_path" "pr" "primary" | head -1 || true)"
   if [ -n "$cached_pr_line" ]; then
     WT_INFO_PR_URL="$(echo "$cached_pr_line" | sed 's/^[^ ]* //')"
     WT_INFO_PR_NUM="$(echo "$WT_INFO_PR_URL" | grep -o '[0-9]*$')"
   fi
+
+  # Collect related PR URLs
+  local related_pr_line
+  while IFS= read -r related_pr_line; do
+    [ -z "$related_pr_line" ] && continue
+    local related_url
+    related_url="$(echo "$related_pr_line" | sed 's/^~ //' | sed 's/^[^ ]* //')"
+    WT_INFO_RELATED_PR_URLS="${WT_INFO_RELATED_PR_URLS:+${WT_INFO_RELATED_PR_URLS} }${related_url}"
+  done <<EOF
+$(worktree_read_resources "$wt_path" "pr" "related")
+EOF
 
   # PR number from directory name (local, fast)
   if [[ "$wt_name" == pr-* ]]; then
@@ -1408,7 +1467,8 @@ worktree_gather_info() {
 # worktree_gather_jira_info <worktree-path> [--simple]
 # Detects Jira issue keys from branch name, PR title/body, and cached .worktree-resources.
 # With --simple, skips PR title/body scanning and Jira API enrichment.
-# Sets: WT_INFO_JIRA_ISSUES, WT_INFO_JIRA_HOST, WT_INFO_JIRA_DETAILS
+# Sets: WT_INFO_JIRA_ISSUES (primary), WT_INFO_RELATED_JIRA_ISSUES,
+#       WT_INFO_JIRA_HOST, WT_INFO_JIRA_DETAILS
 worktree_gather_jira_info() {
   local wt_path="$1"
   local simple=false
@@ -1436,11 +1496,18 @@ worktree_gather_jira_info() {
 
   local found_issues=""
 
-  # Check .worktree-resources for cached associations
+  # Check .worktree-resources for cached primary associations
   local cached_jira
-  cached_jira="$(worktree_read_resources "$wt_path" "jira" | sed 's/^jira:\([^ ]*\) .*/\1/' || true)"
+  cached_jira="$(worktree_read_resources "$wt_path" "jira" "primary" | sed 's/^jira:\([^ ]*\) .*/\1/' || true)"
   if [ -n "$cached_jira" ]; then
     found_issues="$(echo "$cached_jira" | tr '\n' ' ' | sed 's/ $//')"
+  fi
+
+  # Collect related Jira issues from cache
+  local cached_related
+  cached_related="$(worktree_read_resources "$wt_path" "jira" "related" | sed 's/^~ jira:\([^ ]*\) .*/\1/' || true)"
+  if [ -n "$cached_related" ]; then
+    WT_INFO_RELATED_JIRA_ISSUES="$(echo "$cached_related" | tr '\n' ' ' | sed 's/ $//')"
   fi
 
   # Scan branch name
@@ -1482,7 +1549,8 @@ print(re.sub(r'<!--.*?-->', '', sys.stdin.read(), flags=re.DOTALL))" 2>/dev/null
   # Enrich with Jira API metadata when credentials are available (skipped in simple mode)
   if ! $simple && [ "${JIRA_LOADED:-false}" = "true" ] && [ -n "${JIRA_HOST:-}" ]; then
     local issue_key api_response details_lines=""
-    for issue_key in $WT_INFO_JIRA_ISSUES; do
+    local all_issues="$WT_INFO_JIRA_ISSUES${WT_INFO_RELATED_JIRA_ISSUES:+ $WT_INFO_RELATED_JIRA_ISSUES}"
+    for issue_key in $all_issues; do
       api_response="$(curl --max-time 5 --silent --fail \
         -u "${JIRA_EMAIL}:${JIRA_TOKEN}" \
         "https://${JIRA_HOST}/rest/api/2/issue/${issue_key}?fields=summary,issuetype,status,assignee,priority" \
@@ -1733,6 +1801,49 @@ worktree_show_info() {
     fi
     if ! $simple; then echo ""; fi
   fi
+  # Related resources (shown as compact one-liners, skipped in simple mode)
+  if ! $simple; then
+    local has_related=false
+    if [ -n "${WT_INFO_RELATED_PR_URLS:-}" ]; then
+      has_related=true
+    fi
+    if [ -n "${WT_INFO_RELATED_JIRA_ISSUES:-}" ]; then
+      has_related=true
+    fi
+    if $has_related; then
+      echo "${cyan}Related:${reset}"
+      local related_url
+      for related_url in ${WT_INFO_RELATED_PR_URLS:-}; do
+        local related_pr_num
+        related_pr_num="$(echo "$related_url" | grep -o '[0-9]*$')"
+        local related_pr_link
+        related_pr_link="\033]8;;${related_url}\033\\${underline}PR #${related_pr_num}${reset}\033]8;;\033\\"
+        printf "  ${related_pr_link}\n"
+      done
+      local related_jira_key
+      for related_jira_key in ${WT_INFO_RELATED_JIRA_ISSUES:-}; do
+        local rj_link="${related_jira_key}"
+        if [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
+          rj_link="\033]8;;https://${WT_INFO_JIRA_HOST}/browse/${related_jira_key}\033\\${underline}${related_jira_key}${reset}\033]8;;\033\\"
+        fi
+        local rj_detail_line=""
+        if [ -n "${WT_INFO_JIRA_DETAILS:-}" ]; then
+          rj_detail_line="$(echo "$WT_INFO_JIRA_DETAILS" | grep "^${related_jira_key}|" || true)"
+        fi
+        if [ -n "$rj_detail_line" ]; then
+          local rj_type rj_summary
+          rj_type="$(echo "$rj_detail_line" | cut -d'|' -f2)"
+          rj_summary="$(echo "$rj_detail_line" | cut -d'|' -f5)"
+          local rj_type_emoji
+          rj_type_emoji="$(worktree_jira_emoji type "$rj_type")"
+          printf "  ${rj_link} ${rj_type_emoji}${rj_type}: ${rj_summary}\n"
+        else
+          printf "  ${rj_link}\n"
+        fi
+      done
+      echo ""
+    fi
+  fi
   if [ -n "${WT_INFO_TRACKING:-}" ]; then
     local info_ahead info_behind info_parts=""
     info_ahead="$(git -C "$wt_path" rev-list --count "${WT_INFO_TRACKING}..HEAD" 2>/dev/null || echo 0)"
@@ -1788,6 +1899,8 @@ worktree_repl() {
   local jira_issues="$WT_INFO_JIRA_ISSUES"
   local jira_host="$WT_INFO_JIRA_HOST"
   local jira_details="$WT_INFO_JIRA_DETAILS"
+  local related_pr_urls="$WT_INFO_RELATED_PR_URLS"
+  local related_jira_issues="$WT_INFO_RELATED_JIRA_ISSUES"
 
   # --- Open editor (detects editor and sets up auto-REPL task internally) ---
   echo ""
@@ -1817,7 +1930,43 @@ worktree_repl() {
     jira_issues="$WT_INFO_JIRA_ISSUES"
     jira_host="$WT_INFO_JIRA_HOST"
     jira_details="$WT_INFO_JIRA_DETAILS"
+    related_pr_urls="$WT_INFO_RELATED_PR_URLS"
+    related_jira_issues="$WT_INFO_RELATED_JIRA_ISSUES"
     worktree_show_info "$wt_path" "$show_path" "$worktree_ports"
+  }
+
+  _worktree_jira_add() {
+    local target_wt_path="$1"
+    printf "Paste a Jira issue key or URL to associate (or press Enter to skip): "
+    read -r jira_input
+    if [ -z "$jira_input" ]; then return; fi
+    local jira_key_input
+    jira_key_input="$(echo "$jira_input" | grep -oE "($(echo "$JIRA_PROJECTS" | tr ',' '|'))-[0-9]+" | head -1)"
+    if [ -z "$jira_key_input" ]; then
+      echo "Could not find a matching Jira issue key (expected projects: ${JIRA_PROJECTS})."
+      return
+    fi
+    local role="primary"
+    printf "Add as [p]rimary or [r]elated? (p/r, default: p): "
+    read -r role_input
+    case "$role_input" in
+      r|R|related) role="related" ;;
+    esac
+    jira_host="${JIRA_HOST:-}"
+    if [ "$role" = "primary" ]; then
+      worktree_set_primary_resource "$target_wt_path" "jira" "$jira_key_input" "https://${jira_host}/browse/${jira_key_input}"
+      jira_issues="$jira_key_input"
+      echo "Set ${jira_key_input} as primary Jira issue."
+    else
+      worktree_write_resource "$target_wt_path" "jira" "$jira_key_input" "https://${jira_host}/browse/${jira_key_input}" "related"
+      related_jira_issues="${related_jira_issues:+${related_jira_issues} }${jira_key_input}"
+      echo "Added ${jira_key_input} as related Jira issue."
+    fi
+    if [ -n "$jira_host" ]; then
+      local jira_url="https://${jira_host}/browse/${jira_key_input}"
+      echo "Opening ${jira_url}"
+      open "$jira_url"
+    fi
   }
 
   _worktree_commands() {
@@ -1936,60 +2085,69 @@ worktree_repl() {
         if [ -z "${JIRA_PROJECTS:-}" ]; then
           echo "Jira integration not configured. Add JIRA_PROJECTS to your jira.env file."
           echo "See: jira.env.example"
-        elif [ -z "${jira_issues:-}" ]; then
+        elif [ -z "${jira_issues:-}" ] && [ -z "${related_jira_issues:-}" ]; then
           echo "No Jira issue detected for this worktree."
-          printf "Paste a Jira issue key or URL to associate (or press Enter to skip): "
-          read -r jira_input
-          if [ -n "$jira_input" ]; then
-            local jira_key_input
-            jira_key_input="$(echo "$jira_input" | grep -oE "($(echo "$JIRA_PROJECTS" | tr ',' '|'))-[0-9]+" | head -1)"
-            if [ -n "$jira_key_input" ]; then
-              jira_issues="$jira_key_input"
-              jira_host="${JIRA_HOST:-}"
-              worktree_update_resources_jira "$wt_path" "$jira_issues"
-              echo "Associated ${jira_key_input} with this worktree."
-              if [ -n "$jira_host" ]; then
-                local jira_url="https://${jira_host}/browse/${jira_key_input}"
-                echo "Opening ${jira_url}"
-                open "$jira_url"
-              fi
-            else
-              echo "Could not find a matching Jira issue key (expected projects: ${JIRA_PROJECTS})."
-            fi
-          fi
+          _worktree_jira_add "$wt_path"
         else
+          # List all known issues with a picker
+          local all_jira="${jira_issues:-}${related_jira_issues:+ $related_jira_issues}"
           local jira_issue_count
-          jira_issue_count="$(echo "$jira_issues" | wc -w | tr -d ' ')"
-          if [ "$jira_issue_count" -eq 1 ]; then
+          jira_issue_count="$(echo "$all_jira" | wc -w | tr -d ' ')"
+          if [ "$jira_issue_count" -eq 1 ] && [ -z "${related_jira_issues:-}" ]; then
             local jira_url="https://${jira_host}/browse/${jira_issues}"
             echo "Opening ${jira_url}"
             open "$jira_url"
           else
             echo ""
-            echo "Multiple Jira issues found:"
             local idx=1 jira_key
-            for jira_key in $jira_issues; do
-              local detail_line=""
-              if [ -n "${jira_details:-}" ]; then
-                detail_line="$(echo "$jira_details" | grep "^${jira_key}|" || true)"
-              fi
-              if [ -n "$detail_line" ]; then
-                local j_type j_summary
-                j_type="$(echo "$detail_line" | cut -d'|' -f2)"
-                j_summary="$(echo "$detail_line" | cut -d'|' -f5)"
-                local type_emoji
-                type_emoji="$(worktree_jira_emoji type "$j_type")"
-                echo "  ${idx}) ${jira_key} ${type_emoji}${j_type}: ${j_summary}"
-              else
-                echo "  ${idx}) ${jira_key}"
-              fi
-              idx=$((idx + 1))
-            done
-            printf "\nSelect issue number (or press Enter to skip): "
+            if [ -n "${jira_issues:-}" ]; then
+              echo "Primary:"
+              for jira_key in $jira_issues; do
+                local detail_line=""
+                if [ -n "${jira_details:-}" ]; then
+                  detail_line="$(echo "$jira_details" | grep "^${jira_key}|" || true)"
+                fi
+                if [ -n "$detail_line" ]; then
+                  local j_type j_summary
+                  j_type="$(echo "$detail_line" | cut -d'|' -f2)"
+                  j_summary="$(echo "$detail_line" | cut -d'|' -f5)"
+                  local type_emoji
+                  type_emoji="$(worktree_jira_emoji type "$j_type")"
+                  echo "  ${idx}) ${jira_key} ${type_emoji}${j_type}: ${j_summary}"
+                else
+                  echo "  ${idx}) ${jira_key}"
+                fi
+                idx=$((idx + 1))
+              done
+            fi
+            if [ -n "${related_jira_issues:-}" ]; then
+              echo "Related:"
+              for jira_key in $related_jira_issues; do
+                local detail_line=""
+                if [ -n "${jira_details:-}" ]; then
+                  detail_line="$(echo "$jira_details" | grep "^${jira_key}|" || true)"
+                fi
+                if [ -n "$detail_line" ]; then
+                  local j_type j_summary
+                  j_type="$(echo "$detail_line" | cut -d'|' -f2)"
+                  j_summary="$(echo "$detail_line" | cut -d'|' -f5)"
+                  local type_emoji
+                  type_emoji="$(worktree_jira_emoji type "$j_type")"
+                  echo "  ${idx}) ${jira_key} ${type_emoji}${j_type}: ${j_summary}"
+                else
+                  echo "  ${idx}) ${jira_key}"
+                fi
+                idx=$((idx + 1))
+              done
+            fi
+            echo "  a) Add new issue"
+            printf "\nSelect number to open, 'a' to add (or Enter to skip): "
             read -r jira_selection
-            if [ -n "$jira_selection" ] && [ "$jira_selection" -ge 1 ] 2>/dev/null && [ "$jira_selection" -lt "$idx" ] 2>/dev/null; then
+            if [ "$jira_selection" = "a" ]; then
+              _worktree_jira_add "$wt_path"
+            elif [ -n "$jira_selection" ] && [ "$jira_selection" -ge 1 ] 2>/dev/null && [ "$jira_selection" -lt "$idx" ] 2>/dev/null; then
               local selected_key
-              selected_key="$(echo "$jira_issues" | tr ' ' '\n' | sed -n "${jira_selection}p")"
+              selected_key="$(echo "$all_jira" | tr ' ' '\n' | sed -n "${jira_selection}p")"
               if [ -n "$selected_key" ] && [ -n "$jira_host" ]; then
                 local jira_url="https://${jira_host}/browse/${selected_key}"
                 echo "Opening ${jira_url}"

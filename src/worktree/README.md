@@ -87,7 +87,7 @@ worktree> help
     s  shell     Start a shell in the worktree
     c  claude    Start Claude Code in the worktree
     g  github    Open the pull request page on GitHub (if applicable)
-    j  jira      Open associated Jira issue in browser
+    j  jira      Open/add associated Jira issues (primary or related)
 
 help       info       log        quit
 files      prefs      name       delete
@@ -194,7 +194,7 @@ This is a comma-separated list of Jira project prefixes to scan for in branch na
 ### Detection
 
 Jira issue keys are detected from three sources (in order):
-1. **Cached associations** — previously associated issues stored in `.worktree-env`
+1. **Cached associations** — previously associated issues stored in `.worktree-resources`
 2. **Branch name** — e.g. branch `RHOAIENG-12345-fix-pagination` detects `RHOAIENG-12345`
 3. **PR title and body** — if a PR is detected, its title and description are scanned for issue keys
 
@@ -208,11 +208,23 @@ If credentials are not configured or the API call fails (expired token, network 
 
 ### Manual Association
 
-If no Jira issue is detected, pressing `[j]ira` in the REPL prompts you to paste a Jira issue key or URL. The association is saved in `.worktree-env` and persists across REPL sessions.
+Pressing `[j]ira` in the REPL opens the associated issue (or shows a picker if multiple exist). If no issue is detected, it prompts you to paste a Jira issue key or URL. When adding an issue, you choose whether it's **primary** (the issue this worktree is working on — replaces any existing primary) or **related** (watching for context — appended). Associations are saved in `.worktree-resources` and persist across REPL sessions.
 
 ### Worktree Environment File
 
 A `.worktree-env` file is automatically generated in each worktree directory, exporting `WORKTREE_PORTS`, `WORKTREE_TITLE`, `WORKTREE_PATH`, and `KUBECONFIG`. On first use, the script offers to add an auto-source snippet to your shell RC file (`.zshrc`, `.bashrc`, or `config.fish`) so these variables are available in any terminal opened in the worktree directory. The file displays a lightweight summary once per shell session via `worktree --info-simple` (path, branch, environment, current oc context — no API calls). Run `worktree --info` for full PR and Jira status.
+
+### External Resources File
+
+A `.worktree-resources` file tracks PRs and Jira issues associated with the worktree. Each line is `<type>:<id> <url>`, with an optional `~ ` prefix for related (context-watching) resources:
+
+```
+pr:owner/repo#123 https://github.com/owner/repo/pull/123
+jira:RHOAIENG-456 https://redhat.atlassian.net/browse/RHOAIENG-456
+~ jira:RHOAIENG-400 https://redhat.atlassian.net/browse/RHOAIENG-400
+```
+
+Unmarked lines are **primary** (the reason this worktree exists). Lines prefixed with `~ ` are **related** (watching for context). Primary resources get full detail in `worktree --info`; related resources are shown as compact one-liners. This file is tool-agnostic — other worktree-aware tools can read or write it.
 
 The `KUBECONFIG` is set to `~/.kube/config-<worktree-name>`, giving each worktree an isolated kubeconfig. On first setup, the file is seeded from your current kubeconfig (from `$KUBECONFIG` or `~/.kube/config`) so the worktree inherits your active cluster context. The kubeconfig file is cleaned up when the worktree is removed via `worktree --cleanup`.
 
