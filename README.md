@@ -19,6 +19,9 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`claude-sessions`](src/claude-sessions/) — List all Claude Code sessions across projects
 - [`claude-resume`](src/claude-resume/) — Resume a Claude Code session from any directory
 
+**Diagnostics**
+- [`cmux-perf-monitor`](src/cmux-perf-monitor/) — Sample cmux process metrics over time to diagnose performance degradation
+
 **Commands for iTerm2**
 - [`iterm-new`](src/iterm-new/) — Open a new iTerm2 tab or split pane and run a command
 
@@ -164,6 +167,19 @@ Resume a Claude Code session from any directory. Looks up the session's working 
 
 ```bash
 claude-resume f5e4d769-7848-4b7b-9e3f-443689550bf3
+```
+
+## Diagnostics
+
+### [`cmux-perf-monitor`](src/cmux-perf-monitor/) — cmux Performance Monitor
+
+Sample cmux process metrics at regular intervals to diagnose performance degradation. Tracks CPU, memory, file descriptors, Claude Code sessions, and managed surfaces over time.
+
+```bash
+cmux-perf-monitor                          # sample every 3 min → /tmp/cmux-monitor.csv
+cmux-perf-monitor --interval 60            # sample every 60 seconds
+cmux-perf-monitor --output ~/cmux-data.csv # custom output path
+cmux-perf-monitor &                        # run in background
 ```
 
 ## Commands for iTerm2
