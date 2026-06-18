@@ -29,7 +29,11 @@ worktree https://github.com/org/repo/pull/1234
 worktree my-feature-branch           # create or reopen a branch worktree
 worktree ~/git/.worktrees/repo/name  # open an existing worktree by path
 worktree 1234 5678 my-branch         # open multiple worktrees in mprocs
-worktree --standalone my-branch      # shell in worktree, no mprocs
+worktree -s my-branch                # shell in worktree, no mprocs (--standalone)
+worktree --info                      # show full worktree info (PR, Jira, git status)
+worktree --info-simple               # fast info, no API calls
+worktree --cleanup                   # select worktrees to remove + clean up stale files
+worktree --cleanup-prefs             # clean up saved preferences only
 worktree --help                      # show usage help
 ```
 
@@ -49,13 +53,13 @@ By default, every worktree session launches in [mprocs](https://github.com/pvolo
 
 ### Opening Editors
 
-By default, the REPL does not automatically open an editor. Use the `--open` flag to detect your editor (VS Code or Cursor) or use a cached preference (in `/tmp`) and open a window (or focus an existing one). The REPL's `[e]ditor` command is always available to open an editor on demand.
+By default, the REPL does not automatically open an editor. Use the `--open` flag to detect your editor (VS Code, Cursor, or Zed) or use a cached preference (in `/tmp`) and open a window (or focus an existing one). The REPL's `[e]ditor` command is always available to open an editor on demand.
 
 ### Cross-Worktree Dependency Cloning
 
 The `[f]iles` REPL command lets you clone files from the main working tree into a worktree:
 
-- **`1` — Dotfiles, dependencies and build artifacts** — clones dotfiles plus `node_modules`, `dist/`, `bin/`, etc.
+- **`1` — Clone configuration (top-level dotfiles), dependencies and build artifacts** — clones dotfiles plus `node_modules`, `dist/`, `bin/`, etc.
 - **`2` — Config only** — clones top-level dotfiles (`.env.local`, `.husky`, etc.). You'll need to install dependencies and build yourself.
 - **`3` — Nothing** — skip cloning entirely.
 
@@ -96,7 +100,7 @@ editor     shell      claude     github     jira
 worktree [my-branch...origin/my-branch]>
 ```
 
-I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it. If you want to run a dev environment in the worktree, you can use `shell` — in mprocs it starts a nested session with a `[worktree]` pane (running the REPL) and a shell pane; in cmux or standalone mode it opens an inline subshell.
+I leave the REPL open in multiple terminals for quick cleanup of each one, but you can also exit it and run `worktree` again to get back to it. If you want to run a dev environment in the worktree, you can use `shell` — in mprocs it prompts whether to start a nested mprocs session (with a `[worktree]` pane and a shell pane) or an inline subshell, and caches your preference; in cmux or standalone mode it opens an inline subshell.
 
 ### Persistent Sessions
 
@@ -166,8 +170,8 @@ See [remote-access.md](remote-access.md) for a guide on setting up SSH access fr
 When running inside [cmux](https://cmux.com/), the worktree script automatically detects the environment via the `CMUX_SOCKET_PATH` variable and uses cmux workspaces instead of mprocs/screen:
 
 - **Workspace layout** → each worktree gets a cmux workspace with a split layout:
-  - **Top-left (1/3 height):** two terminal tabs — a generic shell and the worktree REPL
-  - **Bottom-left (2/3 height):** `cmux claude-teams` for AI-assisted development
+  - **Top-left (1/3 height):** worktree REPL
+  - **Bottom-left (2/3 height):** Claude Code
   - **Right (50% width, optional):** browser tabs for the associated PR and/or Jira issue, shown when URLs are detected
 - **Persistence** → handled natively by cmux (screen is skipped entirely)
 - **Shell/Claude commands** → run inline in the current terminal (exit to return to REPL)
@@ -226,6 +230,6 @@ jira:RHOAIENG-456 https://redhat.atlassian.net/browse/RHOAIENG-456
 
 Unmarked lines are **primary** (the reason this worktree exists). Lines prefixed with `~ ` are **related** (watching for context). Primary resources get full detail in `worktree --info`; related resources are shown as compact one-liners. This file is tool-agnostic — other worktree-aware tools can read or write it.
 
-The `KUBECONFIG` is set to `~/.kube/config-<worktree-name>`, giving each worktree an isolated kubeconfig. On first setup, the file is seeded from your current kubeconfig (from `$KUBECONFIG` or `~/.kube/config`) so the worktree inherits your active cluster context. The kubeconfig file is cleaned up when the worktree is removed via `worktree --cleanup`.
+The `KUBECONFIG` is set to `~/.kube/config-<repo-name>-<worktree-name>`, giving each worktree an isolated kubeconfig. On first setup, the file is seeded from your current kubeconfig (from `$KUBECONFIG` or `~/.kube/config`) so the worktree inherits your active cluster context. The kubeconfig file is cleaned up when the worktree is removed via `worktree --cleanup`.
 
 If you use Powerlevel10k with instant prompt, the setup will change `POWERLEVEL9K_INSTANT_PROMPT` to `quiet` in `~/.p10k.zsh` to allow the info output without warnings.

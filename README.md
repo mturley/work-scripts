@@ -64,7 +64,7 @@ worktree --help                      # show usage help
 
 Sessions are persistent by default (mprocs runs inside GNU Screen 5.0+ for detach/reattach). Use `--no-persist` to skip screen. When running inside [cmux](https://cmux.com/), workspaces and splits are used instead of mprocs/screen.
 
-Each worktree gets an isolated `KUBECONFIG` at `~/.kube/config-<worktree-name>`, seeded from your current kubeconfig on first setup. This means `oc login` in one worktree won't affect another. The kubeconfig is exported via `.worktree-env` and cleaned up when the worktree is removed.
+Each worktree gets an isolated `KUBECONFIG` at `~/.kube/config-<repo-name>-<worktree-name>`, seeded from your current kubeconfig on first setup. This means `oc login` in one worktree won't affect another. The kubeconfig is exported via `.worktree-env` and cleaned up when the worktree is removed.
 
 ```
 help       info       log        quit
