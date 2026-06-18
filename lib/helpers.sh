@@ -378,6 +378,71 @@ cmux_open_worktree() {
 # --- Worktree environment file ---
 
 WORKTREE_ENV_FILENAME=".worktree-env"
+WORKTREE_RESOURCES_FILENAME=".worktree-resources"
+
+# worktree_read_resources <worktree-path> [type-filter]
+# Reads .worktree-resources and outputs matching lines.
+# If type-filter is given (e.g. "jira"), only lines starting with "jira:" are output.
+worktree_read_resources() {
+  local wt_path="$1" type_filter="${2:-}"
+  local res_file="${wt_path}/${WORKTREE_RESOURCES_FILENAME}"
+  if [ ! -f "$res_file" ]; then
+    return
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Skip empty lines and malformed lines (must have a space separating id from url)
+    case "$line" in
+      "") continue ;;
+      *" "*) ;;
+      *) continue ;;
+    esac
+    if [ -z "$type_filter" ]; then
+      echo "$line"
+    else
+      case "$line" in
+        "${type_filter}:"*) echo "$line" ;;
+      esac
+    fi
+  done < "$res_file"
+}
+
+# worktree_write_resource <worktree-path> <type> <id> <url>
+# Appends a resource line if not already present (deduplicates by type:id).
+worktree_write_resource() {
+  local wt_path="$1" res_type="$2" res_id="$3" res_url="$4"
+  local res_file="${wt_path}/${WORKTREE_RESOURCES_FILENAME}"
+  local entry="${res_type}:${res_id} ${res_url}"
+  local prefix="${res_type}:${res_id} "
+  if [ -f "$res_file" ] && grep -qF "$prefix" "$res_file" 2>/dev/null; then
+    return
+  fi
+  echo "$entry" >> "$res_file"
+}
+
+# worktree_update_resources <worktree-path>
+# Persists discovered PR and Jira entries to .worktree-resources.
+# Merges with existing content — never removes entries.
+worktree_update_resources() {
+  local wt_path="$1"
+
+  # Persist PR if detected
+  if [ -n "${WT_INFO_PR_URL:-}" ] && [ -n "${WT_INFO_PR_NUM:-}" ]; then
+    local pr_owner_repo
+    pr_owner_repo="$(echo "$WT_INFO_PR_URL" | sed 's|https://github.com/||' | sed 's|/pull/.*||')"
+    if [ -n "$pr_owner_repo" ]; then
+      worktree_write_resource "$wt_path" "pr" "${pr_owner_repo}#${WT_INFO_PR_NUM}" "$WT_INFO_PR_URL"
+    fi
+  fi
+
+  # Persist Jira issues if detected
+  if [ -n "${WT_INFO_JIRA_ISSUES:-}" ] && [ -n "${WT_INFO_JIRA_HOST:-}" ]; then
+    local issue_key
+    for issue_key in $WT_INFO_JIRA_ISSUES; do
+      worktree_write_resource "$wt_path" "jira" "$issue_key" "https://${WT_INFO_JIRA_HOST}/browse/${issue_key}"
+    done
+  fi
+}
+
 # worktree_write_env_file <worktree-path> <worktree-ports> <worktree-title>
 # Writes a .worktree-env file in the worktree directory with env vars
 # and a one-time info display that any shell can source automatically.
@@ -1005,16 +1070,21 @@ add_worktree_git_exclude() {
   local repo_root="$1"
   local exclude_file="$repo_root/.git/info/exclude"
   if grep -q "# BEGIN $WORKTREE_EXCLUDE_MARKER" "$exclude_file" 2>/dev/null; then
-    # Block exists — check if .worktree-env is already in it
+    # Block exists — add any missing entries
     if ! grep -q '\.worktree-env' "$exclude_file" 2>/dev/null; then
       sed -i '' "/# END $WORKTREE_EXCLUDE_MARKER/i\\
 .worktree-env
 " "$exclude_file"
     fi
+    if ! grep -q '\.worktree-resources' "$exclude_file" 2>/dev/null; then
+      sed -i '' "/# END $WORKTREE_EXCLUDE_MARKER/i\\
+.worktree-resources
+" "$exclude_file"
+    fi
     return
   fi
   mkdir -p "$repo_root/.git/info"
-  printf '\n# BEGIN %s\n.vscode/\n.worktree-env\n# END %s\n' "$WORKTREE_EXCLUDE_MARKER" "$WORKTREE_EXCLUDE_MARKER" >> "$exclude_file"
+  printf '\n# BEGIN %s\n.vscode/\n.worktree-env\n.worktree-resources\n# END %s\n' "$WORKTREE_EXCLUDE_MARKER" "$WORKTREE_EXCLUDE_MARKER" >> "$exclude_file"
 }
 
 # remove_worktree_git_exclude <repo-root>
@@ -1254,6 +1324,14 @@ worktree_gather_info() {
   WT_INFO_JIRA_HOST=""
   WT_INFO_JIRA_DETAILS=""
 
+  # Check .worktree-resources for cached PR
+  local cached_pr_line
+  cached_pr_line="$(worktree_read_resources "$wt_path" "pr" | head -1 || true)"
+  if [ -n "$cached_pr_line" ]; then
+    WT_INFO_PR_URL="$(echo "$cached_pr_line" | sed 's/^[^ ]* //')"
+    WT_INFO_PR_NUM="$(echo "$WT_INFO_PR_URL" | grep -o '[0-9]*$')"
+  fi
+
   # PR number from directory name (local, fast)
   if [[ "$wt_name" == pr-* ]]; then
     WT_INFO_PR_NUM="$(echo "$wt_name" | sed 's/^pr-\([0-9]*\)-.*/\1/')"
@@ -1322,10 +1400,13 @@ worktree_gather_info() {
   fi
 
   worktree_gather_jira_info "$wt_path" "$($simple && echo "--simple")"
+
+  # Persist any newly discovered resources to .worktree-resources
+  worktree_update_resources "$wt_path"
 }
 
 # worktree_gather_jira_info <worktree-path> [--simple]
-# Detects Jira issue keys from branch name, PR title/body, and cached .worktree-env.
+# Detects Jira issue keys from branch name, PR title/body, and cached .worktree-resources.
 # With --simple, skips PR title/body scanning and Jira API enrichment.
 # Sets: WT_INFO_JIRA_ISSUES, WT_INFO_JIRA_HOST, WT_INFO_JIRA_DETAILS
 worktree_gather_jira_info() {
@@ -1355,14 +1436,11 @@ worktree_gather_jira_info() {
 
   local found_issues=""
 
-  # Check .worktree-env for cached manual associations
-  local env_file="${wt_path}/.worktree-env"
-  if [ -f "$env_file" ]; then
-    local cached
-    cached="$(grep '^export WORKTREE_JIRA_ISSUES=' "$env_file" 2>/dev/null | sed 's/^export WORKTREE_JIRA_ISSUES="//' | sed 's/"$//' || true)"
-    if [ -n "$cached" ]; then
-      found_issues="$cached"
-    fi
+  # Check .worktree-resources for cached associations
+  local cached_jira
+  cached_jira="$(worktree_read_resources "$wt_path" "jira" | sed 's/^jira:\([^ ]*\) .*/\1/' || true)"
+  if [ -n "$cached_jira" ]; then
+    found_issues="$(echo "$cached_jira" | tr '\n' ' ' | sed 's/ $//')"
   fi
 
   # Scan branch name
@@ -1432,18 +1510,18 @@ print(f'{itype}|{priority}|{status}|{summary}|{assignee}')
   fi
 }
 
-# worktree_update_env_jira <worktree-path> <issue-keys>
-# Writes or updates the WORKTREE_JIRA_ISSUES line in .worktree-env.
-worktree_update_env_jira() {
+# worktree_update_resources_jira <worktree-path> <issue-keys>
+# Writes Jira issue entries to .worktree-resources.
+worktree_update_resources_jira() {
   local wt_path="$1" issues="$2"
-  local env_file="${wt_path}/.worktree-env"
-  if [ ! -f "$env_file" ]; then
-    echo "export WORKTREE_JIRA_ISSUES=\"${issues}\"" >> "$env_file"
-  elif grep -q '^export WORKTREE_JIRA_ISSUES=' "$env_file" 2>/dev/null; then
-    sed -i '' "s|^export WORKTREE_JIRA_ISSUES=.*|export WORKTREE_JIRA_ISSUES=\"${issues}\"|" "$env_file"
-  else
-    echo "export WORKTREE_JIRA_ISSUES=\"${issues}\"" >> "$env_file"
+  local jira_host="${JIRA_HOST:-}"
+  if [ -z "$jira_host" ]; then
+    return
   fi
+  local issue_key
+  for issue_key in $issues; do
+    worktree_write_resource "$wt_path" "jira" "$issue_key" "https://${jira_host}/browse/${issue_key}"
+  done
 }
 
 # worktree_jira_emoji <type-or-priority> <value>
@@ -1868,7 +1946,7 @@ worktree_repl() {
             if [ -n "$jira_key_input" ]; then
               jira_issues="$jira_key_input"
               jira_host="${JIRA_HOST:-}"
-              worktree_update_env_jira "$wt_path" "$jira_issues"
+              worktree_update_resources_jira "$wt_path" "$jira_issues"
               echo "Associated ${jira_key_input} with this worktree."
               if [ -n "$jira_host" ]; then
                 local jira_url="https://${jira_host}/browse/${jira_key_input}"
