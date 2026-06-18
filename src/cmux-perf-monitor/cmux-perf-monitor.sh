@@ -11,14 +11,16 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --interval) INTERVAL="$2"; shift 2 ;;
     --output)   OUTPUT="$2"; shift 2 ;;
+    --reset)    RESET=1; shift ;;
     -h|--help)
-      echo "Usage: cmux-perf-monitor [--interval SECONDS] [--output FILE]"
+      echo "Usage: cmux-perf-monitor [--interval SECONDS] [--output FILE] [--reset]"
       echo ""
       echo "Samples cmux process metrics at regular intervals and appends to a CSV."
       echo ""
       echo "Options:"
       echo "  --interval SECONDS  Sampling interval (default: 180)"
       echo "  --output FILE       Output CSV path (default: /tmp/cmux-monitor.csv)"
+      echo "  --reset             Clear existing data and start fresh"
       echo "  -h, --help          Show this help"
       echo ""
       echo "Columns: timestamp, cmux_cpu, cmux_mem_pct, cmux_rss_mb,"
@@ -41,7 +43,7 @@ if [[ -z "$pid" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$OUTPUT" ]] || ! head -1 "$OUTPUT" 2>/dev/null | grep -q "^timestamp,"; then
+if [[ "${RESET:-}" == "1" ]] || [[ ! -f "$OUTPUT" ]] || ! head -1 "$OUTPUT" 2>/dev/null | grep -q "^timestamp,"; then
   echo "timestamp,cmux_cpu,cmux_mem_pct,cmux_rss_mb,claude_sessions,cmux_surfaces,child_procs,open_fds" > "$OUTPUT"
 fi
 
