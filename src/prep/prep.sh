@@ -16,17 +16,22 @@ source "$LIB_DIR/helpers.sh"
 
 usage() {
   cat <<EOF
-Usage: prep
+Usage: prep [<day>]
 
-Copy focus and deferred items from the most recent daily note to today's note.
+Copy focus and deferred items from the most recent daily note to the target
+day's note.
+
+Arguments:
+  (none)       Process today's daily note
+  <day>        Process a specific day (e.g. "wednesday", "Apr 3", "2026.093")
 
 Steps:
-  1. Ensure today's daily note exists
-  2. Run "eod yesterday" to ensure the previous note was finalized
-  3. Find the most recent previous daily note
-  4. Copy "tomorrow's focus" (or "monday's focus") items to today's "today's focus"
-  5. Copy "deferring for later" items to today's "deferring for later"
-  6. Check off the prep checkbox in today's note
+  1. Ensure the target day's daily note exists
+  2. Run "eod" on the previous note to ensure it was finalized
+  3. Find the most recent previous daily note before the target
+  4. Copy "tomorrow's focus" (or "monday's focus") items to the target's "today's focus"
+  5. Copy "deferring for later" items to the target's "deferring for later"
+  6. Check off the prep checkbox in the target note
 
 Environment:
   Requires the Obsidian CLI on PATH.
@@ -59,7 +64,7 @@ if [ -z "${OBSIDIAN_VAULT:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 1: Ensure today's daily note exists
+# Step 1: Determine the target note
 # ---------------------------------------------------------------------------
 
 today_relative="$(obsidian daily:path 2>/dev/null | tail -1)"
@@ -70,48 +75,64 @@ fi
 today_note="$OBSIDIAN_VAULT/$today_relative"
 NOTES_DIR="$(dirname "$today_note")"
 
-if [ ! -f "$today_note" ]; then
-  echo "Creating today's daily note..."
-  obsidian daily >/dev/null 2>&1
-  sleep 1
+date_arg="${1:-}"
+target_note=""
+
+if [ -z "$date_arg" ]; then
+  # Default: today's note
+  target_note="$today_note"
+  if [ ! -f "$target_note" ]; then
+    echo "Creating today's daily note..."
+    obsidian daily >/dev/null 2>&1
+    sleep 1
+  fi
+else
+  # Search for a note matching the date argument
+  target_note="$(ls -1r "$NOTES_DIR"/*.md 2>/dev/null | while IFS= read -r f; do
+    fname="$(basename "$f")"
+    if echo "$fname" | grep -qi "$date_arg"; then
+      echo "$f"
+      break
+    fi
+  done)"
 fi
 
-if [ ! -f "$today_note" ]; then
-  echo "ERROR: Today's daily note not found at: $today_note" >&2
+if [ -z "$target_note" ] || [ ! -f "$target_note" ]; then
+  echo "ERROR: Could not find daily note for: ${date_arg:-today}" >&2
   exit 1
 fi
 
-echo "${COLOR_CYAN}Today's note:${COLOR_RESET} $(basename "$today_note")"
+echo "${COLOR_CYAN}Target note:${COLOR_RESET} $(basename "$target_note")"
 
 # Check if prep was already run (checkbox is checked)
-if grep -q '\- \[x\].*[Cc]opy focus items and deferred items' "$today_note" 2>/dev/null; then
-  echo "${COLOR_YELLOW}prep has already been run on today's note. Skipping.${COLOR_RESET}"
+if grep -q '\- \[x\].*[Cc]opy focus items and deferred items' "$target_note" 2>/dev/null; then
+  echo "${COLOR_YELLOW}prep has already been run on this note. Skipping.${COLOR_RESET}"
   exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# Step 1b: Run eod on yesterday's note in case it was missed
+# Step 1b: Run eod on the previous note in case it was missed
 # ---------------------------------------------------------------------------
 
-echo ""
-echo "${COLOR_CYAN}Ensuring eod was run on the previous note...${COLOR_RESET}"
-"$(cd "$(dirname "$(readlink -f "$0")")/../eod" && pwd)/eod.sh" yesterday
-
-# ---------------------------------------------------------------------------
-# Step 2: Find the most recent previous daily note
-# ---------------------------------------------------------------------------
-
-today_basename="$(basename "$today_note")"
+# Find the most recent note before the target
+target_basename="$(basename "$target_note")"
 prev_note=""
 
-# List notes sorted by name (descending), find the first one before today
 while IFS= read -r f; do
   fname="$(basename "$f")"
-  if [[ "$fname" < "$today_basename" ]]; then
+  if [[ "$fname" < "$target_basename" ]]; then
     prev_note="$f"
     break
   fi
 done < <(ls -1r "$NOTES_DIR"/*.md 2>/dev/null)
+
+if [ -n "$prev_note" ] && [ -f "$prev_note" ]; then
+  echo ""
+  echo "${COLOR_CYAN}Ensuring eod was run on the previous note...${COLOR_RESET}"
+  # Pass the previous note's filename as a search term to eod
+  prev_basename="$(basename "$prev_note" .md)"
+  "$(cd "$(dirname "$(readlink -f "$0")")/../eod" && pwd)/eod.sh" "$prev_basename"
+fi
 
 if [ -z "$prev_note" ] || [ ! -f "$prev_note" ]; then
   echo "ERROR: Could not find a previous daily note." >&2
@@ -343,7 +364,7 @@ if changes_made:
     print('Done!')
 else:
     print('No items to copy.')
-" "$prev_note" "$today_note"
+" "$prev_note" "$target_note"
 
 # Open the daily note
 obsidian daily >/dev/null 2>&1

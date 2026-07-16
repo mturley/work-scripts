@@ -31,6 +31,13 @@ JIRA_EXAMPLES="  worklog jira started RHOAIENG-12345
   worklog jira seen RHOAIENG-12345
   worklog jira commented https://issues.redhat.com/browse/RHOAIENG-12345"
 
+SLACK_ACTIONS="seen | posted | replied"
+SLACK_REFS="  https://redhat.enterprise.slack.com/archives/C12345/p1234567890123456
+  https://redhat-internal.slack.com/archives/C12345/p1234567890123456
+  (any Slack thread URL)"
+SLACK_EXAMPLES="  worklog slack seen https://redhat.enterprise.slack.com/archives/C07GSTE1DKH/p1720000000123456
+  worklog slack replied https://redhat.enterprise.slack.com/archives/C07GSTE1DKH/p1720000000123456"
+
 JENKINS_ACTIONS="seen"
 JENKINS_REFS="  https://jenkins-host.example.com/job/path/to/job/123/
   path/to/job#123"
@@ -65,6 +72,20 @@ ${JIRA_EXAMPLES}
 EOF
 }
 
+usage_slack() {
+  cat <<EOF
+Usage: worklog slack <action> <ref>
+
+Actions:  ${SLACK_ACTIONS}
+
+Reference formats:
+${SLACK_REFS}
+
+Examples:
+${SLACK_EXAMPLES}
+EOF
+}
+
 usage_jenkins() {
   cat <<EOF
 Usage: worklog jenkins <action> <ref>
@@ -89,7 +110,9 @@ daily note.
 Categories and actions:
 
   pr      ${PR_ACTIONS}   <ref>
+  github  (alias for pr)
   jira    ${JIRA_ACTIONS}              <ref>
+  slack   ${SLACK_ACTIONS}                                   <ref>
   jenkins ${JENKINS_ACTIONS}                                                <ref>
 
 Reference formats:
@@ -100,6 +123,9 @@ ${PR_REFS}
   Jira:
 ${JIRA_REFS}
 
+  Slack:
+${SLACK_REFS}
+
   Jenkins:
 ${JENKINS_REFS}
 
@@ -107,6 +133,7 @@ Examples:
 
 ${PR_EXAMPLES}
 ${JIRA_EXAMPLES}
+${SLACK_EXAMPLES}
 ${JENKINS_EXAMPLES}
 
 Options:
@@ -192,6 +219,7 @@ get_emoji() {
   case "$category" in
     pr)      cat_emoji="🔀" ;;
     jira)    cat_emoji="📋" ;;
+    slack)   cat_emoji="💬" ;;
     jenkins) cat_emoji="🏗️" ;;
     *)       echo "📌"; return ;;
   esac
@@ -219,6 +247,8 @@ title_case() {
     approved)  echo "Approved" ;;
     started)   echo "Started" ;;
     updated)   echo "Updated" ;;
+    posted)    echo "Posted in" ;;
+    replied)   echo "Replied in" ;;
     *)         echo "$1" ;;
   esac
 }
@@ -1125,6 +1155,52 @@ handle_jenkins() {
 }
 
 # ---------------------------------------------------------------------------
+# Slack reference parsing
+# ---------------------------------------------------------------------------
+
+SLACK_URL=""
+SLACK_CHANNEL=""
+
+parse_slack_ref() {
+  local ref="$1"
+  SLACK_URL=""
+  SLACK_CHANNEL=""
+
+  # Slack thread URL: https://*.slack.com/archives/CHANNEL_ID/p...
+  if [[ "$ref" == *slack.com* ]]; then
+    SLACK_URL="$ref"
+    SLACK_CHANNEL="$(echo "$ref" | grep -o '/archives/[^/]*' | sed 's|/archives/||')"
+    return 0
+  fi
+
+  echo "ERROR: Could not parse Slack reference: $ref" >&2
+  echo "Expected a Slack thread URL." >&2
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Slack handler
+# ---------------------------------------------------------------------------
+
+handle_slack() {
+  local action="$1" ref="$2"
+
+  parse_slack_ref "$ref" || return 1
+
+  if [ "$action" = "seen" ] && [ -n "$SLACK_URL" ]; then
+    check_already_seen "slack thread"
+  fi
+
+  # Build row components
+  ROW_TIME="$(get_timestamp)"
+  ROW_EMOJI="$(get_emoji slack "$action")"
+  ROW_ACTION="$(title_case "$action") Slack thread"
+  ROW_TITLE=""
+  ROW_SUB_DETAILS=()
+  ROW_REF="[See slack thread](${SLACK_URL})"
+}
+
+# ---------------------------------------------------------------------------
 # Test handler — generates fake entries for every permutation
 # ---------------------------------------------------------------------------
 
@@ -1441,6 +1517,49 @@ case "$CATEGORY" in
       exit 1
     fi
     ;;
+  github)
+    CATEGORY="pr"
+    if [ -z "$ACTION" ]; then
+      usage_pr
+      exit 0
+    fi
+    case "$ACTION" in
+      opened|closed|seen|reviewed|commented|approved|updated) ;;
+      *)
+        echo "ERROR: Invalid PR action: $ACTION" >&2
+        echo "" >&2
+        usage_pr >&2
+        exit 1
+        ;;
+    esac
+    if [ -z "$REFERENCE" ]; then
+      echo "ERROR: PR reference required." >&2
+      echo "" >&2
+      usage_pr >&2
+      exit 1
+    fi
+    ;;
+  slack)
+    if [ -z "$ACTION" ]; then
+      usage_slack
+      exit 0
+    fi
+    case "$ACTION" in
+      seen|posted|replied) ;;
+      *)
+        echo "ERROR: Invalid Slack action: $ACTION" >&2
+        echo "" >&2
+        usage_slack >&2
+        exit 1
+        ;;
+    esac
+    if [ -z "$REFERENCE" ]; then
+      echo "ERROR: Slack thread URL required." >&2
+      echo "" >&2
+      usage_slack >&2
+      exit 1
+    fi
+    ;;
   jenkins)
     if [ -z "$ACTION" ]; then
       usage_jenkins
@@ -1464,7 +1583,7 @@ case "$CATEGORY" in
     ;;
   *)
     echo "ERROR: Unknown category: $CATEGORY" >&2
-    echo "Valid categories: pr, jira, jenkins" >&2
+    echo "Valid categories: pr, github, jira, slack, jenkins" >&2
     echo "Run 'worklog help' for full usage." >&2
     exit 1
     ;;
@@ -1473,6 +1592,7 @@ esac
 case "$CATEGORY" in
   pr)      handle_pr "$ACTION" "$REFERENCE" ;;
   jira)    handle_jira "$ACTION" "$REFERENCE" ;;
+  slack)   handle_slack "$ACTION" "$REFERENCE" ;;
   jenkins) handle_jenkins "$ACTION" "$REFERENCE" ;;
 esac
 
