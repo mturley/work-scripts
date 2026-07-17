@@ -3,7 +3,7 @@
 Personal CLI tools for git, GitHub, and daily workflow automation.
 
 **Commands for Git and GitHub**
-- [`worktree`](src/worktree/) — Create and manage git worktrees for PRs and branches
+- [`worktree-old`](src/worktree-old/) — Create and manage git worktrees for PRs and branches *(deprecated — being replaced by [worktree](https://github.com/mturley/worktree))*
 - [`pr-ci`](src/pr-ci/) — Check or watch CI status for a GitHub PR
 - [`gh-safe`](src/gh-safe/) — AI agent guardrail for the GitHub CLI
 - [`dev-ports`](src/dev-ports/) — Find dev servers running in git repos, grouped by repo and branch
@@ -46,32 +46,22 @@ Find listening TCP ports whose process is running in a git repo, grouped by repo
 dev-ports    # list all dev servers grouped by repo and branch
 ```
 
-### [`worktree`](src/worktree/) — Git Worktree Manager
+### [`worktree-old`](src/worktree-old/) — Git Worktree Manager *(deprecated)*
+
+> **Deprecated:** This script is being replaced by [worktree](https://github.com/mturley/worktree), a rewrite as a standalone project. Run `worktree-old` to use the old version.
 
 Create and manage git worktrees for PRs and branches, with optional cloned dependencies and an interactive REPL. Discovers worktrees created by any tool (Zed, Claude Code, etc.) across configurable search roots. Displays PR metadata (title, author, created/updated timestamps) when working with PRs. Detects associated Jira issues from branch names and PR descriptions, with optional API enrichment for issue metadata.
 
 ```bash
-worktree                             # list worktrees; select one, many (1,3,5), or all
-worktree 1234                        # create or reopen a worktree for PR #1234
-worktree https://github.com/org/repo/pull/1234
-worktree my-feature-branch           # create or reopen a branch worktree
-worktree 1234 5678 my-branch         # open multiple worktrees in mprocs
-worktree --standalone my-branch      # shell in worktree, no mprocs
-worktree --no-persist 1234           # skip screen, mprocs only
-worktree --sessions                  # list active persistent sessions
-worktree --help                      # show usage help
-```
-
-Sessions are persistent by default (mprocs runs inside GNU Screen 5.0+ for detach/reattach). Use `--no-persist` to skip screen. When running inside [cmux](https://cmux.com/), workspaces and splits are used instead of mprocs/screen.
-
-Each worktree gets an isolated `KUBECONFIG` at `~/.kube/config-<repo-name>-<worktree-name>`, seeded from your current kubeconfig on first setup. This means `oc login` in one worktree won't affect another. The kubeconfig is exported via `.worktree-env` and cleaned up when the worktree is removed.
-
-```
-help       info       log        quit
-files      prefs      name       delete
-editor     shell      claude     github     jira
-
-worktree [my-branch...origin/my-branch]>
+worktree-old                             # list worktrees; select one, many (1,3,5), or all
+worktree-old 1234                        # create or reopen a worktree for PR #1234
+worktree-old https://github.com/org/repo/pull/1234
+worktree-old my-feature-branch           # create or reopen a branch worktree
+worktree-old 1234 5678 my-branch         # open multiple worktrees in mprocs
+worktree-old --standalone my-branch      # shell in worktree, no mprocs
+worktree-old --no-persist 1234           # skip screen, mprocs only
+worktree-old --sessions                  # list active persistent sessions
+worktree-old --help                      # show usage help
 ```
 
 ### [`pr-ci`](src/pr-ci/) — PR CI Status Checker

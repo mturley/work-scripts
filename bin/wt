@@ -1,0 +1,4 @@
+#!/bin/bash
+echo "wt has been deprecated and is being replaced by https://github.com/mturley/worktree"
+echo "Run 'worktree-old' or 'wt-old' to use the old version."
+exit 1

@@ -1,4 +1,6 @@
-# worktree
+# worktree-old
+
+> **Deprecated:** This script is being replaced by [worktree](https://github.com/mturley/worktree), a rewrite as a standalone project. This version remains available as `worktree-old`.
 
 Unified command for creating and managing git worktrees that optionally clone installed dependencies from the main working tree. Accepts a PR number, PR URL, branch name, or worktree path. Provides a REPL with convenient commands for using and cleaning up worktrees.
 

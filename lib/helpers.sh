@@ -317,7 +317,7 @@ cmux_open_worktree() {
   else
     worktree_check_shell_rc
     local self_cmd
-    self_cmd="$(command -v worktree 2>/dev/null || echo worktree)"
+    self_cmd="$(command -v worktree-old 2>/dev/null || echo worktree-old)"
 
     # Build left side: vertical split (1/3 top, 2/3 bottom)
     local left_layout
@@ -515,8 +515,8 @@ export KUBECONFIG="$wt_kubeconfig"
 case "\$-" in *i*)
   if [ -z "\${_WORKTREE_ENV_SHOWN:-}" ]; then
     _WORKTREE_ENV_SHOWN=1
-    if command -v worktree >/dev/null 2>&1; then
-      worktree --info-simple
+    if command -v worktree-old >/dev/null 2>&1; then
+      worktree-old --info-simple
     fi
   fi
 ;; esac
@@ -1211,7 +1211,7 @@ maybe_setup_vscode_tasks() {
     {
       "label": "Worktree REPL",
       "type": "shell",
-      "command": "worktree",
+      "command": "worktree-old",
       "args": ["--no-mprocs", "${workspaceFolder}"],
       "runOptions": { "runOn": "folderOpen" },
       "presentation": {
@@ -2206,7 +2206,7 @@ worktree_repl() {
             local claude_mprocs_sock="127.0.0.1:${claude_mprocs_port}"
             local claude_mprocs_count="/tmp/worktree-shell-mprocs-${claude_mprocs_id}-count"
             local claude_self_cmd
-            claude_self_cmd="$(command -v worktree)"
+            claude_self_cmd="$(command -v worktree-old)"
             rm -f "$claude_mprocs_cfg" "$claude_mprocs_count"
             echo 2 > "$claude_mprocs_count"
             local claude_cfg_content
@@ -2312,7 +2312,7 @@ procs:
             local shell_mprocs_sock="127.0.0.1:${shell_mprocs_port}"
             local shell_mprocs_count="/tmp/worktree-shell-mprocs-${shell_mprocs_id}-count"
             local self_cmd
-            self_cmd="$(command -v worktree)"
+            self_cmd="$(command -v worktree-old)"
             local motd="$scripts_dir/mprocs-motd.sh"
             rm -f "$shell_mprocs_cfg" "$shell_mprocs_count"
             echo 2 > "$shell_mprocs_count"
