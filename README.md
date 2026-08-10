@@ -25,6 +25,9 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 **Commands for iTerm2**
 - [`iterm-new`](src/iterm-new/) — Open a new iTerm2 tab or split pane and run a command
 
+**Commands for macOS**
+- [`alert`](src/alert/) — Show a macOS alert dialog when a command finishes
+
 ## Setup
 
 Clone the repo and add its `bin` subdirectory to your PATH:
@@ -183,5 +186,17 @@ iterm-new tab npm run dev            # new tab
 iterm-new split-v npm run dev        # vertical split
 iterm-new split-h npm run dev        # horizontal split
 iterm-new tab -n "my app" npm start  # new tab with custom name
+```
+
+## Commands for macOS
+
+### [`alert`](src/alert/) — macOS Alert Dialog
+
+Show a macOS alert dialog via AppleScript's `display alert`. Handy for getting your attention when a long-running command finishes. Piped input is included in the alert body — first and last few lines, with a `[...]` marker between.
+
+```bash
+some-command && alert "it's done"            # alert on success
+npm test; alert -t "tests" "exit $?"         # alert either way, custom title
+npm run build 2>&1 | alert -t "build" "done" # include a peek at the output
 ```
 

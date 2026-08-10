@@ -1,4 +1,0 @@
-#!/bin/bash
-echo "worktree has been deprecated and is being replaced by https://github.com/mturley/worktree"
-echo "Run 'worktree-old' to use the old version."
-exit 1

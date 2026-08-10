@@ -328,11 +328,24 @@ cmux_worktree_open() {
 # exiting so the caller falls through to the REPL.
 cmux_worktree_exec() {
   local wt_path="$1"
-  local existing_ref
-  existing_ref="$(cmux_find_workspace_by_cwd "$wt_path")"
-  if [ -n "$existing_ref" ] && [ "$existing_ref" = "$(cmux identify 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('caller',{}).get('workspace_ref',''))" 2>/dev/null)" ]; then
-    # Already in this workspace — fall through to the REPL
-    return
+  # Check if the current workspace's working directory matches the worktree path
+  local caller_ref
+  caller_ref="$(cmux identify 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('caller',{}).get('workspace_ref',''))" 2>/dev/null)"
+  if [ -n "$caller_ref" ]; then
+    local caller_cwd
+    caller_cwd="$(cmux rpc workspace.list '{}' 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+ref = sys.argv[1]
+for ws in data.get('workspaces', []):
+    if ws.get('ref', '') == ref:
+        print(ws.get('current_directory', ''))
+        sys.exit(0)
+" "$caller_ref" 2>/dev/null)"
+    if [ "$caller_cwd" = "$wt_path" ]; then
+      # Already in a workspace for this worktree — fall through to the REPL
+      return
+    fi
   fi
   cmux_worktree_open "$wt_path" --focus
   exit 0
