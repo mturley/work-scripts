@@ -19,6 +19,9 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`claude-sessions`](src/claude-sessions/) — List all Claude Code sessions across projects
 - [`claude-resume`](src/claude-resume/) — Resume a Claude Code session from any directory
 
+**Commands for cmux**
+- [`cmux-code`](src/cmux-code/) — Open VS Code in the current directory, then close the cmux tab it ran in
+
 **Diagnostics**
 - [`cmux-perf-monitor`](src/cmux-perf-monitor/) — Sample cmux process metrics over time to diagnose performance degradation
 
@@ -173,6 +176,17 @@ cmux-perf-monitor                          # sample every 3 min → /tmp/cmux-mo
 cmux-perf-monitor --interval 60            # sample every 60 seconds
 cmux-perf-monitor --output ~/cmux-data.csv # custom output path
 cmux-perf-monitor &                        # run in background
+```
+
+## Commands for cmux
+
+### [`cmux-code`](src/cmux-code/) — Open VS Code and Close the Tab
+
+Open [VS Code](https://code.visualstudio.com/) in a directory, then close the [cmux](https://cmux.io/) tab it was launched from. Designed for a cmux command-action hotkey: cmux runs actions in a new tab, so this opens `code` and closes that throwaway tab immediately. The tab is only closed if `code` succeeds, so errors stay visible.
+
+```bash
+cmux-code                   # open current directory, then close the tab
+cmux-code ~/git/some-project # open a specific path
 ```
 
 ## Commands for iTerm2
