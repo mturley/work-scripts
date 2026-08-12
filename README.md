@@ -21,6 +21,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 
 **Commands for cmux**
 - [`cmux-code`](src/cmux-code/) — Open VS Code in the current directory, then close the cmux tab it ran in
+- [`cmux-code-inline`](src/cmux-code-inline/) — Open the current directory in cmux's inline VS Code by reusing a running serve-web server
 
 **Diagnostics**
 - [`cmux-perf-monitor`](src/cmux-perf-monitor/) — Sample cmux process metrics over time to diagnose performance degradation
@@ -187,6 +188,22 @@ Open [VS Code](https://code.visualstudio.com/) in a directory, then close the [c
 ```bash
 cmux-code                   # open current directory, then close the tab
 cmux-code ~/git/some-project # open a specific path
+```
+
+### [`cmux-code-inline`](src/cmux-code-inline/) — Open Current Directory in Inline VS Code
+
+Open a directory in [cmux](https://cmux.io/)'s **inline** VS Code (a `serve-web`
+server opened in a cmux browser surface), as an alternative to `cmux-code`'s
+external `code` app. cmux's built-in "Open Current Directory in VS Code (inline)"
+palette action is not bindable, so this script reuses an already-running
+cmux-managed server: it discovers the server's port and connection token and
+opens `http://127.0.0.1:<port>/?tkn=<token>&folder=<PATH>` in a new surface. Run
+the palette action once to start the server; after that this script (and a hotkey
+bound to it) reopens the inline editor at any folder.
+
+```bash
+cmux-code-inline                   # open current directory in inline VS Code
+cmux-code-inline ~/git/some-project # open a specific path
 ```
 
 ## Commands for iTerm2
