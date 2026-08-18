@@ -18,6 +18,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 - [`milestones`](src/milestones/) — Show upcoming RHOAI release milestones via Claude Code
 - [`claude-sessions`](src/claude-sessions/) — List all Claude Code sessions across projects
 - [`claude-resume`](src/claude-resume/) — Resume a Claude Code session from any directory
+- [`claude-fork`](src/claude-fork/) — Fork a Claude Code session into a new, independent session
 
 **Commands for cmux**
 - [`cmux-code`](src/cmux-code/) — Open VS Code in the current directory, then close the cmux tab it ran in
@@ -167,6 +168,15 @@ Resume a Claude Code session from any directory. Looks up the session's working 
 
 ```bash
 claude-resume f5e4d769-7848-4b7b-9e3f-443689550bf3
+```
+
+### [`claude-fork`](src/claude-fork/) — Fork a Session
+
+Fork a Claude Code session into a new, independent session, leaving the original untouched. The fork is named `<session>-fork` by default, or pass `--name` to set your own.
+
+```bash
+claude-fork my-session                 # fork, named "my-session-fork"
+claude-fork my-session --name my-fork   # fork with a custom name
 ```
 
 ## Diagnostics
