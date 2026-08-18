@@ -26,6 +26,9 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 **Diagnostics**
 - [`cmux-perf-monitor`](src/cmux-perf-monitor/) — Sample cmux process metrics over time to diagnose performance degradation
 
+**Commands for Node.js / npm**
+- [`clean-node-modules`](src/clean-node-modules/) — Recursively find and delete `node_modules` folders after confirmation
+
 **Commands for iTerm2**
 - [`iterm-new`](src/iterm-new/) — Open a new iTerm2 tab or split pane and run a command
 
@@ -204,6 +207,17 @@ bound to it) reopens the inline editor at any folder.
 ```bash
 cmux-code-inline                   # open current directory in inline VS Code
 cmux-code-inline ~/git/some-project # open a specific path
+```
+
+## Commands for Node.js / npm
+
+### [`clean-node-modules`](src/clean-node-modules/) — node_modules Cleaner
+
+Recursively find `node_modules` folders under a directory, list them with their sizes, and delete them all after a single confirmation. Handy for reclaiming disk space across many projects at once.
+
+```bash
+clean-node-modules            # scan the current directory
+clean-node-modules ~/git      # scan a specific directory
 ```
 
 ## Commands for iTerm2
