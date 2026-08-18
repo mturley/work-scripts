@@ -249,6 +249,8 @@ iterm-new tab -n "my app" npm start  # new tab with custom name
 
 Show a macOS alert dialog via AppleScript's `display alert`. Handy for getting your attention when a long-running command finishes. Piped input is included in the alert body — first and last few lines, with a `[...]` marker between.
 
+When run from inside a [cmux](https://cmux.io) terminal, the title is prefixed with the originating workspace's title (e.g. `[work-scripts] tests`), and dismissing the alert brings cmux forward and switches back to the workspace and surface it was launched from. See [the docs](src/alert/) for details.
+
 ```bash
 some-command && alert "it's done"            # alert on success
 npm test; alert -t "tests" "exit $?"         # alert either way, custom title

@@ -46,6 +46,15 @@ $ seq 30 | alert -t "long" "done"
 
 A message argument is optional when input is piped.
 
+## cmux integration
+
+When run from inside a [cmux](https://cmux.io) terminal, `alert` becomes aware of the surface it was launched from (via the `CMUX_WORKSPACE_ID` and `CMUX_SURFACE_ID` environment variables that cmux sets):
+
+- **Title prefix** — the title is prefixed with the originating workspace's title in brackets, e.g. `-t "tests"` from the `work-scripts` workspace shows as `[work-scripts] tests`. This tells you at a glance which workspace fired the alert. (Requires `jq`; if the lookup fails the prefix is skipped.)
+- **Focus on acknowledgment** — when you dismiss the alert, cmux is brought to the foreground and switched back to the workspace and surface the alert originated from — not whichever surface happens to be focused at the time.
+
+The origin surface is captured when `alert` starts, so switching focus while the dialog is up doesn't change where you're returned to. All cmux steps are best-effort: if `cmux` isn't on `PATH` or a call fails, `alert` behaves exactly as it does outside cmux.
+
 ## Behavior
 
 1. Runs `osascript` with AppleScript's `display alert` — not `display notification`, which is unreliable on macOS and can be silently suppressed
