@@ -1,8 +1,10 @@
 # cmux-open-next-pane
 
 Open a file or URL in the cmux pane *after* the current one, collecting opened
-files there instead of scattering them into new splits. If the current pane is
-the last pane, create one clean new split instead.
+files there instead of scattering them into new splits. If the file is already
+open in the workspace, don't open a duplicate — switch to the existing tab when
+this workspace is focused, or do nothing when it's in the background. If the
+current pane is the last pane, create one clean new split instead.
 
 ## Background
 
@@ -18,6 +20,23 @@ focused one, so the script can find the pane that follows the current one.
 
 ### Behavior
 
+- **Already open** — before opening anything, the script checks whether a file
+  surface in the current workspace is already showing this file (matched by
+  **basename**, since cmux only exposes the basename, not the full path). If so,
+  it never opens a duplicate. What it does then depends on whether this
+  workspace is the one currently in focus:
+  - **This workspace is focused** (its window is the frontmost/key window *and*
+    this workspace is that window's selected workspace) — it switches the pane to
+    the existing tab, then restores focus to the pane it started from. The tab is
+    surfaced without leaving your focused pane changed.
+  - **Running in a background workspace** — it does nothing at all. This is
+    deliberate: a file written by a background agent should never pull your focus
+    over to its workspace.
+
+  This step is skipped for URLs (their titles are hostnames) and when `jq` is not
+  installed. It also keeps repeated opens (e.g. an editor hook firing on every
+  save) from piling up duplicate tabs.
+
 - **Focused pane is not the last pane** — the target opens as a new tab in the
   next pane:
 
@@ -31,11 +50,11 @@ focused one, so the script can find the pane that follows the current one.
 - **Focused pane is the last pane** — a new split is created. The command is
   chosen by target type so the split is clean (no stray terminal tab):
 
-  | Target      | Command                                    | Result              |
-  |-------------|--------------------------------------------|---------------------|
-  | `*.md`      | `cmux markdown open <target> --focus false`| clean split, viewer |
-  | URL         | `cmux open <target> --no-focus`            | clean browser split |
-  | other file  | `cmux open <target> --no-focus`            | tab in current pane |
+  | Target      | Command                                     | Result              |
+  |-------------|---------------------------------------------|---------------------|
+  | `*.md`      | `cmux markdown open <target> --focus false` | clean split, viewer |
+  | URL         | `cmux open <target> --no-focus`             | clean browser split |
+  | other file  | `cmux open <target> --no-focus`             | tab in current pane |
 
   (For arbitrary non-markdown files there is no cmux primitive that splits
   without leaving a stray empty terminal tab, so those fall back to a tab.)
@@ -46,6 +65,8 @@ In every case the target opens without stealing focus.
 
 - `cmux` — the cmux CLI, and the script must run inside a cmux workspace
   (`CMUX_WORKSPACE_ID` must be set, which cmux sets in every surface)
+- `jq` — optional; used only for the "already open" check. Without it, that
+  step is skipped and the file opens normally.
 
 ## Usage
 

@@ -11,16 +11,25 @@
 # pane. `cmux list-panes` lists panes in layout order and marks the focused one.
 #
 # Behavior:
-#   - Focused pane is NOT the last pane:
-#       cmux open <target> --pane <next-pane> --no-focus
-#     Adds the file/URL as a tab in the next pane (markdown keeps its rich
-#     live-reload viewer). Works uniformly for markdown, other files, and URLs.
-#   - Focused pane IS the last pane (need a new split). The command differs by
-#     type because that is what yields a clean split (no stray terminal tab):
-#       *.md   -> cmux markdown open <target> --focus false   (clean split, viewer)
-#       URL    -> cmux open <target> --no-focus               (clean browser split)
-#       other  -> cmux open <target> --no-focus               (adds a tab; no
-#                                                              stray-free split exists)
+#   0. Already open: if a file surface in the current workspace is already
+#      showing this file (matched by basename), don't open a duplicate.
+#      - If this workspace is the one currently in focus (its window is the key
+#        window and this workspace is its selected workspace), switch that pane
+#        to the existing tab, then restore focus to the pane we came from — so
+#        the tab is surfaced without leaving the focused pane changed.
+#      - Otherwise (running in a background workspace) do nothing at all, so a
+#        file written by a background agent never yanks focus to its workspace.
+#      (File targets only; needs `jq`.)
+#   1. Focused pane is NOT the last pane:
+#        cmux open <target> --pane <next-pane> --no-focus
+#      Adds the file/URL as a tab in the next pane (markdown keeps its rich
+#      live-reload viewer). Works uniformly for markdown, other files, and URLs.
+#   2. Focused pane IS the last pane (need a new split). The command differs by
+#      type because that is what yields a clean split (no stray terminal tab):
+#        *.md   -> cmux markdown open <target> --focus false  (clean split, viewer)
+#        URL    -> cmux open <target> --no-focus              (clean browser split)
+#        other  -> cmux open <target> --no-focus              (adds a tab; no
+#                                                             stray-free split exists)
 #
 # In every case the target opens without stealing focus.
 
@@ -40,13 +49,18 @@ Arguments:
                   (e.g. --workspace).
 
 Behavior:
+  - Already open  -> no duplicate. If this workspace is focused, switches to the
+                     existing tab and restores focus to the origin pane;
+                     otherwise (background workspace) does nothing.
   - Not the last pane -> opens as a tab in the next pane (cmux open --pane).
   - Last pane, *.md   -> cmux markdown open (clean split, rich viewer).
   - Last pane, URL    -> cmux open (clean browser split).
   - Last pane, other  -> cmux open (adds a tab in the current pane).
-  - Always opens without stealing focus.
+  - Never steals focus.
 
 Requires running inside cmux (CMUX_WORKSPACE_ID set) with `cmux` on PATH.
+The already-open check additionally requires `jq`; without it that step is
+skipped and the file opens normally.
 EOF
 }
 
@@ -89,6 +103,52 @@ is_markdown() {
     *) return 1 ;;
   esac
 }
+
+# Step 0: if the file is already open in this workspace, do nothing.
+#
+# `cmux rpc surface.list` reports each surface's type and title, but a file
+# surface's title is only the file's *basename* (no full path), so matching is
+# by basename against markdown/filepreview surfaces. Skipped for URLs (their
+# titles are hostnames, not reliable) and when `jq` is unavailable. This keeps
+# repeated opens (e.g. an editor hook firing on every save) from piling up
+# duplicate tabs; the existing tab is left as-is and focus is not stolen.
+if ! is_url "$TARGET" && command -v jq >/dev/null 2>&1; then
+  BASENAME="${TARGET##*/}"
+  EXISTING_SURFACE="$(
+    cmux rpc surface.list "{\"workspace_id\":\"$CMUX_WORKSPACE_ID\"}" 2>/dev/null \
+      | jq -r --arg b "$BASENAME" '
+          [ .surfaces[]
+            | select((.type == "markdown" or .type == "filepreview") and .title == $b)
+            | .ref
+          ] | first // empty
+        ' 2>/dev/null || true
+  )"
+  if [[ -n "$EXISTING_SURFACE" ]]; then
+    # Already open — don't duplicate. Only surface the existing tab when this
+    # workspace is the one in focus; otherwise leave it untouched so a
+    # background write never pulls focus to this workspace.
+    WS_FOCUSED="$(
+      cmux rpc window.list '{}' 2>/dev/null \
+        | jq -r --arg ws "$CMUX_WORKSPACE_ID" '
+            any(.windows[]; .key == true and .selected_workspace_id == $ws)
+          ' 2>/dev/null || true
+    )"
+    if [[ "$WS_FOCUSED" == "true" ]]; then
+      # Remember the pane we're in so we can hand focus back after switching.
+      ORIGIN_PANE="$(
+        cmux rpc surface.list "{\"workspace_id\":\"$CMUX_WORKSPACE_ID\"}" 2>/dev/null \
+          | jq -r '.surfaces[] | select(.focused == true) | .pane_ref' 2>/dev/null \
+          | head -n 1 || true
+      )"
+      # Switch the existing tab's pane to it, then restore focus to the origin.
+      cmux move-surface --surface "$EXISTING_SURFACE" --focus true >/dev/null 2>&1 || true
+      if [[ -n "$ORIGIN_PANE" ]]; then
+        cmux focus-pane --pane "$ORIGIN_PANE" >/dev/null 2>&1 || true
+      fi
+    fi
+    exit 0
+  fi
+fi
 
 # Find the ref of the pane after the focused one, in layout order.
 # list-panes prints one pane per line, e.g.:

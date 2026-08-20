@@ -23,7 +23,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 **Commands for cmux**
 - [`cmux-code`](src/cmux-code/) — Open VS Code in the current directory, then close the cmux tab it ran in
 - [`cmux-code-inline`](src/cmux-code-inline/) — Open the current directory in cmux's inline VS Code by reusing a running serve-web server
-- [`cmux-open-next-pane`](src/cmux-open-next-pane/) — Open a file or URL in the pane after the current one, collecting files there instead of scattering them into new splits
+- [`cmux-open-next-pane`](src/cmux-open-next-pane/) — Open a file or URL in the pane after the current one (switching to it if already open, unless in a background workspace) instead of scattering files into new splits
 
 **Diagnostics**
 - [`cmux-perf-monitor`](src/cmux-perf-monitor/) — Sample cmux process metrics over time to diagnose performance degradation
@@ -222,7 +222,7 @@ cmux-code-inline ~/git/some-project # open a specific path
 
 ### [`cmux-open-next-pane`](src/cmux-open-next-pane/) — Open in the Next Pane
 
-Open a file or URL in the [cmux](https://cmux.io/) pane *after* the current one, collecting opened files there instead of scattering them into new splits. cmux's `markdown open` and browser opens always split, so opening several documents or PR/Jira URLs creates a row of tiny panes. This script adds the target as a tab in the next pane, and only splits (cleanly, by target type) when the current pane is the last one. Always opens without stealing focus.
+Open a file or URL in the [cmux](https://cmux.io/) pane *after* the current one, collecting opened files there instead of scattering them into new splits. cmux's `markdown open` and browser opens always split, so opening several documents or PR/Jira URLs creates a row of tiny panes. This script adds the target as a tab in the next pane, and only splits (cleanly, by target type) when the current pane is the last one. If the file is already open in the workspace, it never opens a duplicate — switching to the existing tab (and restoring focus to the origin pane) when this workspace is focused, or doing nothing when it's running in the background so it can't pull your focus over (basename match; needs `jq`). New opens never steal focus.
 
 ```bash
 cmux-open-next-pane ~/tmp/design.md                                    # markdown in the next pane
