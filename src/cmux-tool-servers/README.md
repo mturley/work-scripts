@@ -46,8 +46,9 @@ No need to quit and restart mprocs. When you actually want to stop, quit mprocs.
 
 - The supervisor is this same script re-invoked in a hidden `--supervise <cmd>`
   mode, so there's only one file to maintain. mprocs runs
-  `cmux-tool-servers --supervise handler ui` and
-  `cmux-tool-servers --supervise worktree ui`.
+  `cmux-tool-servers --supervise handler ui --no-open` and
+  `cmux-tool-servers --supervise worktree ui --no-open`. (`--no-open` keeps
+  each UI from opening a browser tab on launch — useful when they restart.)
 - The restart delay is 5 seconds (`RESTART_DELAY` in the script).
 
 ## Behavior on failure

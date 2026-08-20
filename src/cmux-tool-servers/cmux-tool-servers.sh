@@ -89,5 +89,5 @@ fi
 
 exec mprocs \
   --names "handler,worktree" \
-  "$self --supervise handler ui" \
-  "$self --supervise worktree ui"
+  "$self --supervise handler ui --no-open" \
+  "$self --supervise worktree ui --no-open"
