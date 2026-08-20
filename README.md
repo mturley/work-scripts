@@ -229,6 +229,14 @@ cmux-open-next-pane ~/tmp/design.md                                    # markdow
 cmux-open-next-pane https://github.com/opendatahub-io/odh-dashboard/pull/1234  # URL alongside your work
 ```
 
+### [`cmux-tool-servers`](src/cmux-tool-servers/) — Handler & Worktree UIs in mprocs
+
+Run [`handler ui`](https://github.com/mturley/agent-handler) and [`worktree ui`](https://github.com/mturley/worktree) side by side as two [mprocs](https://github.com/pvolok/mprocs) panes. Both tools need cmux for their full feature set (hence the `cmux` prefix). Each pane runs in a self-restarting supervisor: when the child process exits for any reason, it waits 5 seconds and relaunches — so you can kill a running binary, `go install` a new one, and have the pane come back on the new binary without quitting mprocs.
+
+```bash
+cmux-tool-servers   # opens the two UIs in mprocs
+```
+
 ## Commands for Node.js / npm
 
 ### [`clean-node-modules`](src/clean-node-modules/) — node_modules Cleaner
