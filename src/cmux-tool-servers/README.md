@@ -30,6 +30,7 @@ stop both.
 | Option | Description |
 | --- | --- |
 | `--bind ADDR` | Host/IP for `worktree ui` to bind. Default `127.0.0.1` (this machine only). |
+| `--yes` | Forwarded to `worktree ui` to skip its confirmation prompt. The warning is still printed. |
 
 ## Reaching the worktree UI from another device
 
@@ -51,22 +52,28 @@ proxy endpoints, which use your Slack session credentials for any caller. Only
 do it on a network you trust; for access from outside the LAN, prefer a VPN such
 as Tailscale over exposing the port.
 
-`worktree ui` itself prints that warning and asks `Continue? [y/N]` **in its
-mprocs pane** — mprocs gives each pane a pty, so it can prompt there. This
-script deliberately does **not** pass `--yes`: the guard is the point, so it is
-answered by a human every time the UI binds.
+By default `worktree ui` prints that warning and asks `Continue? [y/N]` **in its
+mprocs pane** — mprocs gives each pane a pty, so it can prompt there. To reach
+the prompt, select the `worktree` process and press `Ctrl-a` to focus its
+terminal, then answer.
 
-Two consequences worth knowing:
+The prompt reappears **after every supervisor restart**, since each restart is a
+fresh bind. Once you have decided, `--yes` skips it:
+
+```bash
+cmux-tool-servers --bind 0.0.0.0 --yes
+```
+
+`--yes` is forwarded to `worktree ui` only when you pass it explicitly — the
+script never adds it on your behalf. The warning is still printed either way;
+`--yes` suppresses the question, not the notice.
+
+Two more things worth knowing:
 
 - **`--bind` applies to `worktree ui` only.** `handler ui` is not affected and
   stays bound to loopback.
-- The prompt reappears **after every supervisor restart**, since each restart is
-  a fresh bind. During the reinstall workflow below that means answering `y`
-  again once the pane comes back. Answering `n` does not end the session — the
-  supervisor relaunches in 5 seconds and asks again; quit mprocs to stop.
-
-To reach the pane's prompt, select the `worktree` process and press `Ctrl-a` to
-focus its terminal, then answer.
+- Without `--yes`, answering `n` does not end the session — the supervisor
+  relaunches in 5 seconds and asks again. Quit mprocs to stop.
 
 ## Reinstall-without-quitting workflow
 

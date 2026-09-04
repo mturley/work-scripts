@@ -23,9 +23,11 @@
 #   `--bind ADDR` is passed straight through to `worktree ui` so its web UI can
 #   be reached from other devices (e.g. a phone on the same LAN). That UI has no
 #   authentication, so `worktree ui` warns and asks for confirmation before
-#   binding a non-loopback address. We deliberately do NOT pass --yes: mprocs
-#   gives each pane a pty, so worktree can prompt in the pane and the warning is
-#   answered by a human every time it binds. `handler ui` is not affected.
+#   binding a non-loopback address. mprocs gives each pane a pty, so by default
+#   it prompts in the pane and a human answers every bind. `--yes` is forwarded
+#   only when passed explicitly here — the supervisor re-asks on every restart,
+#   which gets tiresome once you have decided. The warning is still printed
+#   either way; --yes only skips the prompt. `handler ui` is not affected.
 
 set -euo pipefail
 
@@ -33,7 +35,7 @@ RESTART_DELAY=5
 
 usage() {
   cat <<'EOF'
-Usage: cmux-tool-servers [--bind ADDR]
+Usage: cmux-tool-servers [--bind ADDR] [--yes]
 
 Run `handler ui` and `worktree ui` in parallel panes in mprocs. Each pane
 restarts its command 5 seconds after it exits, so you can kill a running
@@ -47,6 +49,9 @@ Options:
                address, including after each supervisor restart.
                NOTE: this applies to `worktree ui` only. `handler ui` is not
                affected and stays bound to loopback.
+  --yes        Forwarded to `worktree ui` to skip that confirmation prompt.
+               The warning is still printed. Useful because the supervisor
+               restarts the pane, and each restart otherwise re-asks.
 
 Requires: mprocs, handler, worktree (all on PATH). Best run inside cmux.
 EOF
@@ -73,6 +78,7 @@ if [ "${1:-}" = "--supervise" ]; then
 fi
 
 bind_addr=""
+assume_yes=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -87,6 +93,10 @@ while [ "$#" -gt 0 ]; do
       fi
       bind_addr="$2"
       shift 2
+      ;;
+    --yes)
+      assume_yes=1
+      shift
       ;;
     --bind=*)
       bind_addr="${1#--bind=}"
@@ -123,12 +133,15 @@ if command -v realpath >/dev/null 2>&1; then
   self="$(realpath "$0")"
 fi
 
-# Build the worktree pane's command. --bind is passed through as-is and --yes is
-# deliberately NOT added: `worktree ui` owns the warning and the confirmation
-# prompt, and the mprocs pane is a pty, so it can ask there.
+# Build the worktree pane's command. `worktree ui` owns the warning and the
+# confirmation prompt — the mprocs pane is a pty, so it can ask there. --yes is
+# forwarded only when the caller asked for it, never added on our own.
 worktree_cmd="$self --supervise worktree ui --no-open"
 if [ -n "$bind_addr" ]; then
   worktree_cmd="$worktree_cmd --bind $bind_addr"
+fi
+if [ "$assume_yes" = "1" ]; then
+  worktree_cmd="$worktree_cmd --yes"
 fi
 
 exec mprocs \
