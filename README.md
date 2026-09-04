@@ -244,8 +244,15 @@ cmux-open-next-pane https://github.com/opendatahub-io/odh-dashboard/pull/1234  #
 Run [`handler ui`](https://github.com/mturley/agent-handler) and [`worktree ui`](https://github.com/mturley/worktree) side by side as two [mprocs](https://github.com/pvolok/mprocs) panes. Both tools need cmux for their full feature set (hence the `cmux` prefix). Each pane runs in a self-restarting supervisor: when the child process exits for any reason, it waits 5 seconds and relaunches — so you can kill a running binary, `go install` a new one, and have the pane come back on the new binary without quitting mprocs.
 
 ```bash
-cmux-tool-servers   # opens the two UIs in mprocs
+cmux-tool-servers                  # opens the two UIs in mprocs
+cmux-tool-servers --bind 0.0.0.0   # also reach the worktree UI from your phone
 ```
+
+`--bind ADDR` is passed through to `worktree ui`, so the worktree UI listens on
+your LAN address instead of loopback only. That UI has no authentication, so it
+warns and asks for confirmation in its mprocs pane before binding — every time,
+including after a supervisor restart. `handler ui` is unaffected and stays on
+loopback.
 
 ## Commands for Node.js / npm
 

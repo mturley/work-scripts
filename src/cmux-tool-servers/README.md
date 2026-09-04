@@ -25,6 +25,49 @@ This opens an mprocs session with two named processes, `handler` and `worktree`,
 running `handler ui` and `worktree ui` respectively. Quit mprocs (or Ctrl-C) to
 stop both.
 
+### Options
+
+| Option | Description |
+| --- | --- |
+| `--bind ADDR` | Host/IP for `worktree ui` to bind. Default `127.0.0.1` (this machine only). |
+
+## Reaching the worktree UI from another device
+
+By default both UIs bind to loopback, so they are reachable only from this
+machine. To use the worktree UI from your phone or another computer on the LAN:
+
+```bash
+cmux-tool-servers --bind 0.0.0.0
+```
+
+Then browse to `http://<this-mac's-LAN-IP>:8475` from the other device. On macOS
+the application firewall will prompt once to allow incoming connections for the
+`worktree` binary.
+
+**Read the warning before you do this.** The worktree UI has **no
+authentication** and is not read-only — anyone who can reach the port can create
+and delete worktrees, run cmux commands, and read your Slack threads through its
+proxy endpoints, which use your Slack session credentials for any caller. Only
+do it on a network you trust; for access from outside the LAN, prefer a VPN such
+as Tailscale over exposing the port.
+
+`worktree ui` itself prints that warning and asks `Continue? [y/N]` **in its
+mprocs pane** — mprocs gives each pane a pty, so it can prompt there. This
+script deliberately does **not** pass `--yes`: the guard is the point, so it is
+answered by a human every time the UI binds.
+
+Two consequences worth knowing:
+
+- **`--bind` applies to `worktree ui` only.** `handler ui` is not affected and
+  stays bound to loopback.
+- The prompt reappears **after every supervisor restart**, since each restart is
+  a fresh bind. During the reinstall workflow below that means answering `y`
+  again once the pane comes back. Answering `n` does not end the session — the
+  supervisor relaunches in 5 seconds and asks again; quit mprocs to stop.
+
+To reach the pane's prompt, select the `worktree` process and press `Ctrl-a` to
+focus its terminal, then answer.
+
 ## Reinstall-without-quitting workflow
 
 When you're hacking on the handler or worktree projects themselves, you often

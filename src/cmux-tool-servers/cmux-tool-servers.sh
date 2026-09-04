@@ -18,6 +18,14 @@
 #
 # The supervisor is this same script re-invoked in a hidden `--supervise` mode,
 # so there is only one file to maintain.
+#
+# --bind:
+#   `--bind ADDR` is passed straight through to `worktree ui` so its web UI can
+#   be reached from other devices (e.g. a phone on the same LAN). That UI has no
+#   authentication, so `worktree ui` warns and asks for confirmation before
+#   binding a non-loopback address. We deliberately do NOT pass --yes: mprocs
+#   gives each pane a pty, so worktree can prompt in the pane and the warning is
+#   answered by a human every time it binds. `handler ui` is not affected.
 
 set -euo pipefail
 
@@ -25,15 +33,25 @@ RESTART_DELAY=5
 
 usage() {
   cat <<'EOF'
-Usage: cmux-tool-servers
+Usage: cmux-tool-servers [--bind ADDR]
 
 Run `handler ui` and `worktree ui` in parallel panes in mprocs. Each pane
 restarts its command 5 seconds after it exits, so you can kill a running
 binary, install a new one, and have it come back automatically.
 
+Options:
+  --bind ADDR  Host/IP for `worktree ui` to bind (e.g. 0.0.0.0 to reach the
+               worktree UI from other devices on your LAN). Defaults to
+               127.0.0.1, i.e. this machine only. `worktree ui` warns and asks
+               for confirmation in its pane before binding a non-loopback
+               address, including after each supervisor restart.
+               NOTE: this applies to `worktree ui` only. `handler ui` is not
+               affected and stays bound to loopback.
+
 Requires: mprocs, handler, worktree (all on PATH). Best run inside cmux.
 EOF
 }
+
 
 # Hidden supervise mode: `cmux-tool-servers --supervise <cmd> [args...]`
 # Runs the command in a loop, restarting RESTART_DELAY seconds after each exit.
@@ -54,19 +72,37 @@ if [ "${1:-}" = "--supervise" ]; then
   done
 fi
 
-case "${1:-}" in
-  -h|--help)
-    usage
-    exit 0
-    ;;
-  "")
-    ;;
-  *)
-    echo "cmux-tool-servers: unknown argument '$1'" >&2
-    usage >&2
-    exit 2
-    ;;
-esac
+bind_addr=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --bind)
+      if [ "$#" -lt 2 ]; then
+        echo "cmux-tool-servers: --bind requires an address" >&2
+        exit 2
+      fi
+      bind_addr="$2"
+      shift 2
+      ;;
+    --bind=*)
+      bind_addr="${1#--bind=}"
+      if [ -z "$bind_addr" ]; then
+        echo "cmux-tool-servers: --bind requires an address" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    *)
+      echo "cmux-tool-servers: unknown argument '$1'" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
 
 # Preflight: everything we need must be on PATH.
 missing=""
@@ -87,7 +123,15 @@ if command -v realpath >/dev/null 2>&1; then
   self="$(realpath "$0")"
 fi
 
+# Build the worktree pane's command. --bind is passed through as-is and --yes is
+# deliberately NOT added: `worktree ui` owns the warning and the confirmation
+# prompt, and the mprocs pane is a pty, so it can ask there.
+worktree_cmd="$self --supervise worktree ui --no-open"
+if [ -n "$bind_addr" ]; then
+  worktree_cmd="$worktree_cmd --bind $bind_addr"
+fi
+
 exec mprocs \
   --names "handler,worktree" \
   "$self --supervise handler ui --no-open" \
-  "$self --supervise worktree ui --no-open"
+  "$worktree_cmd"
