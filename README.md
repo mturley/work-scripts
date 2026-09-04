@@ -86,6 +86,16 @@ pr-ci 6999 60              # watch CI, poll every 60 seconds
 pr-ci 6999 --once          # one-shot status summary
 ```
 
+### [`pull-pr`](src/pull-pr/) — Update a PR Review Worktree
+
+Fetch the latest commits on the current worktree's PR and hard-reset to them. Works on `gh pr checkout` worktrees, where the upstream is a `refs/pull/N/head` ref that `git pull` can't follow. Clean fast-forwards apply silently; anything that would discard uncommitted changes or local commits warns and prompts first.
+
+```bash
+pull-pr                    # update this worktree to the tip of its PR
+pull-pr --dry-run          # check whether the PR has moved, and how
+pull-pr --force            # update unattended, throwing away local work
+```
+
 ### [`gh-safe`](src/gh-safe/) — AI Agent Guardrail for GitHub CLI
 
 Safety wrapper for the GitHub CLI for use with AI agents — read-only operations pass through, write operations require explicit `APPROVE=true`.
