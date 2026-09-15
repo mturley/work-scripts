@@ -203,7 +203,7 @@ has_failures() {
 alert() {
   local title="$1"
   local body="$2"
-  osascript -e "display alert \"$title\" message \"$body\" buttons {\"OK\"} default button \"OK\"" 2>/dev/null || true
+  command alert -t "$title" "$body" 2>/dev/null || true
 }
 
 # ── Main: merge watch mode ─────────────────────────────────────────────

@@ -5,6 +5,7 @@ Check or watch CI status for a GitHub pull request. Shows the PR title and a sum
 ## Prerequisites
 
 - [GitHub CLI](https://cli.github.com/) (`gh`, must be authenticated)
+- [`alert`](../alert/) on PATH (for the completion alert)
 
 ## Usage
 
@@ -53,7 +54,7 @@ Passed: 39  Failed: 0  Pending: 1  Skipped: 2
 Pending: tide (requires approval — ignored)
 ```
 
-When checks complete, a macOS alert pops up with the pass/fail summary.
+When checks complete, a macOS alert pops up (via the [`alert`](../alert/) script) with the pass/fail summary.
 
 ### One-shot mode
 
