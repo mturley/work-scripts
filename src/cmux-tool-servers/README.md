@@ -25,55 +25,27 @@ This opens an mprocs session with two named processes, `handler` and `worktree`,
 running `handler ui` and `worktree ui` respectively. Quit mprocs (or Ctrl-C) to
 stop both.
 
-### Options
-
-| Option | Description |
-| --- | --- |
-| `--bind ADDR` | Host/IP for `worktree ui` to bind. Default `127.0.0.1` (this machine only). |
-| `--yes` | Forwarded to `worktree ui` to skip its confirmation prompt. The warning is still printed. |
-
 ## Reaching the worktree UI from another device
 
-By default both UIs bind to loopback, so they are reachable only from this
-machine. To use the worktree UI from your phone or another computer on the LAN:
+There is no option to pass here. `worktree ui` requires a login on every
+listener, including this machine. Once you have run `worktree setup` and
+enabled HTTPS remote access, it also serves other devices over HTTPS, and this
+script picks that up with no changes:
 
-```bash
-cmux-tool-servers --bind 0.0.0.0
-```
+1. Run `worktree setup` and answer yes to HTTPS access. It offers this Mac's
+   `.local` name and LAN IP, generates a password if you have none, and writes
+   a CA certificate to install on the phone.
+2. Install that CA on the phone, as setup describes.
+3. Run `cmux-tool-servers`, then open the URL `worktree ui` prints in its pane
+   (e.g. `https://<name>.local:8476`) on the phone and log in.
 
-Then browse to `http://<this-mac's-LAN-IP>:8475` from the other device. On macOS
-the application firewall will prompt once to allow incoming connections for the
-`worktree` binary.
+On macOS the application firewall will prompt once to allow incoming
+connections for the `worktree` binary. `handler ui` is not affected by any of
+this and stays on loopback.
 
-**Read the warning before you do this.** The worktree UI has **no
-authentication** and is not read-only — anyone who can reach the port can create
-and delete worktrees, run cmux commands, and read your Slack threads through its
-proxy endpoints, which use your Slack session credentials for any caller. Only
-do it on a network you trust; for access from outside the LAN, prefer a VPN such
-as Tailscale over exposing the port.
-
-By default `worktree ui` prints that warning and asks `Continue? [y/N]` **in its
-mprocs pane** — mprocs gives each pane a pty, so it can prompt there. To reach
-the prompt, select the `worktree` process and press `Ctrl-a` to focus its
-terminal, then answer.
-
-The prompt reappears **after every supervisor restart**, since each restart is a
-fresh bind. Once you have decided, `--yes` skips it:
-
-```bash
-cmux-tool-servers --bind 0.0.0.0 --yes
-```
-
-`--yes` is forwarded to `worktree ui` only when you pass it explicitly — the
-script never adds it on your behalf. The warning is still printed either way;
-`--yes` suppresses the question, not the notice.
-
-Two more things worth knowing:
-
-- **`--bind` applies to `worktree ui` only.** `handler ui` is not affected and
-  stays bound to loopback.
-- Without `--yes`, answering `n` does not end the session — the supervisor
-  relaunches in 5 seconds and asks again. Quit mprocs to stop.
+`--bind` and `--yes` were removed. Passing either now exits with a pointer to
+`worktree setup`, rather than launching a pane that fails and restarts every
+5 seconds.
 
 ## Reinstall-without-quitting workflow
 
@@ -106,3 +78,4 @@ No need to quit and restart mprocs. When you actually want to stop, quit mprocs.
 - If `mprocs`, `handler`, or `worktree` is missing from PATH, the script prints
   which tool(s) are missing and exits non-zero before launching anything.
 - Any unrecognized argument prints usage and exits non-zero.
+- `--bind` or `--yes` exits non-zero with a pointer to `worktree setup` (both were removed).

@@ -19,15 +19,12 @@
 # The supervisor is this same script re-invoked in a hidden `--supervise` mode,
 # so there is only one file to maintain.
 #
-# --bind:
-#   `--bind ADDR` is passed straight through to `worktree ui` so its web UI can
-#   be reached from other devices (e.g. a phone on the same LAN). That UI has no
-#   authentication, so `worktree ui` warns and asks for confirmation before
-#   binding a non-loopback address. mprocs gives each pane a pty, so by default
-#   it prompts in the pane and a human answers every bind. `--yes` is forwarded
-#   only when passed explicitly here — the supervisor re-asks on every restart,
-#   which gets tiresome once you have decided. The warning is still printed
-#   either way; --yes only skips the prompt. `handler ui` is not affected.
+# Reaching the worktree UI from other devices:
+#   There is nothing to pass here. `worktree ui` requires a login on every
+#   listener, and serves other devices over HTTPS once `worktree setup` has
+#   configured remote access. This script used to forward --bind and --yes;
+#   `worktree ui` no longer accepts either, so they are rejected here with the
+#   same pointer rather than passed through to fail in the pane every 5 seconds.
 
 set -euo pipefail
 
@@ -35,26 +32,28 @@ RESTART_DELAY=5
 
 usage() {
   cat <<'EOF'
-Usage: cmux-tool-servers [--bind ADDR] [--yes]
+Usage: cmux-tool-servers
 
 Run `handler ui` and `worktree ui` in parallel panes in mprocs. Each pane
 restarts its command 5 seconds after it exits, so you can kill a running
 binary, install a new one, and have it come back automatically.
 
-Options:
-  --bind ADDR  Host/IP for `worktree ui` to bind (e.g. 0.0.0.0 to reach the
-               worktree UI from other devices on your LAN). Defaults to
-               127.0.0.1, i.e. this machine only. `worktree ui` warns and asks
-               for confirmation in its pane before binding a non-loopback
-               address, including after each supervisor restart.
-               NOTE: this applies to `worktree ui` only. `handler ui` is not
-               affected and stays bound to loopback.
-  --yes        Forwarded to `worktree ui` to skip that confirmation prompt.
-               The warning is still printed. Useful because the supervisor
-               restarts the pane, and each restart otherwise re-asks.
+To use the worktree UI from another device (e.g. your phone), run
+`worktree setup` once to enable HTTPS remote access. `worktree ui` then serves
+it automatically; there is no flag to pass here.
 
 Requires: mprocs, handler, worktree (all on PATH). Best run inside cmux.
 EOF
+}
+
+removed_flag() {
+  cat >&2 <<EOF
+cmux-tool-servers: $1 has been removed.
+  \`worktree ui\` now requires a login and serves other devices over HTTPS
+  once remote access is configured. Run \`worktree setup\` to configure it,
+  then run cmux-tool-servers with no options.
+EOF
+  exit 2
 }
 
 
@@ -77,34 +76,17 @@ if [ "${1:-}" = "--supervise" ]; then
   done
 fi
 
-bind_addr=""
-assume_yes=0
-
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help)
       usage
       exit 0
       ;;
-    --bind)
-      if [ "$#" -lt 2 ]; then
-        echo "cmux-tool-servers: --bind requires an address" >&2
-        exit 2
-      fi
-      bind_addr="$2"
-      shift 2
+    --bind|--bind=*)
+      removed_flag "--bind"
       ;;
     --yes)
-      assume_yes=1
-      shift
-      ;;
-    --bind=*)
-      bind_addr="${1#--bind=}"
-      if [ -z "$bind_addr" ]; then
-        echo "cmux-tool-servers: --bind requires an address" >&2
-        exit 2
-      fi
-      shift
+      removed_flag "--yes"
       ;;
     *)
       echo "cmux-tool-servers: unknown argument '$1'" >&2
@@ -133,18 +115,7 @@ if command -v realpath >/dev/null 2>&1; then
   self="$(realpath "$0")"
 fi
 
-# Build the worktree pane's command. `worktree ui` owns the warning and the
-# confirmation prompt — the mprocs pane is a pty, so it can ask there. --yes is
-# forwarded only when the caller asked for it, never added on our own.
-worktree_cmd="$self --supervise worktree ui --no-open"
-if [ -n "$bind_addr" ]; then
-  worktree_cmd="$worktree_cmd --bind $bind_addr"
-fi
-if [ "$assume_yes" = "1" ]; then
-  worktree_cmd="$worktree_cmd --yes"
-fi
-
 exec mprocs \
   --names "handler,worktree" \
   "$self --supervise handler ui --no-open" \
-  "$worktree_cmd"
+  "$self --supervise worktree ui --no-open"

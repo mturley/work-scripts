@@ -245,16 +245,11 @@ Run [`handler ui`](https://github.com/mturley/agent-handler) and [`worktree ui`]
 
 ```bash
 cmux-tool-servers                  # opens the two UIs in mprocs
-cmux-tool-servers --bind 0.0.0.0   # also reach the worktree UI from your phone
-cmux-tool-servers --bind 0.0.0.0 --yes   # ...without re-confirming on each restart
 ```
 
-`--bind ADDR` is passed through to `worktree ui`, so the worktree UI listens on
-your LAN address instead of loopback only. That UI has no authentication, so it
-warns and asks for confirmation in its mprocs pane before binding — every time,
-including after a supervisor restart. `--yes` is forwarded to skip that prompt
-(the warning is still printed). `handler ui` is unaffected and stays on
-loopback.
+To use the worktree UI from another device, run `worktree setup` once to
+enable HTTPS remote access; `worktree ui` then serves it with a login, and
+there is nothing to pass to this script. `handler ui` stays on loopback.
 
 ## Commands for Node.js / npm
 
