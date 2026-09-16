@@ -259,7 +259,7 @@ Send an OpenAI-compatible chat-completions request to a ready KServe `InferenceS
 
 ```bash
 curl-isvc test-llama-chat 'Reply with exactly: NIM inference succeeded'
-curl-isvc mturley test-llama-chat 'Reply with exactly: NIM inference succeeded'
+curl-isvc --port 18080 mturley test-llama-chat 'Reply with exactly: NIM inference succeeded'
 ```
 
 ## Commands for Node.js / npm

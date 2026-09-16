@@ -3,7 +3,7 @@
 # curl-isvc — send an OpenAI-compatible chat-completions request to a KServe
 # InferenceService through a temporary local port-forward.
 #
-# Usage: curl-isvc [project] <inference-service> <prompt>
+# Usage: curl-isvc [--port port] [project] <inference-service> <prompt>
 #
 
 set -euo pipefail
@@ -13,13 +13,16 @@ REMOTE_PORT=8000
 
 usage() {
   cat <<'EOF'
-Usage: curl-isvc [project] <inference-service> <prompt>
+Usage: curl-isvc [--port port] [project] <inference-service> <prompt>
 
 Sends an OpenAI-compatible POST /v1/chat/completions request to a ready KServe
 InferenceService. The command finds its ready predictor pod, temporarily
-port-forwards localhost:8080 to the pod's port 8000, discovers its model ID
+port-forwards a configurable local port to the pod's port 8000, discovers its model ID
 from GET /v1/models, sends the supplied prompt, prints the response, and then
 stops the port-forward.
+
+Options:
+  -p, --port port     Local port for the temporary port-forward (default: 8080)
 
 Arguments:
   project             Optional OpenShift namespace. Defaults to the current oc project.
@@ -28,16 +31,30 @@ Arguments:
 
 Examples:
   curl-isvc test-llama-chat 'Reply with exactly: NIM inference succeeded'
-  curl-isvc mturley test-llama-chat 'Reply with exactly: NIM inference succeeded'
+  curl-isvc --port 18080 test-llama-chat 'Reply with exactly: NIM inference succeeded'
+  curl-isvc --port 18080 mturley test-llama-chat 'Reply with exactly: NIM inference succeeded'
 
 Requirements: oc, curl, jq, lsof
 EOF
 }
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  usage
-  exit 0
-fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h) usage; exit 0 ;;
+    --port|-p)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "Error: --port requires a local port number." >&2
+        exit 2
+      fi
+      LOCAL_PORT=$2
+      shift 2
+      ;;
+    --port=*) LOCAL_PORT=${1#*=}; shift ;;
+    --) shift; break ;;
+    -*) echo "Error: unknown option '$1'." >&2; usage >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
   echo "Error: an InferenceService and prompt are required; project is optional." >&2
@@ -58,6 +75,11 @@ else
 fi
 port_forward_pid=""
 port_forward_log=""
+
+if ! [[ "$LOCAL_PORT" =~ ^[0-9]+$ ]] || (( LOCAL_PORT < 1 || LOCAL_PORT > 65535 )); then
+  echo "Error: local port must be an integer from 1 to 65535." >&2
+  exit 2
+fi
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
