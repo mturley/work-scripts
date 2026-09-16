@@ -251,6 +251,17 @@ To use the worktree UI from another device, run `worktree setup` once to
 enable HTTPS remote access; `worktree ui` then serves it with a login, and
 there is nothing to pass to this script. `handler ui` stays on loopback.
 
+## Commands for OpenShift / Kubernetes
+
+### [`curl-isvc`](src/curl-isvc/) — Send an Inference Request to KServe
+
+Send an OpenAI-compatible chat-completions request to a ready KServe `InferenceService`. It finds a ready predictor pod, temporarily port-forwards its model API to localhost, discovers the served model ID, prints the inference response, and removes the port-forward afterward.
+
+```bash
+curl-isvc test-llama-chat 'Reply with exactly: NIM inference succeeded'
+curl-isvc mturley test-llama-chat 'Reply with exactly: NIM inference succeeded'
+```
+
 ## Commands for Node.js / npm
 
 ### [`clean-node-modules`](src/clean-node-modules/) — node_modules Cleaner
