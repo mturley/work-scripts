@@ -5,6 +5,7 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 **Commands for Git and GitHub**
 - [`worktree-old`](src/worktree-old/) — Create and manage git worktrees for PRs and branches *(deprecated — being replaced by [worktree](https://github.com/mturley/worktree))*
 - [`pr-ci`](src/pr-ci/) — Check or watch CI status for a GitHub PR
+- [`jenkins-watch`](src/jenkins-watch/) — Watch a Jenkins job or build and alert when it completes
 - [`gh-safe`](src/gh-safe/) — AI agent guardrail for the GitHub CLI
 - [`dev-ports`](src/dev-ports/) — Find dev servers running in git repos, grouped by repo and branch
 
@@ -73,6 +74,16 @@ worktree-old --standalone my-branch      # shell in worktree, no mprocs
 worktree-old --no-persist 1234           # skip screen, mprocs only
 worktree-old --sessions                  # list active persistent sessions
 worktree-old --help                      # show usage help
+```
+
+### [`jenkins-watch`](src/jenkins-watch/) — Jenkins Build Watcher
+
+Poll a Jenkins job or build every 10 seconds, logging each request and (when Jenkins Pipeline REST API is available) pipeline stage and active step statuses, then show a macOS alert when the build completes. Requires `JENKINS_URL`, `JENKINS_USER`, and `JENKINS_API_TOKEN` in the environment or a file passed with `--env`.
+
+```bash
+jenkins-watch https://jenkins.example.com/job/my-job/
+jenkins-watch --env ~/secrets/jenkins.env https://jenkins.example.com/job/my-job/
+jenkins-watch https://jenkins.example.com/job/my-job/42/
 ```
 
 ### [`pr-ci`](src/pr-ci/) — PR CI Status Checker
