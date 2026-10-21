@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+# notify - Send a formatted Telegram notification via telert
+#
+# Usage: notify [-k kind] [-t title] [-l url]... [-s session] [-n] message...
+#
+# Builds an HTML message (emoji + bold title, body, then a context line with
+# the git worktree, branch, and agent-handler session, then any links) and
+# sends it with telert's Python API. The telert CLI isn't used because it
+# switches to "pipeline mode" whenever stdin isn't a TTY (as under an AI
+# agent's shell), which mangles `telert send "msg"` into "send (exit msg)".
+
+import argparse
+import html
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+KINDS = {
+    "done": ("✅", "Done"),
+    "input": ("❓", "Needs your input"),
+    "failed": ("❌", "Failed"),
+    "paused": ("⏸️", "Paused"),
+    "resumed": ("▶️", "Resumed"),
+    "info": ("ℹ️", "FYI"),
+}
+
+SESSION_MAX = 24
+BODY_MAX = 3500  # Telegram caps messages at 4096 chars
+
+
+def reexec_under_telert_python():
+    """Re-run this script with the interpreter telert is installed under.
+
+    telert is usually installed with pipx, so its package isn't importable
+    from the system python3. Its entry point names the right interpreter,
+    either as a normal shebang or as pipx's `'''exec' '<python>'` stub.
+    """
+    if os.environ.get("NOTIFY_REEXEC"):
+        sys.exit("notify: telert's Python package isn't importable")
+    telert = shutil.which("telert")
+    if not telert:
+        sys.exit("notify: telert is not installed (pipx install telert)")
+    with open(telert) as f:
+        head = f.read(512)
+    m = re.search(r"'''exec' '([^']+)'", head) or re.match(r"#!(\S+)", head)
+    if not m:
+        sys.exit(f"notify: can't find telert's Python interpreter in {telert}")
+    os.environ["NOTIFY_REEXEC"] = "1"
+    os.execv(m.group(1), [m.group(1), os.path.abspath(__file__)] + sys.argv[1:])
+
+
+def run(cmd):
+    """Return a command's stripped stdout, or None if it fails or is missing."""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    value = out.stdout.strip()
+    return value if out.returncode == 0 and value else None
+
+
+def git_context():
+    top = run(["git", "rev-parse", "--show-toplevel"])
+    if not top:
+        return None, None
+    branch = run(["git", "branch", "--show-current"]) or run(
+        ["git", "rev-parse", "--short", "HEAD"]
+    )
+    return os.path.basename(top), branch
+
+
+def link_label(url):
+    m = re.match(r"https://github\.com/[^/]+/[^/]+/pull/(\d+)", url)
+    if m:
+        return f"PR #{m.group(1)}"
+    m = re.match(r"https://github\.com/[^/]+/[^/]+/issues/(\d+)", url)
+    if m:
+        return f"Issue #{m.group(1)}"
+    m = re.match(r"https://[^/]+\.atlassian\.net/browse/([A-Z][A-Z0-9]+-\d+)", url)
+    if m:
+        return m.group(1)
+    m = re.match(r"https?://([^/]+)", url)
+    return m.group(1) if m else url
+
+
+def build_message(kind, title, body, links, session):
+    emoji, default_title = KINDS[kind]
+    e = html.escape
+    lines = [f"{emoji} <b>{e(title or default_title)}</b>"]
+    if body:
+        if len(body) > BODY_MAX:
+            body = body[:BODY_MAX] + "…"
+        lines += ["", e(body)]
+
+    worktree, branch = git_context()
+    if session and len(session) > SESSION_MAX:
+        session = session[: SESSION_MAX - 1] + "…"
+    context = []
+    if worktree:
+        context.append(f"📂 <code>{e(worktree)}</code>")
+    if branch:
+        context.append(f"🌿 <code>{e(branch)}</code>")
+    if session:
+        context.append(f"💬 {e(session)}")
+    footer = []
+    if context:
+        footer.append(" · ".join(context))
+    for url in links:
+        footer.append(f'🔗 <a href="{e(url)}">{e(link_label(url))}</a>')
+    if footer:
+        lines += [""] + footer
+    return "\n".join(lines)
+
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="notify",
+        description="Send a formatted Telegram notification via telert.",
+    )
+    p.add_argument(
+        "-k", "--kind", choices=KINDS, default="info",
+        help="message kind, sets the emoji and default title (default: info)",
+    )
+    p.add_argument("-t", "--title", help="bold headline (default: the kind's label)")
+    p.add_argument(
+        "-l", "--link", action="append", default=[], metavar="URL",
+        help="link to include; repeatable. PR, issue and Jira URLs get short labels",
+    )
+    p.add_argument(
+        "-s", "--session",
+        help="session name (default: `handler session-name`, if available)",
+    )
+    p.add_argument(
+        "-n", "--dry-run", action="store_true",
+        help="print the HTML message instead of sending it",
+    )
+    p.add_argument("message", nargs="*", help="message body")
+    a = p.parse_args()
+
+    session = a.session if a.session is not None else run(["handler", "session-name"])
+    msg = build_message(a.kind, a.title, " ".join(a.message), a.link, session)
+
+    if a.dry_run:
+        print(msg)
+        return
+
+    try:
+        from telert.api import send
+    except ImportError:
+        reexec_under_telert_python()
+
+    try:
+        results = send(msg, parse_mode="HTML")
+    except Exception as err:  # telert raises bare exceptions on provider errors
+        sys.exit(f"notify: send failed: {err}")
+    if not results or not all(results.values()):
+        sys.exit(f"notify: send failed: {results}")
+
+
+if __name__ == "__main__":
+    main()

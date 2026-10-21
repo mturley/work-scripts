@@ -37,6 +37,9 @@ Personal CLI tools for git, GitHub, and daily workflow automation.
 **Commands for macOS**
 - [`alert`](src/alert/) — Show a macOS alert dialog when a command finishes
 
+**Commands for Notifications**
+- [`notify`](src/notify/) — Send a formatted Telegram notification (via telert) with git and session context
+
 ## Setup
 
 Clone the repo and add its `bin` subdirectory to your PATH:
@@ -298,3 +301,14 @@ npm test; alert -t "tests" "exit $?"         # alert either way, custom title
 npm run build 2>&1 | alert -t "build" "done" # include a peek at the output
 ```
 
+## Commands for Notifications
+
+### [`notify`](src/notify/) — Formatted Telegram Notification
+
+Send a Telegram message through [telert](https://github.com/navig-me/telert)'s Python API, formatted as an emoji and bold title, the body, then a footer with the current git worktree, branch, agent-handler session, and any links (PR, issue, and Jira URLs get short labels). Works where `telert send` doesn't: under an AI agent's shell, stdin isn't a TTY, so the telert CLI drops into pipeline mode and sends `send (exit <message>)`.
+
+```bash
+notify -k done -t "Phase 1 done" "All 42 tests pass."
+notify -k input -l https://github.com/org/repo/pull/123 "Which approach for the cursor table?"
+notify -n -k failed "Build broke"   # dry run: print the HTML instead of sending
+```
